@@ -27,7 +27,7 @@ const MOON = [
 const CLOUD = [
   '  ▒▒▒▒      ',
   ' ▒▒▒▒▒▒▒▒   ',
-  '▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒'
+  '▒▒▒▒▒▒▒▒▒▒▒▒'
 ];
 
 const CLOUD2 = [
@@ -42,7 +42,8 @@ const STARS = [
   [4, 2],   // left edge mid
   [5, 24],  // ground - near mascot
   [5, 46],  // ground - right
-  [4, 56]   // ground far right
+  [4, 56],  // ground far right
+  [6,45]
 ];
 
 function blankCanvas(width, height) {
@@ -95,7 +96,7 @@ function buildSky() {
   stamp(canvas, CLOUD2, 2, 4, CLOUD_COLOR);
 
   // Right cloud
-  stamp(canvas, CLOUD, 3, 30, CLOUD_COLOR);
+  stamp(canvas, CLOUD, 4, 30, CLOUD_COLOR);
 
   return canvas;
 }
