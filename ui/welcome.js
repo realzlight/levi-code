@@ -10,7 +10,7 @@ const CYAN = '#22d3ee';
 const STAR = '#aaaaaa';
 const MOON_COLOR = '#e8e8e8';
 const CLOUD_COLOR = '#555555';
-const BORDER = '#999999';
+const BORDER = '#fff';
 
 const WIDTH = 60;
 const SKY_HEIGHT = 6;
@@ -27,19 +27,22 @@ const MOON = [
 const CLOUD = [
   '  ▒▒▒▒      ',
   ' ▒▒▒▒▒▒▒▒   ',
-  '▒▒▒▒▒▒▒▒▒▒▒▒'
+  '▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒'
 ];
 
+const CLOUD2 = [
+  '  ▒▒       ▒▒▒▒      ',
+  ' ▒▒▒▒   ▒▒▒▒▒▒▒▒   ',
+  '▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒'
+];
 const STARS = [
-  [0, 4],
-  [0, 20],
-  [1, 34],
-  [2, 12],
-  [2, 44],
-  [3, 27],
-  [4, 2],
-  [5, 38],
-  [1, 46]
+  [1, 10],  // top left
+  [1, 39],  // top right
+  [3, 30],  // middle
+  [4, 2],   // left edge mid
+  [5, 24],  // ground - near mascot
+  [5, 46],  // ground - right
+  [4, 56]   // ground far right
 ];
 
 function blankCanvas(width, height) {
@@ -50,6 +53,7 @@ function blankCanvas(width, height) {
     }))
   );
 }
+
 
 function stamp(canvas, pattern, row, column, color) {
   pattern.forEach((line, patternRow) => {
@@ -83,14 +87,15 @@ function buildSky() {
     }
   });
 
-  // Moon: one row below the upper border
-  stamp(canvas, MOON, 0, WIDTH - 10, MOON_COLOR);
+ 
+// Moon: one row below the upper border
+ stamp(canvas, MOON, 0, WIDTH - 15, MOON_COLOR);
 
   // Left cloud
-  stamp(canvas, CLOUD, 4, 4, CLOUD_COLOR);
+  stamp(canvas, CLOUD2, 2, 4, CLOUD_COLOR);
 
   // Right cloud
-  stamp(canvas, CLOUD, 3, 27, CLOUD_COLOR);
+  stamp(canvas, CLOUD, 3, 30, CLOUD_COLOR);
 
   return canvas;
 }
@@ -198,7 +203,8 @@ function App({ mascot }) {
           Box,
           {
             flexDirection: 'column',
-            marginBottom: -1
+            marginBottom: -1,
+	    marginLeft:6
           },
           h(Text, null, mascot)
         )
