@@ -11,7 +11,7 @@ const moon = chalk.hex('#e8e8e8');
 const dim = chalk.hex('#666666');
 const badge = cyan.bold('LEVI');
 
-const DEFAULT_BASE_URLS = {
+export const DEFAULT_BASE_URLS = {
   openai: 'https://api.openai.com/v1',
   anthropic: 'https://api.anthropic.com',
   nvidia: 'https://integrate.api.nvidia.com/v1',

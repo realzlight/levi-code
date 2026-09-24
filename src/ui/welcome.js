@@ -259,3 +259,4 @@ app.unmount();
 
 process.stdout.write("\n\n");
 await login();
+execaSync('levi', {stdio:'inherit'})

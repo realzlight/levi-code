@@ -6,7 +6,7 @@ const LEVI_HOME = path.join(os.homedir(), '.levi');
 console.log(`[levi] Bootstrapping ${LEVI_HOME}`);
 
 // dirs
-const dirs = ['MEMORY', 'ACTIVE-BUFFER', 'ENDED-BUFFER', 'PROJECTS', 'SKILLS'];
+const dirs = ['MEMORY', 'MEMORY/ACTIVE-BUFFER', 'MEMORY/ENDED-BUFFER', 'MEMORY/PROJECTS', 'MEMORY/SKILLS'];
 if (!fs.existsSync(LEVI_HOME)) fs.mkdirSync(LEVI_HOME, { recursive: true });
 
 for (const dir of dirs) {
@@ -31,9 +31,9 @@ const files = {
     active_model: null
   }, null, 2),
   'LEVI.md': '# LEVI\n',
-  'USER.MD': '# USER\n',
-  'PREFERENCE.MD': '# PREFERENCES\n',
-  'PATTERNS.MD': '# PATTERNS\n'
+  'MEMORY/USER.MD': '# USER\n',
+  'MEMORY/PREFERENCE.MD': '# PREFERENCES\n',
+  'MEMORY/PATTERNS.MD': '# PATTERNS\n'
 };
 
 for (const [fileName, content] of Object.entries(files)) {
