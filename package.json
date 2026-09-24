@@ -1,0 +1,21 @@
+{
+  "name": "levi",
+  "version": "1.0.0",
+  "bin": {
+    "levi": "./bin/cli.js"
+  },
+  "type": "module",
+  "files": [
+    "bin",
+    "src"
+  ],
+  "scripts": {
+    "postinstall": "node ./src/bootstrap.js"
+  },
+  "dependencies": {
+    "@clack/prompts": "^1.8.1",
+    "chalk": "^6.0.0",
+    "commander": "^15.0.0",
+    "fs-extra": "^11.2.0"
+  }
+}

@@ -1,16 +1,20 @@
 import React, { useState, useEffect } from 'react';
 import { render, Box, Text, useInput, useStdout } from 'ink';
 import os from 'os';
-import path from 'path';
 import terminalImage from 'terminal-image';
 import { execaSync } from 'execa';
 import { setLatestInput } from './state.js';
-
+import path from "node:path";
+import {fileURLToPath} from "node:url";
 const h = React.createElement;
 const GRAY = '#888888';
 const BORDER = '#999999';
 const HIGHLIGHT_BG = '#2a2a2a';
 const DOT_COLOR = '#ffffff';
+const AGENT_RESPONSE = "Yoo"
+
+
+
 
 function shortenHome(dir) {
   const home = os.homedir();
@@ -121,7 +125,7 @@ function App({ mascot }) {
     setMessages((prev) => [
       ...prev,
       { role: 'user', text },
-      { role: 'agent', text: 'Msg Received' }
+      { role: 'agent', text: AGENT_RESPONSE }
     ]);
   }
 
@@ -213,11 +217,30 @@ function App({ mascot }) {
   );
 }
 
-let mascot = '';
+//let mascot = '';
+//try {
+//  mascot = await terminalImage.file(path.join(process.cwd(), 'assets', 'mascot.png'), { width: 10 });
+//} catch {
+//  mascot = '';
+//}
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+let mascot = "";
+
 try {
-  mascot = await terminalImage.file(path.join(process.cwd(), 'assets', 'mascot.png'), { width: 10 });
-} catch {
-  mascot = '';
+  const mascotPath = path.join(
+    __dirname,
+    "assets",
+    "mascot.png"
+  );
+
+  mascot = await terminalImage.file(mascotPath, {
+    width: 10,
+    preserveAspectRatio: true
+  });
+} catch (error) {
+  mascot = "";
 }
 
 execaSync(process.platform === 'win32' ? 'cls' : 'clear', { shell: true, stdio: 'inherit' });

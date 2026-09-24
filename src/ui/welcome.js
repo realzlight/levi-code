@@ -1,15 +1,16 @@
 import React from 'react';
 import { render, Box, Text } from 'ink';
-import path from 'path';
 import terminalImage from 'terminal-image';
 import { execaSync } from 'execa';
-
+import path from "node:path";
+import { login } from '../commands/auth.js';
+import {fileURLToPath} from "node:url";
 const h = React.createElement;
 
 const CYAN = '#22d3ee';
 const STAR = '#aaaaaa';
 const MOON_COLOR = '#e8e8e8';
-const CLOUD_COLOR = '#555555';
+const CLOUD_COLOR = '#666666';
 const BORDER = '#fff';
 
 const WIDTH = 60;
@@ -96,7 +97,7 @@ function buildSky() {
   stamp(canvas, CLOUD2, 2, 4, CLOUD_COLOR);
 
   // Right cloud
-  stamp(canvas, CLOUD, 4, 30, CLOUD_COLOR);
+  stamp(canvas, CLOUD, 5, 30, CLOUD_COLOR);
 
   return canvas;
 }
@@ -216,22 +217,45 @@ function App({ mascot }) {
   );
 }
 
-let mascot = '';
+//let mascot = '';
+
+//try {
+//  mascot = await terminalImage.file(
+//    path.join(process.cwd(), 'assets', 'mascot.png'),
+//    {
+//      width: 10
+//    }
+//  );
+//} catch {
+//  mascot = '';
+//}
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+let mascot = "";
 
 try {
-  mascot = await terminalImage.file(
-    path.join(process.cwd(), 'assets', 'mascot.png'),
-    {
-      width: 10
-    }
+  const mascotPath = path.join(
+    __dirname,
+    "assets",
+    "mascot.png"
   );
-} catch {
-  mascot = '';
-}
 
+  mascot = await terminalImage.file(mascotPath, {
+    width: 10,
+    preserveAspectRatio: true
+  });
+} catch (error) {
+  mascot = "";
+}
 execaSync(process.platform === 'win32' ? 'cls' : 'clear', {
   shell: true,
   stdio: 'inherit'
 });
 
-render(h(App, { mascot }));
+const app = render(h(App, { mascot }));
+app.unmount();
+
+process.stdout.write("\n\n");
+await login();
