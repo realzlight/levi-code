@@ -28,12 +28,14 @@ const files = {
       loggedIn: false
     },
     models: {},
-    active_model: null
+    active_model: null,
+    soloOnly: false,
+    currentSession: null
   }, null, 2),
   'LEVI.md': '# LEVI\n',
-  'MEMORY/USER.MD': '# USER\n',
-  'MEMORY/PREFERENCE.MD': '# PREFERENCES\n',
-  'MEMORY/PATTERNS.MD': '# PATTERNS\n'
+  'MEMORY/USER.md': '# USER\n',
+  'MEMORY/PREFERENCE.md': '# PREFERENCES\n',
+  'MEMORY/PATTERNS.md': '# PATTERNS\n'
 };
 
 for (const [fileName, content] of Object.entries(files)) {

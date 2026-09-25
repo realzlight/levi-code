@@ -196,3 +196,53 @@ defineCommand({
     ctx.openForm({ mode: 'edit', name });
   }
 });
+
+// ---- session commands ----
+const sessionMod = () => import('../agent/session.js');
+
+defineCommand({
+  name: 'new',
+  description: 'Start a fresh session',
+  run: async (_, ctx) => {
+    const { createSession } = await sessionMod();
+    const id = createSession();
+    ctx.clear();
+    ctx.print(`New session: SESSION-${id}`);
+  }
+});
+
+defineCommand({
+  name: 'resume',
+  description: 'Switch to a past or current session',
+  args: [{ name: 'id', type: 'number' }],
+  run: async ({ id }, ctx) => {
+    const { listSessions, resumeSession, currentSessionId } = await sessionMod();
+    if (!id) {
+      const sessions0 = listSessions();
+      return ctx.openForm({ mode: 'resume', sessions: sessions0, current: currentSessionId() });
+    }
+    if (false) {
+      const sessions = listSessions();
+      if (!sessions.length) return ctx.print('No sessions yet. Use /new');
+      const cur = currentSessionId();
+      return ctx.print(
+        sessions
+          .map((s) => `${s.id === cur ? '★' : ' '} SESSION-${s.id}${s.team ? ' [team]' : ''} — ${s.summary}`)
+          .join('\n') + '\n\nUse /resume <id> to switch'
+      );
+    }
+    const s = resumeSession(id);
+    if (!s) return ctx.print(`SESSION-${id} not found`);
+    ctx.print(`Resumed SESSION-${id}`);
+  }
+});
+
+defineCommand({
+  name: 'alone',
+  description: 'Toggle solo-only mode (never launch subagents)',
+  run: async (_, ctx) => {
+    const { isSoloOnly, setSoloOnly } = await sessionMod();
+    const next = setSoloOnly(!isSoloOnly());
+    ctx.print(next ? 'Solo-only mode ON — Levi will never launch subagents.' : 'Solo-only mode OFF — Levi may launch subagents when needed.');
+  }
+});

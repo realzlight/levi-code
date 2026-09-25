@@ -8,18 +8,21 @@ import { setLatestInput } from './state.js';
 import Palette, { paletteHeight } from './Palette.js';
 import Footer, { activeModel } from './Footer.js';
 import ModelForm from './ModelForm.js';
+import SessionPicker from './SessionPicker.js';
 import { filterCommands, runCapture } from './commands.js';
+import { currentSessionId, getTitle, setTitle, appendMessage, loadMessages, resumeSession, getSummary } from '../agent/session.js';
+import { generateTitle } from '../agent/title.js';
+import { runAgent } from '../agent/loop.js';
+import { maybeCompact } from '../agent/compact.js';
 import path from "node:path";
-import {fileURLToPath} from "node:url";
+import { fileURLToPath } from "node:url";
+import readline from 'node:readline/promises';
+
 const h = React.createElement;
 const GRAY = '#888888';
 const BORDER = '#999999';
 const HIGHLIGHT_BG = '#2a2a2a';
 const DOT_COLOR = '#ffffff';
-const AGENT_RESPONSE = "Yoo"
-
-
-
 
 function shortenHome(dir) {
   const home = os.homedir();
@@ -41,7 +44,7 @@ function useTerminalSize() {
 
 function messageCost(message) {
   const lineCount = message.text.split('\n').length;
-  return lineCount + 1; // +1 for the message's own marginBottom
+  return lineCount + 1;
 }
 
 function computeWindow(messages, scrollOffset, availableRows) {
@@ -71,12 +74,19 @@ function Rule() {
 
 const GREETING = getGreeting();
 
+function sessionLine() {
+  const id = currentSessionId();
+  if (!id) return 'Abyssal \u2022 Discussion About CLI';
+  const title = getTitle(id);
+  return `SESSION-${id}${title ? ' \u2014 ' + title : ''}`;
+}
+
 function Header({ mascot }) {
   return h(Box, { alignItems: 'center' },
     mascot ? h(Text, null, mascot) : null,
     h(Box, { flexDirection: 'column', marginLeft: mascot ? 3 : 0 },
       h(Text, { color: 'white', bold: true }, 'Levi Code ', h(Text, { color: GRAY }, 'v2.1.25')),
-      h(Text, { color: GRAY }, 'Abyssal \u2022 Discussion About CLI'),
+      h(Text, { color: GRAY }, sessionLine()),
       h(Text, { color: '#c4c4c4' }, GREETING)
     )
   );
@@ -117,8 +127,13 @@ function InputBox({ value }) {
   );
 }
 
+let savedMessages = [];
+let app;
+
 function App({ mascot }) {
-  const [messages, setMessages] = useState([]);
+  const [messages, setMessages] = useState(savedMessages);
+  useEffect(() => { savedMessages = messages; }, [messages]);
+
   const [input, setInput] = useState('');
   const [scrollOffset, setScrollOffset] = useState(0);
   const [sel, setSel] = useState(0);
@@ -131,9 +146,10 @@ function App({ mascot }) {
   const active = Math.min(sel, Math.max(matches.length - 1, 0));
   useEffect(() => { setSel(0); setClosed(false); }, [input]);
   const fill = (cmd) => setInput('/' + cmd.name + ' ');
+
   async function runSlash(text) {
     setMessages((prev) => [...prev, { role: 'user', text }]);
-    const out = await runCapture(text, { clear: () => setMessages([]), exit, openForm: setForm });
+    const out = await runCapture(text, { clear: () => setMessages([]), exit, suspend, openForm: setForm });
     if (out) setMessages((prev) => [...prev, { role: 'agent', text: out }]);
   }
 
@@ -144,11 +160,31 @@ function App({ mascot }) {
     setScrollOffset(0);
     setLatestInput(text);
     if (text.startsWith('/')) { runSlash(text); return; }
-    setMessages((prev) => [
-      ...prev,
-      { role: 'user', text },
-      { role: 'agent', text: AGENT_RESPONSE }
-    ]);
+
+    setMessages((prev) => [...prev, { role: 'user', text }, { role: 'agent', text: '...' }]);
+
+    (async () => {
+      const id = currentSessionId();
+      if (id && !getTitle(id)) setTitle(id, await generateTitle(text));
+
+      const onStep = (kind, data) => {
+        if (kind === 'tool_call') {
+          setMessages((prev) => [...prev.slice(0, -1), { role: 'agent', text: `${data.name}(${JSON.stringify(data.args)})` }]);
+        }
+      };
+
+      let reply;
+      try {
+        reply = await runAgent(text, { onStep });
+      } catch (e) {
+        reply = `Error: ${e.message}`;
+      }
+
+      appendMessage(id, 'user', text);
+      appendMessage(id, 'agent', reply);
+      setMessages((prev) => [...prev.slice(0, -1), { role: 'agent', text: reply }]);
+      maybeCompact(id);
+    })();
   }
 
   useInput((char, key) => {
@@ -242,7 +278,16 @@ function App({ mascot }) {
     paletteOn ? h(Palette, { matches, active }) : null,
     h(Box, { flexShrink: 0, flexDirection: 'column' },
       h(Rule),
-      form ? h(ModelForm, { key: form.mode + (form.name ?? ''), mode: form.mode, name: form.name, onDone: () => setForm(null) }) : h(InputBox, { value: input }),
+      form
+        ? (form.mode === 'resume'
+            ? h(SessionPicker, {
+                sessions: form.sessions,
+                current: form.current,
+                onPick: (id) => { resumeSession(id); const s = getSummary(id); const msgs = loadMessages(id); setMessages(s ? [{ role: 'agent', text: '[recap] ' + s }, ...msgs] : msgs); setScrollOffset(0); setForm(null); },
+                onCancel: () => setForm(null)
+              })
+            : h(ModelForm, { key: form.mode + (form.name ?? ''), mode: form.mode, name: form.name, onDone: () => setForm(null) }))
+        : h(InputBox, { value: input }),
       h(Rule)
     ),
 
@@ -250,24 +295,13 @@ function App({ mascot }) {
   );
 }
 
-//let mascot = '';
-//try {
-//  mascot = await terminalImage.file(path.join(process.cwd(), 'assets', 'mascot.png'), { width: 10 });
-//} catch {
-//  mascot = '';
-//}
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 let mascot = "";
 
 try {
-  const mascotPath = path.join(
-    __dirname,
-    "assets",
-    "mascot.png"
-  );
-
+  const mascotPath = path.join(__dirname, "assets", "mascot.png");
   mascot = await terminalImage.file(mascotPath, {
     width: 10,
     preserveAspectRatio: true
@@ -276,5 +310,27 @@ try {
   mascot = "";
 }
 
-execaSync(process.platform === 'win32' ? 'cls' : 'clear', { shell: true, stdio: 'inherit' });
-render(h(App, { mascot }));
+const clearScreen = () =>
+  execaSync(process.platform === 'win32' ? 'cls' : 'clear', { shell: true, stdio: 'inherit' });
+
+function mount() {
+  clearScreen();
+  app = render(h(App, { mascot }));
+}
+
+async function suspend(fn) {
+  await new Promise((r) => setTimeout(r, 50));
+  app.unmount();
+  clearScreen();
+  try {
+    await fn();
+  } catch (e) {
+    console.error(e.message);
+  }
+  const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+  await rl.question('\n\x1b[2mPress Enter to return...\x1b[0m');
+  rl.close();
+  mount();
+}
+
+mount();
