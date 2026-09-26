@@ -75,6 +75,20 @@ function nextClusterNum(clusters) {
   return clusters.length ? Math.max(...clusters.map((c) => c.num)) + 1 : 1;
 }
 
+function autoCompleteCheck(cluster) {
+  const allDone = cluster.tasks.length > 0 && cluster.tasks.every((t) => t.done);
+  if (allDone && cluster.status !== 'completed') {
+    cluster.status = 'completed';
+    cluster.completedDate = new Date().toISOString().slice(0, 10);
+    const summaryText = 'Completed: ' + cluster.tasks.map((t) => t.text).join(', ');
+    cluster.summary = summaryText;
+  } else if (!allDone && cluster.status === 'completed') {
+    cluster.status = 'active';
+    cluster.completedDate = null;
+    cluster.summary = '';
+  }
+}
+
 export function addCluster(id, title, taskTexts) {
   const clusters = parseTasks(id);
   const num = nextClusterNum(clusters);
@@ -98,18 +112,50 @@ export function setTaskDone(id, clusterNum, taskIndex, done = true) {
   if (!cluster || !cluster.tasks[taskIndex]) return false;
 
   cluster.tasks[taskIndex].done = done;
+  autoCompleteCheck(cluster);
 
-  const allDone = cluster.tasks.every((t) => t.done);
-  if (allDone && cluster.status !== 'completed') {
-    cluster.status = 'completed';
-    cluster.completedDate = new Date().toISOString().slice(0, 10);
-    cluster.summary = `Completed: ${cluster.tasks.map((t) => t.text).join(', ')}`;
-  } else if (!allDone && cluster.status === 'completed') {
+  writeClusters(id, clusters);
+  return true;
+}
+
+export function editTask(id, clusterNum, taskIndex, newText) {
+  const clusters = parseTasks(id);
+  const cluster = clusters.find((c) => c.num === clusterNum);
+  if (!cluster || !cluster.tasks[taskIndex]) return false;
+  cluster.tasks[taskIndex].text = newText;
+  writeClusters(id, clusters);
+  return true;
+}
+
+export function deleteTask(id, clusterNum, taskIndex) {
+  const clusters = parseTasks(id);
+  const cluster = clusters.find((c) => c.num === clusterNum);
+  if (!cluster || !cluster.tasks[taskIndex]) return false;
+  cluster.tasks.splice(taskIndex, 1);
+  autoCompleteCheck(cluster);
+  writeClusters(id, clusters);
+  return true;
+}
+
+export function deleteCluster(id, clusterNum) {
+  const clusters = parseTasks(id);
+  const idx = clusters.findIndex((c) => c.num === clusterNum);
+  if (idx === -1) return false;
+  clusters.splice(idx, 1);
+  writeClusters(id, clusters);
+  return true;
+}
+
+export function addTaskToCluster(id, clusterNum, text) {
+  const clusters = parseTasks(id);
+  const cluster = clusters.find((c) => c.num === clusterNum);
+  if (!cluster) return false;
+  cluster.tasks.push({ text, done: false });
+  if (cluster.status === 'completed') {
     cluster.status = 'active';
     cluster.completedDate = null;
     cluster.summary = '';
   }
-
   writeClusters(id, clusters);
   return true;
 }

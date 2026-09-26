@@ -3,6 +3,9 @@ import os from 'node:os';
 import path from 'node:path';
 import { chatWithTools } from './client.js';
 import { toolDefs, runTool } from './tools.js';
+import { think } from './thought.js';
+import { currentSessionId, getProject } from './session.js';
+import { addCluster } from './tasks.js';
 
 function currentUserName() {
   try {
@@ -14,14 +17,33 @@ function currentUserName() {
   }
 }
 
-function buildSystem() {
+function buildSystem(thought) {
   const name = currentUserName();
   const intro = name
     ? `You are Levi, a coding assistant with file and shell access via tools. You're talking with ${name} — use their name naturally sometimes, don't force it every message.`
     : `You are Levi, a coding assistant with file and shell access via tools.`;
 
+  let retrievalNote;
+  if (!thought.retrieval) {
+    retrievalNote = `A pre-check already determined this message doesn't need any memory/context lookup — just answer directly, don't read memory files for this one.`;
+  } else if (thought.files.length) {
+    const ranked = [...thought.files]
+      .sort((a, b) => b.confidence - a.confidence)
+      .map((f) => `${f.path} (confidence ${f.confidence})`)
+      .join('\n  ');
+    retrievalNote = `A pre-check flagged these files as likely relevant to this message, ranked by confidence — check the high-confidence ones first, but use your judgment, this is a hint not a guarantee:\n  ${ranked}`;
+  } else {
+    retrievalNote = `A pre-check flagged this message as needing context, but didn't find an existing file that obviously matches — check MEMORY/ and PROJECTS/ yourself if needed.`;
+  }
+
+  const clusterNote = thought.clusterCreated
+    ? `A pre-check already created task cluster ${thought.clusterCreated.num} — "${thought.clusterCreated.title}" with an initial task breakdown, based on this message. It's just a starting point: edit, add, delete, or reorganize the tasks in it as you actually work, don't treat it as fixed.`
+    : '';
+
   return `${intro}
 Use read_file/write_file/edit_file/bash when the task needs real info or changes. Don't guess at file contents you haven't read.
+
+${retrievalNote}
 
 ~/.levi/MEMORY/ holds saved context about the user, one line each:
 - USER.md: who the user is, stable facts (name, role, setup)
@@ -37,9 +59,12 @@ Deciding if something is a project: if the user is clearly building a distinct t
 
 set_project only creates the memory folder (~/.levi/PROJECTS/<name>/) — it does NOT decide where the actual project code lives. Before writing any project code files, always ask the user where they want the code itself: home directory (~/<name>), current directory (./<name>), or another path they specify. Do not assume or default silently. Once they answer, use that exact absolute path for every file you write, and record that same absolute path (not a relative one like ./name/) as the Location in DATA.md.
 
-Before answering something that depends on stored context, check the relevant file(s) yourself (read_file/bash). If unsure what exists, run bash('ls -R ~/.levi/MEMORY ~/.levi/PROJECTS') once to see the real structure instead of guessing paths, then read_file the ones that look right — don't mention this checking unless it matters.
+Before answering something that depends on stored context, check the relevant file(s) yourself (read_file/bash) using the pre-check hint above as a starting point. If unsure what exists, run bash('ls -R ~/.levi/MEMORY ~/.levi/PROJECTS') once to see the real structure instead of guessing paths — don't mention this checking unless it matters.
 
 When you learn a durable fact worth remembering, decide which single file it belongs in using the descriptions above, then write_file or edit_file it yourself in the same turn. Don't ask the user where to save it and don't skip saving because you're unsure — pick the best-fit file and go. Keep entries short, one fact per line. Don't check files one by one to find the right one — list what's in MEMORY/ and PROJECTS/ first, then judge which file fits.
+
+Tasks: the current session has a TASK.md tracking clusters of related work (a cluster = a named group of subtasks). ${clusterNote}
+For NEW multi-step work not already covered by an existing cluster, call add_task_cluster with a short title and the subtasks. As you finish each subtask, call set_task_done for it — a cluster auto-completes with a date and summary once every task in it is done. Use edit_task/delete_task/add_task_to_cluster/delete_cluster freely as the real work diverges from the initial plan — clusters are a living plan, not a fixed spec. Don't create a cluster for simple one-off requests. Use get_tasks if you need to check current status before continuing work.
 
 Reading files, MEMORY included: check the file's size first (bash('wc -c <path>') or note the size read_file/list output gives you) before deciding how to read it. For a small file, just read_file the whole thing. For a large file, don't dump the whole thing by default — use bash grep to locate the relevant part, read_file only if truly needed, and edit_file (exact old_str/new_str) for changes instead of rewriting the whole file with write_file. Only dump a full large file when the situation is genuinely high-stakes: a core/critical file, real debugging of something serious where partial context could miss the actual bug, or similar rare cases — not as a routine default, since indiscriminate full dumps waste context and make it easier for a bad edit to land wrong. When in doubt, start narrow (grep/snippet), verify, then widen only if that's not enough.
 
@@ -47,12 +72,25 @@ Use list_commands if you need to know what slash commands or tools exist. Talk l
 }
 
 // messages = [{ role: 'user'|'assistant', content: string }]
-// onStep(kind, data) — optional progress callback: 'tool_call' | 'tool_result' | 'done'
-export async function runAgent(userMessage, { onStep, maxSteps = 20 } = {}) {
+// onStep(kind, data) — optional progress callback: 'tool_call' | 'tool_result' | 'done' | 'thought'
+export async function runAgent(userMessage, { onStep, maxSteps } = {}) {
+  const sessionId = currentSessionId();
+  const projectName = sessionId ? getProject(sessionId) : null;
+
+  const thought = await think(userMessage, { projectName });
+  onStep?.('thought', thought);
+
+  if (thought.task_cluster && sessionId) {
+    const num = addCluster(sessionId, thought.task_cluster.title, thought.task_cluster.tasks);
+    thought.clusterCreated = { num, title: thought.task_cluster.title };
+  }
+
+  const effectiveMaxSteps = maxSteps || thought.max_turns || 20;
+  const system = buildSystem(thought);
   const messages = [{ role: 'user', content: userMessage }];
 
-  for (let step = 0; step < maxSteps; step++) {
-    const { text, toolCalls, message } = await chatWithTools(messages, { system: buildSystem(), tools: toolDefs });
+  for (let step = 0; step < effectiveMaxSteps; step++) {
+    const { text, toolCalls, message } = await chatWithTools(messages, { system, tools: toolDefs });
 
     if (!toolCalls.length) {
       onStep?.('done', text);

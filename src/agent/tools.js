@@ -3,6 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { execa } from 'execa';
 import { currentSessionId, setProject } from './session.js';
+import { addCluster, setTaskDone, getTasks, editTask, deleteTask, deleteCluster, addTaskToCluster } from './tasks.js';
 
 function resolve(p) {
   if (p === '~') return os.homedir();
@@ -86,6 +87,103 @@ export const toolDefs = [
         required: ['name']
       }
     }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'add_task_cluster',
+      description: 'Create a new task cluster in the current session\'s TASK.md — a named, numbered group of related tasks/roadmap items. Use this when a request breaks down into multiple concrete steps worth tracking.',
+      parameters: {
+        type: 'object',
+        properties: {
+          title: { type: 'string', description: 'Short title for this cluster, e.g. "Ghost AI" or "Scoring system"' },
+          tasks: { type: 'array', items: { type: 'string' }, description: 'List of task descriptions, one per subtask' }
+        },
+        required: ['title', 'tasks']
+      }
+    }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'set_task_done',
+      description: 'Mark a task within a cluster done or not done, by cluster number and the task\'s 0-based index within that cluster. When every task in a cluster is marked done, the cluster auto-completes with a date and summary.',
+      parameters: {
+        type: 'object',
+        properties: {
+          cluster: { type: 'number', description: 'Cluster number, e.g. 1' },
+          taskIndex: { type: 'number', description: '0-based index of the task within the cluster' },
+          done: { type: 'boolean', description: 'true to mark done, false to un-mark. Defaults to true.' }
+        },
+        required: ['cluster', 'taskIndex']
+      }
+    }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'get_tasks',
+      description: 'Read all task clusters in the current session\'s TASK.md, with their status and individual task states.',
+      parameters: { type: 'object', properties: {} }
+    }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'edit_task',
+      description: 'Change the text of an existing task within a cluster, by cluster number and 0-based task index.',
+      parameters: {
+        type: 'object',
+        properties: {
+          cluster: { type: 'number' },
+          taskIndex: { type: 'number' },
+          text: { type: 'string', description: 'New task text' }
+        },
+        required: ['cluster', 'taskIndex', 'text']
+      }
+    }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'delete_task',
+      description: 'Remove a single task from a cluster, by cluster number and 0-based task index.',
+      parameters: {
+        type: 'object',
+        properties: {
+          cluster: { type: 'number' },
+          taskIndex: { type: 'number' }
+        },
+        required: ['cluster', 'taskIndex']
+      }
+    }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'delete_cluster',
+      description: 'Remove an entire task cluster and all its tasks, by cluster number.',
+      parameters: {
+        type: 'object',
+        properties: { cluster: { type: 'number' } },
+        required: ['cluster']
+      }
+    }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'add_task_to_cluster',
+      description: 'Add a new task to an existing cluster (instead of creating a whole new cluster). Re-opens the cluster if it was already completed.',
+      parameters: {
+        type: 'object',
+        properties: {
+          cluster: { type: 'number' },
+          text: { type: 'string' }
+        },
+        required: ['cluster', 'text']
+      }
+    }
   }
 ];
 
@@ -149,6 +247,63 @@ export async function runTool(name, args) {
         if (!fs.existsSync(p)) fs.writeFileSync(p, content);
       }
       return `Project set to "${projectName}". Future memory facts go to ~/.levi/PROJECTS/${projectName}/`;
+    }
+
+    if (name === 'add_task_cluster') {
+      const id = currentSessionId();
+      if (!id) return 'Error: no active session';
+      if (!args.title || !Array.isArray(args.tasks) || !args.tasks.length) return 'Error: title and non-empty tasks array required';
+      const num = addCluster(id, args.title, args.tasks);
+      return `Created cluster ${num} — "${args.title}" with ${args.tasks.length} task(s)`;
+    }
+
+    if (name === 'set_task_done') {
+      const id = currentSessionId();
+      if (!id) return 'Error: no active session';
+      const done = args.done === undefined ? true : !!args.done;
+      const ok = setTaskDone(id, args.cluster, args.taskIndex, done);
+      if (!ok) return `Error: cluster ${args.cluster} or task index ${args.taskIndex} not found`;
+      return `Task ${args.taskIndex} in cluster ${args.cluster} marked ${done ? 'done' : 'not done'}`;
+    }
+
+    if (name === 'get_tasks') {
+      const id = currentSessionId();
+      if (!id) return 'Error: no active session';
+      const clusters = getTasks(id);
+      if (!clusters.length) return '(no task clusters yet)';
+      return JSON.stringify(clusters, null, 2);
+    }
+
+    if (name === 'edit_task') {
+      const id = currentSessionId();
+      if (!id) return 'Error: no active session';
+      const ok = editTask(id, args.cluster, args.taskIndex, args.text);
+      if (!ok) return `Error: cluster ${args.cluster} or task index ${args.taskIndex} not found`;
+      return `Task ${args.taskIndex} in cluster ${args.cluster} updated`;
+    }
+
+    if (name === 'delete_task') {
+      const id = currentSessionId();
+      if (!id) return 'Error: no active session';
+      const ok = deleteTask(id, args.cluster, args.taskIndex);
+      if (!ok) return `Error: cluster ${args.cluster} or task index ${args.taskIndex} not found`;
+      return `Task ${args.taskIndex} removed from cluster ${args.cluster}`;
+    }
+
+    if (name === 'delete_cluster') {
+      const id = currentSessionId();
+      if (!id) return 'Error: no active session';
+      const ok = deleteCluster(id, args.cluster);
+      if (!ok) return `Error: cluster ${args.cluster} not found`;
+      return `Cluster ${args.cluster} deleted`;
+    }
+
+    if (name === 'add_task_to_cluster') {
+      const id = currentSessionId();
+      if (!id) return 'Error: no active session';
+      const ok = addTaskToCluster(id, args.cluster, args.text);
+      if (!ok) return `Error: cluster ${args.cluster} not found`;
+      return `Task added to cluster ${args.cluster}`;
     }
 
     return `Error: unknown tool ${name}`;
