@@ -46,7 +46,9 @@ const EXTRACT_PROMPT = `Review this conversation and pull out anything durable w
 }
 Only include real, durable info actually present in the conversation. Use empty arrays for anything not present. status is one of active|stale|unconfirmed. confidence is 0.0-1.0, your honest estimate. patterns_summary is exactly 3 short lines summarizing the patterns file as a whole (can be generic like "No strong patterns yet" if patterns is empty).`;
 
-const USER_SUMMARY_PROMPT = `You will be given a list of facts (one per line, each starting with "-"). Write exactly 3 short lines summarizing who this is / what this project is, for someone scanning fast. Plain text, no markdown, no numbering, just 3 lines.`;
+const USER_PERSON_SUMMARY_PROMPT = `You are summarizing USER.md, a file of facts about a real HUMAN user, not a project, system, or app. You will be given a list of facts (one per line, each starting with "-"). Write exactly 3 short factual lines describing this specific person based ONLY on the facts given — do not invent traits, do not describe them as a project/system/tool. If a fact is unclear or filler, ignore it rather than inventing meaning. Plain text, no markdown, no numbering, just 3 lines.`;
+
+const USER_PROJECT_SUMMARY_PROMPT = `You are summarizing DATA.md, a file of facts about a specific software project being built. You will be given a list of facts (one per line, each starting with "-"). Write exactly 3 short factual lines describing what this project is and where things stand, based ONLY on the facts given — do not invent details. Plain text, no markdown, no numbering, just 3 lines.`;
 
 function readLines(file) {
   try {
@@ -105,7 +107,7 @@ function parseUserFacts(raw) {
 // Cheap path (append only) under the size threshold; full rewrite with a
 // regenerated 3-line summary once the fact list is big enough that scanning
 // it raw stops being practical.
-async function mergeUserFacts(file, newFacts) {
+async function mergeUserFacts(file, newFacts, isProject = false) {
   if (!newFacts.length) return;
   let raw = '';
   try {
@@ -139,7 +141,7 @@ async function mergeUserFacts(file, newFacts) {
   // important: full dump, regenerate the top summary so a big file stays scannable
   let summaryLines;
   try {
-    const res = await chat([{ role: 'user', content: combined.join('\n') }], { system: USER_SUMMARY_PROMPT });
+    const res = await chat([{ role: 'user', content: combined.join('\n') }], { system: isProject ? USER_PROJECT_SUMMARY_PROMPT : USER_PERSON_SUMMARY_PROMPT });
     summaryLines = res.text.trim().split('\n').filter(Boolean).slice(0, 3);
   } catch {
     summaryLines = [];
@@ -163,7 +165,7 @@ async function extractToMemory(transcript, projectName = null) {
   const root = projectName ? path.join(LEVI_HOME, 'PROJECTS', projectName) : MEMORY_ROOT;
   const dataFile = projectName ? 'DATA.md' : 'USER.md';
 
-  await mergeUserFacts(path.join(root, dataFile), data.user || []);
+  await mergeUserFacts(path.join(root, dataFile), data.user || [], !!projectName);
   mergePlain(path.join(root, 'PREFERENCE.md'), data.preference || []);
   if ((data.patterns || []).length) {
     mergePatterns(path.join(root, 'PATTERNS.md'), data.patterns, data.patterns_summary);
