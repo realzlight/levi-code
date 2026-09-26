@@ -10,7 +10,7 @@ import Footer, { activeModel } from './Footer.js';
 import ModelForm from './ModelForm.js';
 import SessionPicker from './SessionPicker.js';
 import { filterCommands, runCapture } from './commands.js';
-import { currentSessionId, getTitle, setTitle, appendMessage, loadMessages, resumeSession, getSummary } from '../agent/session.js';
+import { currentSessionId, getTitle, setTitle, appendMessage, loadMessages, resumeSession, getSummary, getProject } from '../agent/session.js';
 import { generateTitle } from '../agent/title.js';
 import { runAgent } from '../agent/loop.js';
 import { maybeCompact } from '../agent/compact.js';
@@ -183,7 +183,7 @@ function App({ mascot }) {
       appendMessage(id, 'user', text);
       appendMessage(id, 'agent', reply);
       setMessages((prev) => [...prev.slice(0, -1), { role: 'agent', text: reply }]);
-      maybeCompact(id);
+      maybeCompact(id, getProject(id));
     })();
   }
 

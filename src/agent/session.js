@@ -32,6 +32,7 @@ export function createSession() {
   fs.writeFileSync(path.join(dir, 'TASKS.JSON'), '[]\n');
   fs.writeFileSync(path.join(dir, 'REPORT.MD'), '');
   fs.writeFileSync(path.join(dir, 'TITLE.TXT'), '');
+  fs.writeFileSync(path.join(dir, 'PROJECT.TXT'), '');
 
   const config = readConfig();
   config.currentSession = id;
@@ -56,7 +57,7 @@ export function listSessions() {
         if (first.startsWith('summary:')) summary = first.slice(8).trim() || summary;
       } catch {}
       const title = getTitle(id);
-      return { id, title, summary, team: fs.existsSync(path.join(sessionDir(id), 'TEAM')) };
+      return { id, title, summary, project: getProject(id), team: fs.existsSync(path.join(sessionDir(id), 'TEAM')) };
     });
 }
 
@@ -72,6 +73,19 @@ export function resumeSession(id) {
     id,
     buffer: fs.readFileSync(path.join(dir, 'BUFFER.MD'), 'utf-8')
   };
+}
+
+export function getProject(id) {
+  try {
+    const val = fs.readFileSync(path.join(sessionDir(id), 'PROJECT.TXT'), 'utf-8').trim();
+    return val || null;
+  } catch {
+    return null;
+  }
+}
+
+export function setProject(id, name) {
+  fs.writeFileSync(path.join(sessionDir(id), 'PROJECT.TXT'), (name || '').trim());
 }
 
 export function getTitle(id) {

@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { execa } from 'execa';
+import { currentSessionId, setProject } from './session.js';
 
 function resolve(p) {
   if (p === '~') return os.homedir();
@@ -73,6 +74,18 @@ export const toolDefs = [
       description: "List everything Levi can do: both slash commands the user can type, and the tools Levi can call itself.",
       parameters: { type: 'object', properties: {} }
     }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'set_project',
+      description: 'Mark the current session as working on a specific project. Creates ~/.levi/PROJECTS/<name>/ with DATA.md, PREFERENCE.md, PATTERNS.md if they do not exist, and points future memory writes/compaction at that folder instead of the global MEMORY/ files.',
+      parameters: {
+        type: 'object',
+        properties: { name: { type: 'string', description: 'Short lowercase project name, e.g. "pacman" or "calculator"' } },
+        required: ['name']
+      }
+    }
   }
 ];
 
@@ -116,6 +129,26 @@ export async function runTool(name, args) {
     if (name === 'bash') {
       const r = await execa(args.command, { shell: true, reject: false, all: true });
       return r.all || `(exit ${r.exitCode}, no output)`;
+    }
+
+    if (name === 'set_project') {
+      const projectName = (args.name || '').trim().toLowerCase().replace(/\s+/g, '-');
+      if (!projectName) return 'Error: project name required';
+      const id = currentSessionId();
+      if (!id) return 'Error: no active session';
+      setProject(id, projectName);
+      const root = path.join(os.homedir(), '.levi', 'PROJECTS', projectName);
+      fs.mkdirSync(root, { recursive: true });
+      const seed = {
+        'DATA.md': '# DATA\n',
+        'PREFERENCE.md': '# PREFERENCES\n',
+        'PATTERNS.md': 'summary:\nNo strong patterns yet.\n\n\n'
+      };
+      for (const [f, content] of Object.entries(seed)) {
+        const p = path.join(root, f);
+        if (!fs.existsSync(p)) fs.writeFileSync(p, content);
+      }
+      return `Project set to "${projectName}". Future memory facts go to ~/.levi/PROJECTS/${projectName}/`;
     }
 
     return `Error: unknown tool ${name}`;
