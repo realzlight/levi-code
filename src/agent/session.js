@@ -145,10 +145,23 @@ export function currentSessionId() {
 // Searches every session's title and BUFFER.MD content for a keyword.
 // Returns matches sorted by relevance: title matches first, then content matches,
 // each with a short snippet of surrounding context.
+const STOPWORDS = new Set(['the', 'a', 'an', 'about', 'what', 'did', 'we', 'decide', 'is', 'was', 'were', 'to', 'of', 'for', 'and', 'or', 'in', 'on', 'that', 'this', 'it', 'with', 'he', 'she', 'do', 'be', 'so', 'at', 'by', 'up', 'no', 'you', 'your', 'last', 'time']);
+
+function keywordsOf(text) {
+  return text
+    .toLowerCase()
+    .split(/[^a-z0-9]+/)
+    .filter((w) => w.length > 1 && !STOPWORDS.has(w));
+}
+
+// Searches every session's title and BUFFER.MD content for keywords from the
+// query (word-level match, not exact phrase — "UI framework" matches text
+// containing "UI" and/or "framework" separately). Returns matches sorted by
+// how many distinct keywords matched, title matches ranked highest.
 export function searchSessions(query, { excludeId } = {}) {
   if (!fs.existsSync(BUFFER_ROOT)) return [];
-  const q = query.trim().toLowerCase();
-  if (!q) return [];
+  const keywords = keywordsOf(query);
+  if (!keywords.length) return [];
 
   const results = [];
   const ids = fs
@@ -161,7 +174,8 @@ export function searchSessions(query, { excludeId } = {}) {
     if (id === excludeId) continue;
 
     const title = getTitle(id);
-    const titleMatch = title.toLowerCase().includes(q);
+    const lowerTitle = title.toLowerCase();
+    const titleMatches = keywords.filter((k) => lowerTitle.includes(k));
 
     let raw = '';
     try {
@@ -171,22 +185,29 @@ export function searchSessions(query, { excludeId } = {}) {
     }
 
     const lowerRaw = raw.toLowerCase();
-    const idx = lowerRaw.indexOf(q);
-    const contentMatch = idx !== -1;
+    const contentMatches = keywords.filter((k) => lowerRaw.includes(k));
 
-    if (!titleMatch && !contentMatch) continue;
+    if (!titleMatches.length && !contentMatches.length) continue;
 
     let snippet = '';
-    if (contentMatch) {
+    if (contentMatches.length) {
+      const idx = lowerRaw.indexOf(contentMatches[0]);
       const start = Math.max(0, idx - 80);
-      const end = Math.min(raw.length, idx + q.length + 80);
+      const end = Math.min(raw.length, idx + contentMatches[0].length + 80);
       snippet = (start > 0 ? '...' : '') + raw.slice(start, end).replace(/\n+/g, ' ').trim() + (end < raw.length ? '...' : '');
     }
 
-    results.push({ id, title, titleMatch, contentMatch, snippet });
+    results.push({
+      id,
+      title,
+      titleMatch: titleMatches.length > 0,
+      contentMatch: contentMatches.length > 0,
+      matchedKeywords: [...new Set([...titleMatches, ...contentMatches])],
+      snippet
+    });
   }
 
-  results.sort((a, b) => (b.titleMatch - a.titleMatch) || (b.contentMatch - a.contentMatch));
+  results.sort((a, b) => b.matchedKeywords.length - a.matchedKeywords.length || (b.titleMatch - a.titleMatch));
   return results;
 }
 

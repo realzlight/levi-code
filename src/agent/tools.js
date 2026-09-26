@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { execa } from 'execa';
-import { currentSessionId, setProject } from './session.js';
+import { currentSessionId, setProject, searchSessions, readSessionOverview } from './session.js';
 import { addCluster, setTaskDone, getTasks, editTask, deleteTask, deleteCluster, addTaskToCluster } from './tasks.js';
 
 function resolve(p) {
@@ -184,6 +184,30 @@ export const toolDefs = [
         required: ['cluster', 'text']
       }
     }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'search_sessions',
+      description: 'Search other sessions (title and content) for a keyword. Use when the user refers to something discussed "before", "earlier", "last time", or in another session, and it is not in the current buffer.',
+      parameters: {
+        type: 'object',
+        properties: { query: { type: 'string', description: 'Keyword or short phrase to search for' } },
+        required: ['query']
+      }
+    }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'read_session',
+      description: 'Read another session\'s summary (if it has one) or a truncated view of its raw buffer, by session id. Use after search_sessions finds a likely match.',
+      parameters: {
+        type: 'object',
+        properties: { id: { type: 'number', description: 'Session id, from search_sessions results' } },
+        required: ['id']
+      }
+    }
   }
 ];
 
@@ -304,6 +328,19 @@ export async function runTool(name, args) {
       const ok = addTaskToCluster(id, args.cluster, args.text);
       if (!ok) return `Error: cluster ${args.cluster} not found`;
       return `Task added to cluster ${args.cluster}`;
+    }
+
+    if (name === 'search_sessions') {
+      const currentId = currentSessionId();
+      const results = searchSessions(args.query, { excludeId: currentId });
+      if (!results.length) return 'No matching sessions found.';
+      return JSON.stringify(results, null, 2);
+    }
+
+    if (name === 'read_session') {
+      const overview = readSessionOverview(args.id);
+      if (!overview) return `Error: session ${args.id} not found`;
+      return JSON.stringify(overview, null, 2);
     }
 
     return `Error: unknown tool ${name}`;

@@ -5,7 +5,7 @@ import { chatWithTools } from './client.js';
 import { toolDefs, runTool } from './tools.js';
 import { think } from './thought.js';
 import { currentSessionId, getProject } from './session.js';
-import { addCluster } from './tasks.js';
+import { addCluster, getTasks } from './tasks.js';
 
 function currentUserName() {
   try {
@@ -24,7 +24,9 @@ function buildSystem(thought) {
     : `You are Levi, a coding assistant with file and shell access via tools.`;
 
   let retrievalNote;
-  if (!thought.retrieval) {
+  if (thought.cross_session) {
+    retrievalNote = `A pre-check determined this message refers to a PAST CONVERSATION, not current memory files. Go straight to search_sessions with a short keyword from the message, then read_session on the best match. Don't bother checking MEMORY/PROJECTS files for this one unless search_sessions comes up empty.`;
+  } else if (!thought.retrieval) {
     retrievalNote = `A pre-check already determined this message doesn't need any memory/context lookup — just answer directly, don't read memory files for this one.`;
   } else if (thought.files.length) {
     const ranked = [...thought.files]
@@ -68,6 +70,8 @@ For NEW multi-step work not already covered by an existing cluster, call add_tas
 
 Reading files, MEMORY included: check the file's size first (bash('wc -c <path>') or note the size read_file/list output gives you) before deciding how to read it. For a small file, just read_file the whole thing. For a large file, don't dump the whole thing by default — use bash grep to locate the relevant part, read_file only if truly needed, and edit_file (exact old_str/new_str) for changes instead of rewriting the whole file with write_file. Only dump a full large file when the situation is genuinely high-stakes: a core/critical file, real debugging of something serious where partial context could miss the actual bug, or similar rare cases — not as a routine default, since indiscriminate full dumps waste context and make it easier for a bad edit to land wrong. When in doubt, start narrow (grep/snippet), verify, then widen only if that's not enough.
 
+If the user references something from "before", "earlier", "last time", or another session, and it's not in the current conversation, use search_sessions to find it, then read_session on the best match to pull the actual context. Don't do this for normal context (MEMORY/PROJECTS handle that) — only when they're clearly pointing at a past conversation.
+
 Use list_commands if you need to know what slash commands or tools exist. Talk like a sharp dev friend, not a corporate assistant -- direct, casual, a little slang is fine, no "I'd be happy to" or "Great question!" filler. Be concise.`;
 }
 
@@ -85,7 +89,18 @@ export async function runAgent(userMessage, { onStep, maxSteps } = {}) {
     thought.clusterCreated = { num, title: thought.task_cluster.title };
   }
 
-  const effectiveMaxSteps = maxSteps || thought.max_turns || 20;
+  // scale by real pending task count: new cluster from this turn, or any
+  // existing incomplete clusters (picking up multi-run work), whichever is bigger
+  let pendingTasks = thought.task_cluster ? thought.task_cluster.tasks.length : 0;
+  if (sessionId) {
+    const existing = getTasks(sessionId);
+    const existingPending = existing.reduce((n, c) => n + (c.status === 'completed' ? 0 : c.tasks.filter((t) => !t.done).length), 0);
+    pendingTasks = Math.max(pendingTasks, existingPending);
+  }
+  const autoMax = pendingTasks ? pendingTasks * 4 + 10 : 0;
+  // cross-session lookups always need at least search + read + answer, enforce a floor
+  const crossSessionFloor = thought.cross_session ? 4 : 0;
+  const effectiveMaxSteps = maxSteps || Math.max(thought.max_turns || 20, autoMax, crossSessionFloor);
   const system = buildSystem(thought);
   const messages = [{ role: 'user', content: userMessage }];
 
@@ -107,5 +122,14 @@ export async function runAgent(userMessage, { onStep, maxSteps } = {}) {
     }
   }
 
-  return '(stopped: too many tool steps)';
+  if (sessionId) {
+    const clusters = getTasks(sessionId);
+    const activeCluster = clusters.find((c) => c.status !== 'completed');
+    if (activeCluster) {
+      const done = activeCluster.tasks.filter((t) => t.done).length;
+      const total = activeCluster.tasks.length;
+      return `Hit the step limit mid-work (${effectiveMaxSteps} steps). Cluster ${activeCluster.num} — "${activeCluster.title}" is at ${done}/${total} tasks done. Send another message to keep going — I'll pick up from TASK.md instead of starting over.`;
+    }
+  }
+  return '(stopped: too many tool steps, no active task cluster to report progress from)';
 }
