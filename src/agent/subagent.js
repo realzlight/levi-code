@@ -33,8 +33,12 @@ export async function runSubAgent(role, instruction, { maxSteps = 15, existingMe
     ? [...existingMessages, { role: 'user', content: instruction }]
     : [{ role: 'user', content: instruction }];
 
+  const usage = { inputTokens: 0, outputTokens: 0 };
+
   for (let step = 0; step < maxSteps; step++) {
-    const { text, toolCalls, message } = await chatWithTools(messages, { system, tools: getSubAgentToolDefs() });
+    const { text, toolCalls, message, usage: stepUsage } = await chatWithTools(messages, { system, tools: getSubAgentToolDefs() });
+    usage.inputTokens += stepUsage?.inputTokens || 0;
+    usage.outputTokens += stepUsage?.outputTokens || 0;
 
     if (!toolCalls.length) {
       if (!text || !text.trim()) {
@@ -44,10 +48,10 @@ export async function runSubAgent(role, instruction, { maxSteps = 15, existingMe
           continue;
         }
         const report = `[${role}] Ran out of steps without producing a clear report. Last state unknown — may need manual follow-up.`;
-        return { report, messages };
+        return { report, messages, usage };
       }
       messages.push(message);
-      return { report: text, messages };
+      return { report: text, messages, usage };
     }
 
     messages.push(message);
@@ -59,5 +63,5 @@ export async function runSubAgent(role, instruction, { maxSteps = 15, existingMe
   }
 
   const report = `[${role}] Hit the step limit (${maxSteps}) before finishing. Work may be partially done — check the files directly.`;
-  return { report, messages };
+  return { report, messages, usage };
 }

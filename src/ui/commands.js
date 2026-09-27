@@ -230,3 +230,30 @@ defineCommand({
     ctx.print(next ? 'Solo-only mode ON — Levi will never launch subagents.' : 'Solo-only mode OFF — Levi may launch subagents when needed.');
   }
 });
+
+defineCommand({
+  name: 'context',
+  description: 'Show total token usage for this session so far',
+  run: async (_, ctx) => {
+    const { currentSessionId } = await sessionMod();
+    const { getTotalUsage } = await import('../agent/usage.js');
+    const id = currentSessionId();
+    if (!id) return ctx.print('No active session yet.');
+    const u = getTotalUsage(id);
+    ctx.print(`SESSION-${id} total usage: ${u.inputTokens} in / ${u.outputTokens} out (${u.turnCount} turn${u.turnCount === 1 ? '' : 's'}, ${u.callCount} API call${u.callCount === 1 ? '' : 's'})`);
+  }
+});
+
+defineCommand({
+  name: 'usage',
+  description: 'Show token usage for the most recent message',
+  run: async (_, ctx) => {
+    const { currentSessionId } = await sessionMod();
+    const { getLastTurnUsage } = await import('../agent/usage.js');
+    const id = currentSessionId();
+    if (!id) return ctx.print('No active session yet.');
+    const u = getLastTurnUsage(id);
+    if (!u.callCount) return ctx.print('No usage recorded yet this session.');
+    ctx.print(`Latest message usage: ${u.inputTokens} in / ${u.outputTokens} out (${u.callCount} API call${u.callCount === 1 ? '' : 's'})`);
+  }
+});

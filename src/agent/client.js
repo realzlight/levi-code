@@ -11,8 +11,19 @@ export function activeModel() {
   return m;
 }
 
+// Normalizes token usage across both SDK response shapes.
+// anthropic: usage.input_tokens / usage.output_tokens
+// openai-compatible: usage.prompt_tokens / usage.completion_tokens
+function extractUsage(res, sdk) {
+  const u = res.usage || {};
+  if (sdk === 'anthropic') {
+    return { inputTokens: u.input_tokens || 0, outputTokens: u.output_tokens || 0 };
+  }
+  return { inputTokens: u.prompt_tokens || 0, outputTokens: u.completion_tokens || 0 };
+}
+
 // messages = [{ role: 'user' | 'assistant', content: string }]
-// returns { text, raw }
+// returns { text, raw, usage: { inputTokens, outputTokens } }
 export async function chat(messages, { system, maxTokens = 1024 } = {}) {
   const m = activeModel();
   const base = m.base_url.replace(/\/$/, '');
@@ -35,7 +46,7 @@ export async function chat(messages, { system, maxTokens = 1024 } = {}) {
 
     if (res.error) throw new Error(res.error.message || 'Anthropic API error');
     const text = res.content?.find((b) => b.type === 'text')?.text || '';
-    return { text, raw: res };
+    return { text, raw: res, usage: extractUsage(res, 'anthropic') };
   }
 
   // openai-compatible (openai, groq, gemini-openai, nvidia, ollama, ...)
@@ -53,10 +64,10 @@ export async function chat(messages, { system, maxTokens = 1024 } = {}) {
 
   if (res.error) throw new Error(res.error.message || 'OpenAI-compatible API error');
   const text = res.choices?.[0]?.message?.content || '';
-  return { text, raw: res };
+  return { text, raw: res, usage: extractUsage(res, 'openai') };
 }
 
-// same as chat(), but supports tools. Returns { text, toolCalls, raw }
+// same as chat(), but supports tools. Returns { text, toolCalls, message, raw, usage }
 // toolCalls: [{ id, name, args }] — empty if the model just answered
 export async function chatWithTools(messages, { system, tools = [], maxTokens = 2048 } = {}) {
   const m = activeModel();
@@ -90,7 +101,7 @@ export async function chatWithTools(messages, { system, tools = [], maxTokens = 
       .filter((b) => b.type === 'tool_use')
       .map((b) => ({ id: b.id, name: b.name, args: b.input }));
 
-    return { text, toolCalls, message: { role: 'assistant', content: text }, raw: res };
+    return { text, toolCalls, message: { role: 'assistant', content: text }, raw: res, usage: extractUsage(res, 'anthropic') };
   }
 
   const payload = {
@@ -116,5 +127,5 @@ export async function chatWithTools(messages, { system, tools = [], maxTokens = 
     args: JSON.parse(c.function.arguments || '{}')
   }));
 
-  return { text, toolCalls, message: msg, raw: res };
+  return { text, toolCalls, message: msg, raw: res, usage: extractUsage(res, 'openai') };
 }

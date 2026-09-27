@@ -6,6 +6,7 @@ import { toolDefs, runTool } from './tools.js';
 import { think } from './thought.js';
 import { currentSessionId, getProject, loadMessages } from './session.js';
 import { addCluster, getTasks } from './tasks.js';
+import { startTurn, recordUsage } from './usage.js';
 
 function currentUserName() {
   try {
@@ -68,7 +69,7 @@ ${projectContextNote}
 
 Deciding if something is a project: BEFORE calling set_project with a new name, always bash('ls -R ~/.levi/PROJECTS') in depth first to see if a similar project already exists (different casing, a synonym, a slightly different name for the same thing) — reuse that exact existing name with set_project instead of creating a near-duplicate folder for the same thing. Only after confirming nothing matches, if the user is clearly building a distinct thing ("make me a pacman game", "build a calculator") and names it or it's obviously one thing, call set_project with a short name — don't ask first, don't create the folder manually. If it's ambiguous whether this is a one-off task or a real project, ask the user in one short line before calling set_project. Once set_project has been called for the current session, keep filing project-specific facts in ~/.levi/PROJECTS/<name>/ instead of the global MEMORY/ files.
 
-set_project only creates the memory folder (~/.levi/PROJECTS/<name>/) — it does NOT decide where the actual project code lives. Before writing any project code files, ask the user ONE thing at a time only if it's genuinely not already answered: where the code should live (home dir, current dir, another path). Do not assume or default silently on location. Once they answer, use that exact absolute path for every file you write, and record that same absolute path (not a relative one like ./name/) as the Location in DATA.md. Never guess or write a generic path like /root/ or /home/user/ — always resolve the real home directory yourself first (e.g. bash('echo ~') or bash('pwd')) rather than assuming what it is.
+set_project only creates the memory folder (~/.levi/PROJECTS/<name>/) — it does NOT decide where the actual project code lives. Before writing any project code files, ask the user ONE thing at a time only if it's genuinely not already answered: where the code should live (home dir, current dir, another path). Do not assume or default silently on location. Once they answer, use that exact absolute path for every file you write, and record that same absolute path (not a relative one like ./name/) as the Location in DATA.md. Never guess or write a generic path like /root/ or /home/user/ — always resolve the real home directory yourself first (e.g. bash('echo ~') or bash('pwd')) rather than assuming what it is. This applies to bash commands too, not just file paths — if you're about to run a verification command referencing a home-relative path (e.g. a python import path), use the already-resolved real path or a relative "cd ~/dir && ..." form, don't guess a generic one and retry after it fails.
 
 Do NOT ask more than one clarifying question in a row before starting real work, and do NOT ask something the user already told you. If the original request already says what's being built ("build me a todo app", "make a calculator"), that IS the spec — don't ask "what kind of app do you want to build" or re-derive requirements they already gave you. Ask about location if unknown, then just start building with reasonable defaults for anything else unstated (pick a sensible tech stack yourself, don't ask). Only ask a second question if something is a genuine, consequential fork (not a preference you could reasonably guess).
 
@@ -108,6 +109,7 @@ Use list_commands if you need to know what slash commands or tools exist. Talk l
 // onStep(kind, data) — optional progress callback: 'tool_call' | 'tool_result' | 'done' | 'thought'
 export async function runAgent(userMessage, { onStep, maxSteps } = {}) {
   const sessionId = currentSessionId();
+  if (sessionId) startTurn(sessionId);
   const projectName = sessionId ? getProject(sessionId) : null;
 
   // up to the last 3 exchanges (user+agent pairs), so think() can judge whether
@@ -154,7 +156,8 @@ export async function runAgent(userMessage, { onStep, maxSteps } = {}) {
   let blankRetries = 0;
 
   for (let step = 0; step < effectiveMaxSteps; step++) {
-    const { text, toolCalls, message } = await chatWithTools(messages, { system, tools: toolDefs });
+    const { text, toolCalls, message, usage } = await chatWithTools(messages, { system, tools: toolDefs });
+    if (sessionId) recordUsage(sessionId, usage);
 
     if (!toolCalls.length) {
       if (!text || !text.trim()) {

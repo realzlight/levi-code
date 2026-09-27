@@ -3,6 +3,7 @@ import path from 'node:path';
 import os from 'node:os';
 import { chat } from './client.js';
 import { getTasks } from './tasks.js';
+import { recordUsage } from './usage.js';
 
 const LEVI_HOME = path.join(os.homedir(), '.levi');
 const MEMORY_ROOT = path.join(LEVI_HOME, 'MEMORY');
@@ -106,6 +107,7 @@ Current project: ${projectName || '(none)'}`;
   let data;
   try {
     const res = await chat([{ role: 'user', content: prompt }], { system: THOUGHT_PROMPT });
+    if (sessionId) recordUsage(sessionId, res.usage);
     const cleaned = res.text.trim().replace(/^```json\s*|```\s*$/g, '');
     data = JSON.parse(cleaned);
   } catch {

@@ -5,6 +5,7 @@ import { execa } from 'execa';
 import { currentSessionId, setProject, searchSessions, readSessionOverview, isSoloOnly } from './session.js';
 import { runSubAgent } from './subagent.js';
 import { upsertSubAgent, getSubAgent, loadRegistry } from './subagent-registry.js';
+import { recordUsage } from './usage.js';
 import { addCluster, setTaskDone, getTasks, editTask, deleteTask, deleteCluster, addTaskToCluster } from './tasks.js';
 
 function resolve(p) {
@@ -409,9 +410,10 @@ export async function runTool(name, args) {
         return `Error: a sub-agent named "${role}" already exists this session. Use message_subagent to follow up with it instead of spawning a duplicate.`;
       }
 
-      const { report, messages } = await runSubAgent(role, args.instruction);
+      const { report, messages, usage } = await runSubAgent(role, args.instruction);
 
       if (id) {
+        recordUsage(id, usage);
         upsertSubAgent(id, { role, task: args.instruction, report, messages });
         const reportPath = path.join(os.homedir(), '.levi', 'ACTIVE-BUFFER', `SESSION-${id}`, 'REPORT.MD');
         try {
@@ -440,7 +442,8 @@ export async function runTool(name, args) {
       const existing = getSubAgent(id, args.role);
       if (!existing) return `Error: no sub-agent named "${args.role}" found this session. Use spawn_subagent to create one first.`;
 
-      const { report, messages } = await runSubAgent(args.role, args.message, { existingMessages: existing.messages });
+      const { report, messages, usage } = await runSubAgent(args.role, args.message, { existingMessages: existing.messages });
+      recordUsage(id, usage);
       upsertSubAgent(id, { role: args.role, task: existing.task, report, messages });
 
       const reportPath = path.join(os.homedir(), '.levi', 'ACTIVE-BUFFER', `SESSION-${id}`, 'REPORT.MD');
