@@ -73,7 +73,7 @@ Rules:
 - retrieval: false for pure chit-chat/greetings/general knowledge that needs nothing about this specific user or project, AND for continuations as above. true for anything that might depend on remembered facts, preferences, or project state, OR references a past conversation.
 - cross_session: true if the message explicitly or implicitly refers to a PAST CONVERSATION (words like "last time", "earlier", "before", "we talked about", "what did we decide", "you said"), meaning the answer likely lives in another session's history, not in MEMORY/PROJECTS files. false otherwise, including for same-session continuations. If true, also set retrieval: true.
 - files: ONLY pick paths from the candidate list given to you. Never invent a path. Empty array if none seem relevant or retrieval is false. Order doesn't matter, confidence does.
-- task_cluster: ONLY set this when the message describes real multi-step build/coding work worth tracking as a checklist. null for anything else, including simple one-off asks.
+- task_cluster: ONLY set this when the message describes real multi-step build/coding work worth tracking as a checklist. null for anything else, including simple one-off asks. Tasks must be concrete, completable actions (e.g. "fix add() in math_utils.py") — never include vague wrap-up steps like "verify", "test", or "report status" as their own task items; those aren't discrete actions and shouldn't be on the checklist.
 - max_turns: your honest estimate of how many tool-call round trips this will realistically take. Simple Q&A: 1-3. Small edit: 3-6. Real feature/build: 6-15. Complex multi-file work: 15-20.
 - note: brief, for debugging, not shown to the user.`;
 

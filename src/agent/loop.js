@@ -50,7 +50,7 @@ This does NOT replace actually reading the real code files before making claims 
     : '';
 
   return `${intro}
-Use read_file/write_file/edit_file/bash when the task needs real info or changes. Don't guess at file contents you haven't read.
+Use read_file/write_file/edit_file/bash when the task needs real info or changes. Use sed and grep/regex where you can and always verify! avoid dumping files content and dumping again to verify! Don't guess at file contents you haven't read.
 
 ${retrievalNote}
 
@@ -77,7 +77,7 @@ Before answering something that depends on stored context, check the relevant fi
 When you learn a durable fact worth remembering, decide which single file it belongs in using the descriptions above, then write_file or edit_file it yourself in the same turn. Don't ask the user where to save it and don't skip saving because you're unsure — pick the best-fit file and go. Keep entries short, one fact per line. Don't check files one by one to find the right one — list what's in MEMORY/ and PROJECTS/ first, then judge which file fits.
 
 Tasks: the current session has a TASK.md tracking clusters of related work (a cluster = a named group of subtasks). ${clusterNote}
-For NEW multi-step work not already covered by an existing cluster, call add_task_cluster with a short title and the subtasks. As you finish each subtask, call set_task_done for it — a cluster auto-completes with a date and summary once every task in it is done. Use edit_task/delete_task/add_task_to_cluster/delete_cluster freely as the real work diverges from the initial plan — clusters are a living plan, not a fixed spec. Don't create a cluster for simple one-off requests. Use get_tasks if you need to check current status before continuing work. If get_tasks returns an active (not completed) cluster whose title matches what the user is now asking about, you are CONTINUING existing work — do NOT ask where to write code again, do NOT delete or recreate the cluster, and do NOT verify the recorded path exists on disk first (write_file/bash mkdir create missing directories automatically, so an empty/missing folder just means nothing's been written yet, not that the plan is wrong). Trust DATA.md's recorded Location, go directly to implementing the next incomplete subtask, and let file-writing itself create whatever's missing.
+For NEW multi-step work not already covered by an existing cluster, call add_task_cluster with a short title and the subtasks. Only include real, concrete, completable work as tasks (e.g. "fix add() in math_utils.py", "write the login form HTML") — do NOT include vague wrap-up steps like "verify the fix", "test it", or "report status" as their own checklist items. Those aren't discrete actions with a clear tool call attached to them; they're just part of how any turn naturally ends, and listing them as tasks leaves nothing to actually "do" for them, which can stall you at the end. If real verification matters, do it as part of finishing the actual task, not as a separate line item. As you finish each subtask, call set_task_done for it — a cluster auto-completes with a date and summary once every task in it is done. Use edit_task/delete_task/add_task_to_cluster/delete_cluster freely as the real work diverges from the initial plan — clusters are a living plan, not a fixed spec. Don't create a cluster for simple one-off requests. Use get_tasks if you need to check current status before continuing work. If get_tasks returns an active (not completed) cluster whose title matches what the user is now asking about, you are CONTINUING existing work — do NOT ask where to write code again, do NOT delete or recreate the cluster, and do NOT verify the recorded path exists on disk first (write_file/bash mkdir create missing directories automatically, so an empty/missing folder just means nothing's been written yet, not that the plan is wrong). Trust DATA.md's recorded Location, go directly to implementing the next incomplete subtask, and let file-writing itself create whatever's missing.
 
 Reading files, MEMORY included: check the file's size first (bash('wc -c <path>') or note the size read_file/list output gives you) before deciding how to read it. For a small file, just read_file the whole thing. For a large file, don't dump the whole thing by default — use bash grep to locate the relevant part, read_file only if truly needed, and edit_file (exact old_str/new_str) for changes instead of rewriting the whole file with write_file. Only dump a full large file when the situation is genuinely high-stakes: a core/critical file, real debugging of something serious where partial context could miss the actual bug, or similar rare cases — not as a routine default, since indiscriminate full dumps waste context and make it easier for a bad edit to land wrong. When in doubt, start narrow (grep/snippet), verify, then widen only if that's not enough.
 
@@ -94,6 +94,12 @@ If, after that real investigation, the request genuinely doesn't fit what's buil
 If you've already built or changed real files successfully, a later check failing (a missing dependency, a command not found, a test you can't run) does NOT erase that success — don't throw away completed work and fall back to a vague "ran into something" message. Instead, tell the user plainly what you built, name the specific missing thing, and say how to install or fix it, or offer a no-dependency alternative if one exists. For example, if you built app.py and index.html with dark mode but Flask isn't installed, mention that installing Flask would let it run, or offer to make it a static HTML/JS version with no backend instead. A missing dependency is information to report, not a reason to abandon a turn that already succeeded.
 
 Your context priority order, always, for anything that isn't a totally fresh unrelated request: (1) the current thread/last messages you already have, (2) this session's summary if one exists, (3) TASK.md via get_tasks for what's in progress and its status, (4) the project's DATA.md for what's actually been built and where. Only after checking all of those, and only if the request clearly points at a different, earlier conversation, use search_sessions as the last resort — not the first move, not a substitute for checking what's already right here.
+
+Sub-agents: for real, separable work, you can delegate to sub-agents with spawn_subagent — give each a concrete, direct instruction (exact file, exact change, exact report target), not a vague goal. They have file/bash access only, no memory or task tools, no ability to ask questions — treat them like labor, not peers. Only spawn one for work that's actually worth separating out; never for simple tasks you could just do yourself, and never over-engineer with more sub-agents than the work needs. As a rough guide: 1-2 sub-agents when you're doing most of the work yourself with some help (worker mode), 2-3 when you're mainly coordinating others (orchestrator mode) — pick whichever fits, don't force either.
+
+Sub-agents don't see each other's work on their own — if a new sub-agent's task depends on what a previous one did, YOU pass that context along explicitly in its instruction (e.g. include the relevant part of an earlier report). Use list_subagents to see everyone spawned so far and their status/reports, and message_subagent to follow up with an existing one instead of spawning a duplicate.
+
+HARD RULE: the very next tool call after ANY spawn_subagent or message_subagent call MUST be a task-management call (set_task_done, add_task_to_cluster, edit_task, etc.) reflecting what that report actually said — before verification, before another sub-agent, before anything else. This is not optional and not something to do "eventually" — do it immediately, every single time, right after reading that report. Only after TASK.md reflects the report should you move on to verifying the work or deciding if more sub-agent work is needed.
 
 Use list_commands if you need to know what slash commands or tools exist. Talk like a sharp dev friend, not a corporate assistant -- direct, casual, a little slang is fine, no "I'd be happy to" or "Great question!" filler. Be concise.`;
 }
@@ -144,17 +150,51 @@ export async function runAgent(userMessage, { onStep, maxSteps } = {}) {
   const history = recentMessages.map((m) => ({ role: m.role === 'agent' ? 'assistant' : 'user', content: m.text }));
   const messages = [...history, { role: 'user', content: userMessage }];
 
+  const MAX_BLANK_RETRIES = 3; // independent of effectiveMaxSteps — don't silently burn the whole step budget on invisible retries
+  let blankRetries = 0;
+
   for (let step = 0; step < effectiveMaxSteps; step++) {
     const { text, toolCalls, message } = await chatWithTools(messages, { system, tools: toolDefs });
 
     if (!toolCalls.length) {
       if (!text || !text.trim()) {
-        if (step < effectiveMaxSteps - 1) {
+        blankRetries++;
+        onStep?.('blank_retry', { attempt: blankRetries, step });
+
+        if (blankRetries <= MAX_BLANK_RETRIES && step < effectiveMaxSteps - 1) {
           messages.push(message);
-          messages.push({ role: 'user', content: "(that came back empty. Before answering: have you actually read the project's DATA.md for its Location, ls'd that real directory, and read the actual code file? If not, do that now. If you have and something genuinely doesn't fit, use ask to name the specific mismatch you found. Don't stop without either doing more investigation or giving a real specific answer.)" });
+
+          // context-aware nudge: don't push generic "go investigate files"
+          // language when the real issue is more likely an un-updated task —
+          // that was actively pointing the model in the wrong direction before
+          let nudge;
+          const pendingCluster = sessionId ? getTasks(sessionId).find((c) => c.status !== 'completed') : null;
+          if (pendingCluster) {
+            const undone = pendingCluster.tasks.filter((t) => !t.done);
+            nudge = `(that came back empty. You have an active task cluster "${pendingCluster.title}" with ${undone.length} task(s) not yet marked done: ${undone.map((t) => t.text).join(', ')}. If you just got a sub-agent report back, call set_task_done for it now. If the work is actually finished, mark the remaining tasks done and give a real summary. Don't stop blank.)`;
+          } else {
+            nudge = "(that came back empty. Before answering: have you actually read the project's DATA.md for its Location, ls'd that real directory, and read the actual code file? If not, do that now. If you have and something genuinely doesn't fit, use ask to name the specific mismatch you found. Don't stop without either doing more investigation or giving a real specific answer.)";
+          }
+
+          messages.push({ role: 'user', content: nudge });
           continue;
         }
-        const fallback = "Ran into something that didn't fit and didn't manage to explain it well — send that again and I'll actually look into what's there and tell you specifically what the issue is.";
+
+        // build a fallback from real task status instead of a generic apology,
+        // so even a failed wrap-up tells the user something true and useful
+        let fallback = "Ran into something that didn't fit and didn't manage to explain it well — send that again and I'll actually look into what's there and tell you specifically what the issue is.";
+        if (sessionId) {
+          const clusters = getTasks(sessionId);
+          if (clusters.length) {
+            const summary = clusters
+              .map((c) => {
+                const done = c.tasks.filter((t) => t.done).length;
+                return `"${c.title}" — ${done}/${c.tasks.length} tasks done`;
+              })
+              .join('; ');
+            fallback = `Couldn't put together a clean final summary, but here's the real status: ${summary}. Check list_subagents or the files directly for specifics — send another message if you want me to keep going or explain further.`;
+          }
+        }
         onStep?.('done', fallback);
         return fallback;
       }

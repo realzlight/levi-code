@@ -2,7 +2,9 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { execa } from 'execa';
-import { currentSessionId, setProject, searchSessions, readSessionOverview } from './session.js';
+import { currentSessionId, setProject, searchSessions, readSessionOverview, isSoloOnly } from './session.js';
+import { runSubAgent } from './subagent.js';
+import { upsertSubAgent, getSubAgent, loadRegistry } from './subagent-registry.js';
 import { addCluster, setTaskDone, getTasks, editTask, deleteTask, deleteCluster, addTaskToCluster } from './tasks.js';
 
 function resolve(p) {
@@ -212,6 +214,44 @@ export const toolDefs = [
   {
     type: 'function',
     function: {
+      name: 'spawn_subagent',
+      description: 'Delegate ONE concrete, self-contained task to a sub-agent (e.g. "edit movement.js and fix the collision bug, report what you changed"). Sub-agents have file/bash access only — no memory, no task management, no ability to ask questions. Give a specific, direct instruction, not a vague goal. Only use this for real, separable work — never for simple tasks you can just do yourself. Blocked if the user has solo mode on (/alone).',
+      parameters: {
+        type: 'object',
+        properties: {
+          role: { type: 'string', description: 'Short name for this sub-agent, e.g. "bugfixer" or "css-styler"' },
+          instruction: { type: 'string', description: 'The exact, concrete task for the sub-agent to do — specific file(s), specific change, specific report target. Not a vague goal.' }
+        },
+        required: ['role', 'instruction']
+      }
+    }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'list_subagents',
+      description: 'List all sub-agents spawned so far this session, with their role, original task, status (done/stuck), and last report.',
+      parameters: { type: 'object', properties: {} }
+    }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'message_subagent',
+      description: 'Send a follow-up instruction to a specific sub-agent by role, continuing its own conversation thread from where it left off. Use this instead of spawn_subagent when you want to follow up with one that already exists (e.g. ask it to fix something in its own report, or extend its task) rather than starting a new one.',
+      parameters: {
+        type: 'object',
+        properties: {
+          role: { type: 'string', description: 'The exact role name of the existing sub-agent to message' },
+          message: { type: 'string', description: 'The follow-up instruction' }
+        },
+        required: ['role', 'message']
+      }
+    }
+  },
+  {
+    type: 'function',
+    function: {
       name: 'ask',
       description: 'Ask the user a question with a structured set of choices (e.g. yes/no, or a short list of options) instead of asking in plain text. Use this whenever the question has a small set of likely answers — the user gets clickable options instead of typing. Always ends your turn; the user\'s pick (or custom answer) comes back as their next message.',
       parameters: {
@@ -357,6 +397,58 @@ export async function runTool(name, args) {
       const overview = readSessionOverview(args.id);
       if (!overview) return `Error: session ${args.id} not found`;
       return JSON.stringify(overview, null, 2);
+    }
+
+    if (name === 'spawn_subagent') {
+      if (isSoloOnly()) return 'Error: solo mode is on (/alone) — sub-agents are disabled. Do this work yourself.';
+
+      const role = (args.role || 'subagent').trim();
+      const id = currentSessionId();
+
+      if (id && getSubAgent(id, role)) {
+        return `Error: a sub-agent named "${role}" already exists this session. Use message_subagent to follow up with it instead of spawning a duplicate.`;
+      }
+
+      const { report, messages } = await runSubAgent(role, args.instruction);
+
+      if (id) {
+        upsertSubAgent(id, { role, task: args.instruction, report, messages });
+        const reportPath = path.join(os.homedir(), '.levi', 'ACTIVE-BUFFER', `SESSION-${id}`, 'REPORT.MD');
+        try {
+          fs.appendFileSync(reportPath, `@${role}: ${report}\n\n`);
+        } catch {}
+      }
+
+      return report;
+    }
+
+    if (name === 'list_subagents') {
+      const id = currentSessionId();
+      if (!id) return 'Error: no active session';
+      const registry = loadRegistry(id);
+      if (!registry.length) return '(no sub-agents spawned yet this session)';
+      return registry
+        .map((s) => `@${s.role} [${s.status}] — task: ${s.task}\nlast report: ${s.report}`)
+        .join('\n\n');
+    }
+
+    if (name === 'message_subagent') {
+      if (isSoloOnly()) return 'Error: solo mode is on (/alone) — sub-agents are disabled.';
+      const id = currentSessionId();
+      if (!id) return 'Error: no active session';
+
+      const existing = getSubAgent(id, args.role);
+      if (!existing) return `Error: no sub-agent named "${args.role}" found this session. Use spawn_subagent to create one first.`;
+
+      const { report, messages } = await runSubAgent(args.role, args.message, { existingMessages: existing.messages });
+      upsertSubAgent(id, { role: args.role, task: existing.task, report, messages });
+
+      const reportPath = path.join(os.homedir(), '.levi', 'ACTIVE-BUFFER', `SESSION-${id}`, 'REPORT.MD');
+      try {
+        fs.appendFileSync(reportPath, `@${args.role} (follow-up): ${report}\n\n`);
+      } catch {}
+
+      return report;
     }
 
     if (name === 'ask') {
