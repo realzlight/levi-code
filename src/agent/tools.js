@@ -208,6 +208,22 @@ export const toolDefs = [
         required: ['id']
       }
     }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'ask',
+      description: 'Ask the user a question with a structured set of choices (e.g. yes/no, or a short list of options) instead of asking in plain text. Use this whenever the question has a small set of likely answers — the user gets clickable options instead of typing. Always ends your turn; the user\'s pick (or custom answer) comes back as their next message.',
+      parameters: {
+        type: 'object',
+        properties: {
+          question: { type: 'string', description: 'The question to ask' },
+          options: { type: 'array', items: { type: 'string' }, description: 'Short option labels, e.g. ["Yes", "No"] or ["Home directory", "Current directory"]' },
+          allowCustom: { type: 'boolean', description: 'If true, also let the user type a free-text answer instead of picking an option. Defaults to true.' }
+        },
+        required: ['question', 'options']
+      }
+    }
   }
 ];
 
@@ -341,6 +357,17 @@ export async function runTool(name, args) {
       const overview = readSessionOverview(args.id);
       if (!overview) return `Error: session ${args.id} not found`;
       return JSON.stringify(overview, null, 2);
+    }
+
+    if (name === 'ask') {
+      // no filesystem side effect — this is a structured marker the UI layer
+      // renders specially; runAgent detects it and surfaces it via onStep
+      return JSON.stringify({
+        __ask: true,
+        question: args.question,
+        options: Array.isArray(args.options) ? args.options : [],
+        allowCustom: args.allowCustom !== false
+      });
     }
 
     return `Error: unknown tool ${name}`;

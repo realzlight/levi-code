@@ -9,6 +9,7 @@ import Palette, { paletteHeight } from './Palette.js';
 import Footer, { activeModel } from './Footer.js';
 import ModelForm from './ModelForm.js';
 import SessionPicker from './SessionPicker.js';
+import AskPrompt from './AskPrompt.js';
 import { filterCommands, runCapture } from './commands.js';
 import { currentSessionId, getTitle, setTitle, appendMessage, loadMessages, resumeSession, getSummary, getProject } from '../agent/session.js';
 import { generateTitle } from '../agent/title.js';
@@ -181,6 +182,15 @@ function App({ mascot }) {
       }
 
       appendMessage(id, 'user', text);
+
+      if (reply && typeof reply === 'object' && reply.__ask) {
+        appendMessage(id, 'agent', reply.question);
+        setMessages((prev) => [...prev.slice(0, -1), { role: 'agent', text: reply.question }]);
+        setForm({ mode: 'ask', question: reply.question, options: reply.options, allowCustom: reply.allowCustom });
+        maybeCompact(id, getProject(id));
+        return;
+      }
+
       appendMessage(id, 'agent', reply);
       setMessages((prev) => [...prev.slice(0, -1), { role: 'agent', text: reply }]);
       maybeCompact(id, getProject(id));
@@ -285,6 +295,13 @@ function App({ mascot }) {
                 current: form.current,
                 onPick: (id) => { resumeSession(id); const s = getSummary(id); const msgs = loadMessages(id); setMessages(s ? [{ role: 'agent', text: '[recap] ' + s }, ...msgs] : msgs); setScrollOffset(0); setForm(null); },
                 onCancel: () => setForm(null)
+              })
+            : form.mode === 'ask'
+            ? h(AskPrompt, {
+                question: form.question,
+                options: form.options,
+                allowCustom: form.allowCustom,
+                onPick: (answer) => { setForm(null); submit(answer); }
               })
             : h(ModelForm, { key: form.mode + (form.name ?? ''), mode: form.mode, name: form.name, onDone: () => setForm(null) }))
         : h(InputBox, { value: input }),

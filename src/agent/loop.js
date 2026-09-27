@@ -4,7 +4,7 @@ import path from 'node:path';
 import { chatWithTools } from './client.js';
 import { toolDefs, runTool } from './tools.js';
 import { think } from './thought.js';
-import { currentSessionId, getProject } from './session.js';
+import { currentSessionId, getProject, loadMessages } from './session.js';
 import { addCluster, getTasks } from './tasks.js';
 
 function currentUserName() {
@@ -59,18 +59,32 @@ ${retrievalNote}
 
 Deciding if something is a project: if the user is clearly building a distinct thing ("make me a pacman game", "build a calculator") and names it or it's obviously one thing, call set_project with a short name — don't ask first, don't create the folder manually. If it's ambiguous whether this is a one-off task or a real project, ask the user in one short line before calling set_project. Once set_project has been called for the current session, keep filing project-specific facts in ~/.levi/PROJECTS/<name>/ instead of the global MEMORY/ files.
 
-set_project only creates the memory folder (~/.levi/PROJECTS/<name>/) — it does NOT decide where the actual project code lives. Before writing any project code files, always ask the user where they want the code itself: home directory (~/<name>), current directory (./<name>), or another path they specify. Do not assume or default silently. Once they answer, use that exact absolute path for every file you write, and record that same absolute path (not a relative one like ./name/) as the Location in DATA.md.
+set_project only creates the memory folder (~/.levi/PROJECTS/<name>/) — it does NOT decide where the actual project code lives. Before writing any project code files, ask the user ONE thing at a time only if it's genuinely not already answered: where the code should live (home dir, current dir, another path). Do not assume or default silently on location. Once they answer, use that exact absolute path for every file you write, and record that same absolute path (not a relative one like ./name/) as the Location in DATA.md. Never guess or write a generic path like /root/ or /home/user/ — always resolve the real home directory yourself first (e.g. bash('echo ~') or bash('pwd')) rather than assuming what it is.
+
+Do NOT ask more than one clarifying question in a row before starting real work, and do NOT ask something the user already told you. If the original request already says what's being built ("build me a todo app", "make a calculator"), that IS the spec — don't ask "what kind of app do you want to build" or re-derive requirements they already gave you. Ask about location if unknown, then just start building with reasonable defaults for anything else unstated (pick a sensible tech stack yourself, don't ask). Only ask a second question if something is a genuine, consequential fork (not a preference you could reasonably guess).
 
 Before answering something that depends on stored context, check the relevant file(s) yourself (read_file/bash) using the pre-check hint above as a starting point. If unsure what exists, run bash('ls -R ~/.levi/MEMORY ~/.levi/PROJECTS') once to see the real structure instead of guessing paths — don't mention this checking unless it matters.
 
 When you learn a durable fact worth remembering, decide which single file it belongs in using the descriptions above, then write_file or edit_file it yourself in the same turn. Don't ask the user where to save it and don't skip saving because you're unsure — pick the best-fit file and go. Keep entries short, one fact per line. Don't check files one by one to find the right one — list what's in MEMORY/ and PROJECTS/ first, then judge which file fits.
 
 Tasks: the current session has a TASK.md tracking clusters of related work (a cluster = a named group of subtasks). ${clusterNote}
-For NEW multi-step work not already covered by an existing cluster, call add_task_cluster with a short title and the subtasks. As you finish each subtask, call set_task_done for it — a cluster auto-completes with a date and summary once every task in it is done. Use edit_task/delete_task/add_task_to_cluster/delete_cluster freely as the real work diverges from the initial plan — clusters are a living plan, not a fixed spec. Don't create a cluster for simple one-off requests. Use get_tasks if you need to check current status before continuing work.
+For NEW multi-step work not already covered by an existing cluster, call add_task_cluster with a short title and the subtasks. As you finish each subtask, call set_task_done for it — a cluster auto-completes with a date and summary once every task in it is done. Use edit_task/delete_task/add_task_to_cluster/delete_cluster freely as the real work diverges from the initial plan — clusters are a living plan, not a fixed spec. Don't create a cluster for simple one-off requests. Use get_tasks if you need to check current status before continuing work. If get_tasks returns an active (not completed) cluster whose title matches what the user is now asking about, you are CONTINUING existing work — do NOT ask where to write code again, do NOT delete or recreate the cluster, and do NOT verify the recorded path exists on disk first (write_file/bash mkdir create missing directories automatically, so an empty/missing folder just means nothing's been written yet, not that the plan is wrong). Trust DATA.md's recorded Location, go directly to implementing the next incomplete subtask, and let file-writing itself create whatever's missing.
 
 Reading files, MEMORY included: check the file's size first (bash('wc -c <path>') or note the size read_file/list output gives you) before deciding how to read it. For a small file, just read_file the whole thing. For a large file, don't dump the whole thing by default — use bash grep to locate the relevant part, read_file only if truly needed, and edit_file (exact old_str/new_str) for changes instead of rewriting the whole file with write_file. Only dump a full large file when the situation is genuinely high-stakes: a core/critical file, real debugging of something serious where partial context could miss the actual bug, or similar rare cases — not as a routine default, since indiscriminate full dumps waste context and make it easier for a bad edit to land wrong. When in doubt, start narrow (grep/snippet), verify, then widen only if that's not enough.
 
 If the user references something from "before", "earlier", "last time", or another session, and it's not in the current conversation, use search_sessions to find it, then read_session on the best match to pull the actual context. Don't do this for normal context (MEMORY/PROJECTS handle that) — only when they're clearly pointing at a past conversation.
+
+Whenever you need to ask the user something with a small set of likely answers (yes/no, pick between a few paths, choose an option), use the ask tool instead of asking in plain text — the user gets clickable choices. Only ask in plain text when the answer genuinely needs free-form input with no sensible short options.
+
+Before responding to any request about an existing project (a change, a new feature, "is it done", anything not a brand new build), you MUST do these in order first: (1) read_file the project's DATA.md to get its recorded Location and description, (2) get_tasks to see the cluster(s) for this project — their status and what's been done, (3) bash ls the Location from DATA.md to see the real files, (4) read_file the main code file(s) found there. Do NOT decide anything or respond based on folder names in ~/.levi/PROJECTS/ alone — that only shows memory folder names, not the actual project. Only after actually reading the real code and task state can you know whether a request fits.
+
+If a completed cluster's work doesn't fit a new request (e.g. existing work is a CLI tool and the new ask needs a UI), don't just leave the stale cluster sitting there — after confirming the pivot with the user via ask, delete_cluster the old one and add_task_cluster for the new direction, so TASK.md reflects what's actually being worked on now, not a dead plan.
+
+If, after that real investigation, the request genuinely doesn't fit what's built (e.g. "add a dark mode toggle" for a CLI tool with no UI, a visual feature for a backend-only project), use ask to name the SPECIFIC mismatch based on what you actually read and offer SPECIFIC options (e.g. "todo-app is a Python CLI tool with no UI — a dark mode toggle doesn't apply. Want me to convert it to a web app, add colored terminal output instead, or something else?"). Never respond with a vague "not sure, can you rephrase" — you should always be able to name exactly what you found and what doesn't fit, because you actually looked.
+
+If you've already built or changed real files successfully, a later check failing (a missing dependency, a command not found, a test you can't run) does NOT erase that success — don't throw away completed work and fall back to a vague "ran into something" message. Instead, tell the user plainly what you built, name the specific missing thing, and say how to install or fix it, or offer a no-dependency alternative if one exists. For example, if you built app.py and index.html with dark mode but Flask isn't installed, mention that installing Flask would let it run, or offer to make it a static HTML/JS version with no backend instead. A missing dependency is information to report, not a reason to abandon a turn that already succeeded.
+
+Your context priority order, always, for anything that isn't a totally fresh unrelated request: (1) the current thread/last messages you already have, (2) this session's summary if one exists, (3) TASK.md via get_tasks for what's in progress and its status, (4) the project's DATA.md for what's actually been built and where. Only after checking all of those, and only if the request clearly points at a different, earlier conversation, use search_sessions as the last resort — not the first move, not a substitute for checking what's already right here.
 
 Use list_commands if you need to know what slash commands or tools exist. Talk like a sharp dev friend, not a corporate assistant -- direct, casual, a little slang is fine, no "I'd be happy to" or "Great question!" filler. Be concise.`;
 }
@@ -81,12 +95,20 @@ export async function runAgent(userMessage, { onStep, maxSteps } = {}) {
   const sessionId = currentSessionId();
   const projectName = sessionId ? getProject(sessionId) : null;
 
-  const thought = await think(userMessage, { projectName });
+  // up to the last 3 exchanges (user+agent pairs), so think() can judge whether
+  // this message connects to recent work or is a completely different request
+  const recentMessages = sessionId ? loadMessages(sessionId).slice(-6) : [];
+  const thought = await think(userMessage, { projectName, recentMessages });
   onStep?.('thought', thought);
 
   if (thought.task_cluster && sessionId) {
-    const num = addCluster(sessionId, thought.task_cluster.title, thought.task_cluster.tasks);
-    thought.clusterCreated = { num, title: thought.task_cluster.title };
+    const existingActive = getTasks(sessionId).some((c) => c.status !== 'completed');
+    if (!existingActive) {
+      const num = addCluster(sessionId, thought.task_cluster.title, thought.task_cluster.tasks);
+      thought.clusterCreated = { num, title: thought.task_cluster.title };
+    }
+    // if an active cluster already exists, trust that instead of creating a duplicate —
+    // Levi's own add_task_cluster/add_task_to_cluster tools handle genuinely new work from here
   }
 
   // scale by real pending task count: new cluster from this turn, or any
@@ -102,17 +124,41 @@ export async function runAgent(userMessage, { onStep, maxSteps } = {}) {
   const crossSessionFloor = thought.cross_session ? 4 : 0;
   const effectiveMaxSteps = maxSteps || Math.max(thought.max_turns || 20, autoMax, crossSessionFloor);
   const system = buildSystem(thought);
-  const messages = [{ role: 'user', content: userMessage }];
+  // give the tool-calling loop real conversation history, not just a hint via
+  // the system prompt — this is what lets it resolve "it"/"that"/pronouns
+  // directly instead of guessing and going searching for something it already knows
+  const history = recentMessages.map((m) => ({ role: m.role === 'agent' ? 'assistant' : 'user', content: m.text }));
+  const messages = [...history, { role: 'user', content: userMessage }];
 
   for (let step = 0; step < effectiveMaxSteps; step++) {
     const { text, toolCalls, message } = await chatWithTools(messages, { system, tools: toolDefs });
 
     if (!toolCalls.length) {
+      if (!text || !text.trim()) {
+        if (step < effectiveMaxSteps - 1) {
+          messages.push(message);
+          messages.push({ role: 'user', content: "(that came back empty. Before answering: have you actually read the project's DATA.md for its Location, ls'd that real directory, and read the actual code file? If not, do that now. If you have and something genuinely doesn't fit, use ask to name the specific mismatch you found. Don't stop without either doing more investigation or giving a real specific answer.)" });
+          continue;
+        }
+        const fallback = "Ran into something that didn't fit and didn't manage to explain it well — send that again and I'll actually look into what's there and tell you specifically what the issue is.";
+        onStep?.('done', fallback);
+        return fallback;
+      }
       onStep?.('done', text);
       return text;
     }
 
     messages.push(message);
+
+    const askCall = toolCalls.find((c) => c.name === 'ask');
+    if (askCall) {
+      onStep?.('tool_call', askCall);
+      const result = await runTool(askCall.name, askCall.args);
+      onStep?.('tool_result', { call: askCall, result });
+      const payload = JSON.parse(result);
+      onStep?.('done', payload);
+      return payload;
+    }
 
     for (const call of toolCalls) {
       onStep?.('tool_call', call);
