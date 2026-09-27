@@ -1,8 +1,10 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
+import { getProject } from './session.js';
 
-const BUFFER_ROOT = path.join(os.homedir(), '.levi', 'ACTIVE-BUFFER');
+const LEVI_HOME = path.join(os.homedir(), '.levi');
+const BUFFER_ROOT = path.join(LEVI_HOME, 'ACTIVE-BUFFER');
 
 function taskFilePath(id) {
   return path.join(BUFFER_ROOT, `SESSION-${id}`, 'TASK.md');
@@ -77,15 +79,43 @@ function nextClusterNum(clusters) {
 
 function autoCompleteCheck(cluster) {
   const allDone = cluster.tasks.length > 0 && cluster.tasks.every((t) => t.done);
-  if (allDone && cluster.status !== 'completed') {
+  const wasCompleted = cluster.status === 'completed';
+  if (allDone && !wasCompleted) {
     cluster.status = 'completed';
-    cluster.completedDate = new Date().toISOString().slice(0, 10);
-    const summaryText = 'Completed: ' + cluster.tasks.map((t) => t.text).join(', ');
-    cluster.summary = summaryText;
-  } else if (!allDone && cluster.status === 'completed') {
+    cluster.completedDate = new Date().toISOString().replace('T', ' ').slice(0, 19) + ' UTC';
+    cluster.summary = 'Completed: ' + cluster.tasks.map((t) => t.text).join(', ');
+    return true; // newly completed this call
+  } else if (!allDone && wasCompleted) {
     cluster.status = 'active';
     cluster.completedDate = null;
     cluster.summary = '';
+  }
+  return false;
+}
+
+// Appends a one-line dated summary of a finished cluster into the right
+// project file (DATA.md if a project is active, USER.md otherwise) — a
+// lightweight, best-effort record, not a full history. Never throws; a
+// failure here shouldn't break task completion itself.
+function archiveCluster(id, cluster) {
+  try {
+    const projectName = getProject(id);
+    const targetFile = projectName
+      ? path.join(LEVI_HOME, 'PROJECTS', projectName, 'DATA.md')
+      : path.join(LEVI_HOME, 'MEMORY', 'USER.md');
+
+    const timestamp = cluster.completedDate || new Date().toISOString().replace('T', ' ').slice(0, 19) + ' UTC';
+    const line = `- [Completed ${timestamp}] ${cluster.title}: ${cluster.summary}`;
+
+    fs.mkdirSync(path.dirname(targetFile), { recursive: true });
+    let existing = '';
+    try {
+      existing = fs.readFileSync(targetFile, 'utf-8');
+    } catch {}
+    const sep = existing && !existing.endsWith('\n') ? '\n' : '';
+    fs.writeFileSync(targetFile, existing + sep + line + '\n');
+  } catch {
+    // best-effort only, archiving is not critical enough to fail the task update over
   }
 }
 
@@ -105,14 +135,23 @@ export function addCluster(id, title, taskTexts) {
 }
 
 // Toggle a task's done state by cluster number + task index (0-based).
-// Auto-completes the cluster (status, date, auto-summary) once every task in it is done.
+// Auto-completes the cluster once every task in it is done — when that
+// happens, the cluster is archived (one line into DATA.md/USER.md) and then
+// removed from TASK.md entirely, so completed work doesn't clutter the live
+// task list or get mistakenly re-read as still-relevant context.
 export function setTaskDone(id, clusterNum, taskIndex, done = true) {
   const clusters = parseTasks(id);
-  const cluster = clusters.find((c) => c.num === clusterNum);
-  if (!cluster || !cluster.tasks[taskIndex]) return false;
+  const idx = clusters.findIndex((c) => c.num === clusterNum);
+  if (idx === -1 || !clusters[idx].tasks[taskIndex]) return false;
 
+  const cluster = clusters[idx];
   cluster.tasks[taskIndex].done = done;
-  autoCompleteCheck(cluster);
+  const newlyCompleted = autoCompleteCheck(cluster);
+
+  if (newlyCompleted) {
+    archiveCluster(id, cluster);
+    clusters.splice(idx, 1);
+  }
 
   writeClusters(id, clusters);
   return true;
@@ -129,10 +168,18 @@ export function editTask(id, clusterNum, taskIndex, newText) {
 
 export function deleteTask(id, clusterNum, taskIndex) {
   const clusters = parseTasks(id);
-  const cluster = clusters.find((c) => c.num === clusterNum);
-  if (!cluster || !cluster.tasks[taskIndex]) return false;
+  const idx = clusters.findIndex((c) => c.num === clusterNum);
+  if (idx === -1 || !clusters[idx].tasks[taskIndex]) return false;
+
+  const cluster = clusters[idx];
   cluster.tasks.splice(taskIndex, 1);
-  autoCompleteCheck(cluster);
+  const newlyCompleted = autoCompleteCheck(cluster);
+
+  if (newlyCompleted) {
+    archiveCluster(id, cluster);
+    clusters.splice(idx, 1);
+  }
+
   writeClusters(id, clusters);
   return true;
 }
