@@ -1,3 +1,3 @@
-- **Description**: A terminal-based Python todo app with add, delete, and mark-complete functionality.
-- **Location**: /data/data/com.termux/files/home/levi
-- **Tech Stack**: Python (standard library, zero external dependencies)
+# Todo App
+Location: /data/data/com.termux/files/home/levi
+Description: A simple command-line todo app with add, delete, and mark-complete features.

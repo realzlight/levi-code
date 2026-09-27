@@ -11,7 +11,7 @@ import ModelForm from './ModelForm.js';
 import SessionPicker from './SessionPicker.js';
 import AskPrompt from './AskPrompt.js';
 import { filterCommands, runCapture } from './commands.js';
-import { currentSessionId, getTitle, setTitle, appendMessage, loadMessages, resumeSession, getSummary, getProject } from '../agent/session.js';
+import { currentSessionId, createSession, getTitle, setTitle, appendMessage, loadMessages, resumeSession, getSummary, getProject } from '../agent/session.js';
 import { generateTitle } from '../agent/title.js';
 import { runAgent } from '../agent/loop.js';
 import { maybeCompact } from '../agent/compact.js';
@@ -165,7 +165,8 @@ function App({ mascot }) {
     setMessages((prev) => [...prev, { role: 'user', text }, { role: 'agent', text: '...' }]);
 
     (async () => {
-      const id = currentSessionId();
+      let id = currentSessionId();
+      if (!id) id = createSession();
       if (id && !getTitle(id)) setTitle(id, await generateTitle(text));
 
       const onStep = (kind, data) => {

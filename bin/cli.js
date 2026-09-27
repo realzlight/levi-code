@@ -51,6 +51,11 @@ program.action(async () => {
   if (!auth?.loggedIn) {
     await import('../src/ui/welcome.js');
   } else {
+    try {
+      const config = JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf-8'));
+      config.currentSession = null;
+      fs.writeFileSync(CONFIG_PATH, JSON.stringify(config, null, 2));
+    } catch {}
     await import('../src/ui/index.js');
   }
 });

@@ -214,26 +214,10 @@ defineCommand({
 defineCommand({
   name: 'resume',
   description: 'Switch to a past or current session',
-  args: [{ name: 'id', type: 'number' }],
-  run: async ({ id }, ctx) => {
-    const { listSessions, resumeSession, currentSessionId } = await sessionMod();
-    if (!id) {
-      const sessions0 = listSessions();
-      return ctx.openForm({ mode: 'resume', sessions: sessions0, current: currentSessionId() });
-    }
-    if (false) {
-      const sessions = listSessions();
-      if (!sessions.length) return ctx.print('No sessions yet. Use /new');
-      const cur = currentSessionId();
-      return ctx.print(
-        sessions
-          .map((s) => `${s.id === cur ? '★' : ' '} SESSION-${s.id}${s.team ? ' [team]' : ''} — ${s.summary}`)
-          .join('\n') + '\n\nUse /resume <id> to switch'
-      );
-    }
-    const s = resumeSession(id);
-    if (!s) return ctx.print(`SESSION-${id} not found`);
-    ctx.print(`Resumed SESSION-${id}`);
+  run: async (_, ctx) => {
+    const { listSessions, currentSessionId } = await sessionMod();
+    const sessions0 = listSessions();
+    return ctx.openForm({ mode: 'resume', sessions: sessions0, current: currentSessionId() });
   }
 });
 
