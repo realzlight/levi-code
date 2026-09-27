@@ -42,10 +42,19 @@ function buildSystem(thought) {
     ? `A pre-check already created task cluster ${thought.clusterCreated.num} — "${thought.clusterCreated.title}" with an initial task breakdown, based on this message. It's just a starting point: edit, add, delete, or reorganize the tasks in it as you actually work, don't treat it as fixed.`
     : '';
 
+  const projectContextNote = (thought.dataContent || thought.taskSummary)
+    ? `Already known about the current project (read once already, no need to re-fetch these two specific things unless you suspect they're stale):
+DATA.md content: ${thought.dataContent || '(empty)'}
+Task status: ${thought.taskSummary || '(no clusters yet)'}
+This does NOT replace actually reading the real code files before making claims about what they contain — DATA.md and task status can be outdated or wrong, so verify anything the request depends on by reading the actual files.`
+    : '';
+
   return `${intro}
 Use read_file/write_file/edit_file/bash when the task needs real info or changes. Don't guess at file contents you haven't read.
 
 ${retrievalNote}
+
+${projectContextNote}
 
 ~/.levi/MEMORY/ holds saved context about the user, one line each:
 - USER.md: who the user is, stable facts (name, role, setup)
@@ -98,7 +107,7 @@ export async function runAgent(userMessage, { onStep, maxSteps } = {}) {
   // up to the last 3 exchanges (user+agent pairs), so think() can judge whether
   // this message connects to recent work or is a completely different request
   const recentMessages = sessionId ? loadMessages(sessionId).slice(-6) : [];
-  const thought = await think(userMessage, { projectName, recentMessages });
+  const thought = await think(userMessage, { projectName, recentMessages, sessionId });
   onStep?.('thought', thought);
 
   if (thought.task_cluster && sessionId) {
@@ -122,7 +131,12 @@ export async function runAgent(userMessage, { onStep, maxSteps } = {}) {
   const autoMax = pendingTasks ? pendingTasks * 4 + 10 : 0;
   // cross-session lookups always need at least search + read + answer, enforce a floor
   const crossSessionFloor = thought.cross_session ? 4 : 0;
-  const effectiveMaxSteps = maxSteps || Math.max(thought.max_turns || 20, autoMax, crossSessionFloor);
+  // static floors, not fully trusting the AI's own turn estimate: 30 for anything
+  // normal, 100 whenever real multi-step work is involved, so a run doesn't cut off
+  // mid-work just because a guess came in low — TASK.md progress persists either way
+  const isHardWork = pendingTasks > 0 || !!thought.task_cluster || thought.type === 'coding' || thought.type === 'task';
+  const staticFloor = isHardWork ? 100 : 30;
+  const effectiveMaxSteps = maxSteps || Math.max(thought.max_turns || 20, autoMax, crossSessionFloor, staticFloor);
   const system = buildSystem(thought);
   // give the tool-calling loop real conversation history, not just a hint via
   // the system prompt — this is what lets it resolve "it"/"that"/pronouns

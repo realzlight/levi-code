@@ -18,12 +18,16 @@ import { maybeCompact } from '../agent/compact.js';
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import readline from 'node:readline/promises';
-
+import fs from 'fs'
 const h = React.createElement;
 const GRAY = '#888888';
 const BORDER = '#999999';
 const HIGHLIGHT_BG = '#2a2a2a';
 const DOT_COLOR = '#ffffff';
+const LEVI_HOME = path.join(os.homedir(), '.levi');
+
+const CONFIG = path.join(LEVI_HOME,'config.json')
+
 
 function shortenHome(dir) {
   const home = os.homedir();
@@ -77,7 +81,7 @@ const GREETING = getGreeting();
 
 function sessionLine() {
   const id = currentSessionId();
-  if (!id) return 'Abyssal \u2022 Discussion About CLI';
+  if (!id) return 'Abyssal \u2022 /resume';
   const title = getTitle(id);
   return `SESSION-${id}${title ? ' \u2014 ' + title : ''}`;
 }
