@@ -101,30 +101,14 @@ function Header({ mascot }) {
 }
 
 function Message({ role, text, width }) {
-  if (role === 'user') {
-    const lines = text.split('\n');
-    return h(Box, { flexDirection: 'column', width, marginBottom: 1 },
-      lines.map((line, i) => {
-        const prefix = i === 0 ? '\u203A ' : '  ';
-        const isBlank = line.trim().length === 0;
-
-        if (isBlank) {
-          return h(Text, { key: i }, ' ');
-        }
-
-        return h(
-          Text,
-          { key: i, color: 'white', backgroundColor: HIGHLIGHT_BG },
-          (prefix + line).padEnd(width, ' ')
-        );
-      })
+  if (role === 'agent' && text === '...') {
+    return h(Box, { marginBottom: 1 },
+      h(Text, { color: DOT_COLOR }, '\u25CF '),
+      h(ClaudeThinking, { running: true })
     );
   }
 
-  return h(Box, { marginBottom: 1 },
-    h(Text, { color: DOT_COLOR }, '\u25CF'),
-    h(Text, { color: 'white' }, ` ${text}`)
-  );
+  return h(ClaudeMessage, { role: role === 'agent' ? 'assistant' : 'user', width }, text);
 }
 
 function InputBox({ value }) {
@@ -134,6 +118,99 @@ function InputBox({ value }) {
     lines.map((line, i) => h(Text, { key: i, color: 'white' }, (i === 0 ? '\u276F ' : '  ') + line))
   );
 }
+
+// --- Claude Thinking component (brainless/claude-thinking) ---------------------
+// Adapted from https://brainless.swerdlow.dev/r/claude-thinking.json
+// Original: browser JSX with CSS gradient shimmer.
+// This version targets Ink (terminal React) using Box / Text with ANSI colors.
+
+// Captured cycle from claude/thinking frames: · ✢ ✳ ✶ ✻ ✽ ✻ ✶ ✳ ✢
+const CT_GLYPHS = ['·', '✢', '✳', '✶', '✻', '✽', '✻', '✶', '✳', '✢'];
+const CT_VERBS = [
+  'Thinking',
+  'Levitating',
+  'Schlepping',
+  'Herding',
+  'Percolating',
+  'Noodling',
+  'Conjuring',
+];
+const CLAUDE_COLOR = '#22d3ee'; // cyan — matching project palette
+const CT_DIM = '#7d7d7d';
+
+function ClaudeThinking({ running = true, verbs = CT_VERBS, showTokens = true }) {
+  const [glyph, setGlyph] = useState(0);
+  const [verbIdx, setVerbIdx] = useState(0);
+  const [secs, setSecs] = useState(0);
+
+  useEffect(() => {
+    if (!running) return;
+    const id = setInterval(() => setGlyph((g) => (g + 1) % CT_GLYPHS.length), 110);
+    return () => clearInterval(id);
+  }, [running]);
+
+  useEffect(() => {
+    if (!running) return;
+    const id = setInterval(() => setSecs((s) => s + 1), 1000);
+    return () => clearInterval(id);
+  }, [running]);
+
+  useEffect(() => {
+    if (!running) return;
+    const id = setInterval(() => setVerbIdx((v) => (v + 1) % verbs.length), 5200);
+    return () => clearInterval(id);
+  }, [running, verbs.length]);
+
+  if (!running) return null;
+
+  const verb = verbs[verbIdx % verbs.length];
+  const tokens = showTokens ? ` \u00b7 \u2191 ${Math.max(0, secs * 137)} tokens` : '';
+
+  return h(Box, { gap: 1 },
+    h(Text, { color: CLAUDE_COLOR }, CT_GLYPHS[glyph]),
+    h(Text, { color: CLAUDE_COLOR, bold: true }, `${verb}\u2026`),
+    h(Text, { color: CT_DIM }, `(${secs}s${tokens} \u00b7 esc to interrupt)`)
+  );
+}
+// --- end Claude Thinking ------------------------------------------------------
+
+// --- Claude Message component (brainless/claude-message) -----------------------
+// Adapted from https://brainless.swerdlow.dev/r/claude-message.json
+// Original: browser JSX with Tailwind classes.
+// This version targets Ink (terminal React) using Box / Text with ANSI colors.
+
+const CM_USER_BG = '#3a3a3a';   // dark background for user rows
+const CM_CARET = '#4e4e4e';     // subdued ❯ caret
+const CM_AGENT_TEXT = '#c0caf5'; // light blue/lavender for assistant text
+
+function ClaudeMessage({ role = 'assistant', children, width }) {
+  if (role === 'user') {
+    const text = typeof children === 'string' ? children : '';
+    const lines = text.split('\n');
+    return h(Box, { flexDirection: 'column', width, marginBottom: 1 },
+      lines.map((line, i) => {
+        const prefix = i === 0 ? '\u276F ' : '  ';
+        const isBlank = line.trim().length === 0;
+
+        if (isBlank) {
+          return h(Text, { key: i }, ' ');
+        }
+
+        return h(
+          Text,
+          { key: i, color: 'white', backgroundColor: CM_USER_BG },
+          (prefix + line).padEnd(width, ' ')
+        );
+      })
+    );
+  }
+
+  return h(Box, { marginBottom: 1 },
+    h(Text, { color: DOT_COLOR }, '\u25CF'),
+    h(Text, { color: CM_AGENT_TEXT }, ` ${children}`)
+  );
+}
+// --- end Claude Message -------------------------------------------------------
 
 let savedMessages = [];
 let app;
