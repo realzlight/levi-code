@@ -224,7 +224,120 @@ function ClaudeMessage({ role = 'assistant', children, width }) {
     h(Text, { color: CM_AGENT_TEXT }, ` ${children}`)
   );
 }
-// --- end Claude Message -------------------------------------------------------
+
+// --- Safety stdin interceptor -------------------------------------------------
+// Catches any raw SGR mouse escape sequences (\x1b[<...M/m) so they NEVER leak
+// into the input bar as text, and translates wheel events to smooth scrolling.
+let globalScrollUp = null;
+let globalScrollDown = null;
+
+const origEmit = process.stdin.emit;
+process.stdin.emit = function (event, ...args) {
+  if (event === 'data' && args[0]) {
+    const str = typeof args[0] === 'string' ? args[0] : args[0].toString('utf8');
+    if (str.includes('\x1b[<')) {
+      const re = /\x1b\[<(\d+);\d+;\d+[Mm]/g;
+      let match;
+      while ((match = re.exec(str)) !== null) {
+        const btn = parseInt(match[1], 10);
+        if (btn === 64 && globalScrollUp) globalScrollUp();
+        else if (btn === 65 && globalScrollDown) globalScrollDown();
+      }
+      const cleaned = str.replace(/\x1b\[<\d+;\d+;\d+[Mm]/g, '');
+      if (!cleaned) return false;
+      args[0] = Buffer.isBuffer(args[0]) ? Buffer.from(cleaned) : cleaned;
+    }
+  }
+  return origEmit.apply(this, [event, ...args]);
+};
+
+function wrapText(text, width) {
+  if (!text) return [''];
+  const maxW = Math.max(10, width);
+  const result = [];
+  const lines = text.split('\n');
+  for (const line of lines) {
+    if (line.length <= maxW) {
+      result.push(line);
+    } else {
+      let rem = line;
+      while (rem.length > maxW) {
+        result.push(rem.slice(0, maxW));
+        rem = rem.slice(maxW);
+      }
+      result.push(rem);
+    }
+  }
+  return result;
+}
+
+function buildDisplayLines(messages, width) {
+  const lines = [];
+  const safeWidth = Math.max(20, width);
+
+  messages.forEach((msg, msgIdx) => {
+    if (msg.role === 'agent' && msg.text === '...') {
+      lines.push({
+        key: `msg-${msgIdx}-thinking`,
+        node: h(Box, { key: `msg-${msgIdx}-thinking` },
+          h(Text, { color: DOT_COLOR }, '\u25CF '),
+          h(ClaudeThinking, { running: true })
+        )
+      });
+      return;
+    }
+
+    if (msg.role === 'user') {
+      const text = typeof msg.text === 'string' ? msg.text : '';
+      const textWidth = Math.max(10, safeWidth - 2);
+      const wrapped = wrapText(text, textWidth);
+
+      wrapped.forEach((chunk, lineIdx) => {
+        const prefix = lineIdx === 0 ? '\u276F ' : '  ';
+        const isBlank = chunk.trim().length === 0;
+        lines.push({
+          key: `msg-${msgIdx}-${lineIdx}`,
+          node: isBlank
+            ? h(Text, { key: `msg-${msgIdx}-${lineIdx}` }, ' ')
+            : h(
+                Text,
+                { key: `msg-${msgIdx}-${lineIdx}`, color: 'white', backgroundColor: CM_USER_BG },
+                (prefix + chunk).padEnd(safeWidth, ' ')
+              )
+        });
+      });
+
+      lines.push({
+        key: `msg-${msgIdx}-sep`,
+        node: h(Text, { key: `msg-${msgIdx}-sep` }, ' ')
+      });
+      return;
+    }
+
+    // Agent message
+    const text = typeof msg.text === 'string' ? msg.text : '';
+    const textWidth = Math.max(10, safeWidth - 3);
+    const wrapped = wrapText(text, textWidth);
+
+    wrapped.forEach((chunk, lineIdx) => {
+      const isFirst = lineIdx === 0;
+      lines.push({
+        key: `msg-${msgIdx}-${lineIdx}`,
+        node: h(Box, { key: `msg-${msgIdx}-${lineIdx}` },
+          h(Text, { color: isFirst ? DOT_COLOR : 'transparent' }, isFirst ? '\u25CF ' : '  '),
+          h(Text, { color: CM_AGENT_TEXT }, chunk)
+        )
+      });
+    });
+
+    lines.push({
+      key: `msg-${msgIdx}-sep`,
+      node: h(Text, { key: `msg-${msgIdx}-sep` }, ' ')
+    });
+  });
+
+  return lines;
+}
 
 let savedMessages = [];
 let app;
@@ -318,7 +431,7 @@ function App({ mascot }) {
     if (key.escape) { setClosed(true); setCommandOutput(null); return; }
 
     if (key.pageUp) {
-      setScrollOffset((o) => Math.min(o + 5, messages.length));
+      setScrollOffset((o) => Math.min(o + 5, maxScroll));
       return;
     }
     if (key.pageDown) {
@@ -326,7 +439,7 @@ function App({ mascot }) {
       return;
     }
     if (key.upArrow) {
-      setScrollOffset((o) => Math.min(o + 1, messages.length));
+      setScrollOffset((o) => Math.min(o + 1, maxScroll));
       return;
     }
     if (key.downArrow) {
@@ -362,10 +475,14 @@ function App({ mascot }) {
     }
 
     if (char) {
+      if (/[\x00-\x08\x0b-\x1f\x7f]/.test(char) || char.startsWith('\x1b')) return;
       setScrollOffset(0);
       setInput((value) => value + char);
     }
   });
+
+  const displayLines = React.useMemo(() => buildDisplayLines(messages, terminalWidth), [messages, terminalWidth]);
+  const totalLines = displayLines.length;
 
   const isCompact = terminalHeight < 22;
   const mascotLines = (!isCompact && mascot) ? mascot.split('\n').length : 0;
@@ -374,16 +491,33 @@ function App({ mascot }) {
   const inputLines = (input + '\u2588').split('\n').length;
   const inputAreaHeight = 2 + inputLines;
   const footerHeight = 1;
-  const hintReserve = (scrollOffset > 0) ? 2 : 1;
   const commandOutputHeight = commandOutput
     ? 3 + (commandOutput.kind === 'panel' ? 1 + commandOutput.fields.length : commandOutput.text.split('\n').length)
     : 0;
-  const availableForMessages = Math.max(1, terminalHeight - headerHeight - headerMargin - inputAreaHeight - footerHeight - hintReserve - (paletteOn ? paletteHeight(matches.length) : 0) - (form ? 2 : 0) - commandOutputHeight);
 
-  const { start, end } = computeWindow(messages, scrollOffset, availableForMessages, terminalWidth);
-  const visibleMessages = messages.slice(start, end);
+  const fixedHeight = headerHeight + headerMargin + inputAreaHeight + footerHeight + (paletteOn ? paletteHeight(matches.length) : 0) + (form ? 2 : 0) + commandOutputHeight;
+  const rawAvailable = Math.max(1, terminalHeight - fixedHeight);
+  const needsScrollIndicators = totalLines > rawAvailable;
+  const availableForMessages = Math.max(1, rawAvailable - (needsScrollIndicators ? 2 : 0));
+
+  const maxScroll = Math.max(0, totalLines - availableForMessages);
+  const clampedScroll = Math.min(scrollOffset, maxScroll);
+
+  const end = Math.max(0, totalLines - clampedScroll);
+  const start = Math.max(0, end - availableForMessages);
+  const visibleLines = displayLines.slice(start, end);
+
   const hiddenAbove = start > 0;
-  const hiddenBelow = scrollOffset > 0;
+  const hiddenBelow = end < totalLines;
+
+  useEffect(() => {
+    globalScrollUp = () => setScrollOffset((o) => Math.min(o + 1, maxScroll));
+    globalScrollDown = () => setScrollOffset((o) => Math.max(o - 1, 0));
+    return () => {
+      globalScrollUp = null;
+      globalScrollDown = null;
+    };
+  }, [maxScroll]);
 
   return h(
     Box,
@@ -399,11 +533,9 @@ function App({ mascot }) {
       flexShrink: 1,
       overflow: 'hidden'
     },
-      hiddenAbove ? h(Text, { color: GRAY }, '\u2191 more above \u2014 \u2191/PgUp to scroll') : null,
-      visibleMessages.map((message, index) =>
-        h(Message, { key: start + index, role: message.role, text: message.text, width: terminalWidth })
-      ),
-      hiddenBelow ? h(Text, { color: GRAY }, '\u2193 \u2193/PgDn to return to latest') : null
+      hiddenAbove ? h(Text, { color: GRAY }, '\u2191 swipe down to scroll up') : null,
+      visibleLines.map((item) => item.node),
+      hiddenBelow ? h(Text, { color: GRAY }, '\u2193 swipe up to return to latest') : null
     ),
 
     paletteOn ? h(Palette, { matches, active }) : null,
@@ -469,20 +601,31 @@ try {
   mascot = "";
 }
 
-const clearScreen = () => {
-  process.stdout.write('\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1006l');
+const enterAltScreen = () => {
+  // \x1b[?1049h: Alternate screen buffer
+  // \x1b[?1007h: Alternate scroll mode (translates touch swipes in Termux to Up/Down arrows)
+  // \x1b[?1000l...: Keeps mouse tracking OFF so touching the screen opens the soft keyboard
+  process.stdout.write('\x1b[?1049h\x1b[?1007h\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1006l');
   execaSync(process.platform === 'win32' ? 'cls' : 'clear', { shell: true, stdio: 'inherit' });
 };
 
+const exitAltScreen = () => {
+  process.stdout.write('\x1b[?1007l\x1b[?1049l\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1006l');
+};
+
+process.on('exit', exitAltScreen);
+process.on('SIGINT', () => { exitAltScreen(); process.exit(0); });
+process.on('SIGTERM', () => { exitAltScreen(); process.exit(0); });
+
 function mount() {
-  clearScreen();
+  enterAltScreen();
   app = render(h(App, { mascot }));
 }
 
 async function suspend(fn) {
   await new Promise((r) => setTimeout(r, 50));
   app.unmount();
-  clearScreen();
+  exitAltScreen();
   try {
     await fn();
   } catch (e) {
