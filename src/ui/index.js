@@ -18,6 +18,7 @@ import { currentSessionId, createSession, getTitle, setTitle, appendMessage, loa
 import { generateTitle } from '../agent/title.js';
 import { runAgent } from '../agent/loop.js';
 import { maybeCompact } from '../agent/compact.js';
+import { getTasks } from '../agent/tasks.js';
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import readline from 'node:readline/promises';
@@ -114,11 +115,14 @@ function Header({ mascot, compact }) {
   );
 }
 
-function Message({ role, text, width }) {
+function Message({ role, text, tool, arg, result, status, todos, width }) {
   if (role === 'agent' && text === '...') {
     return h(Box, { marginBottom: 1 },
       h(ClaudeThinking, { running: true })
     );
+  }
+  if (role === 'tool_call') {
+    return h(ClaudeToolCall, { tool, arg, result, status, todos });
   }
 
   return h(ClaudeMessage, { role: role === 'agent' ? 'assistant' : 'user', width }, text);
@@ -170,7 +174,7 @@ function ClaudePrompt({ value, width }) {
 
 const CT_GLYPHS = ['·', '✢', '✳', '✶', '✻', '✽', '✻', '✶', '✳', '✢'];
 const CT_VERBS = [
-  'Levitating', 'Schlepping', 'Herding', 'Percolating', 'Noodling', 'Conjuring',
+  'Levitating', 'Schlepping', 'Liberating', 'Sleuthing', 'Noodling', 'Calibrating',
   'Reticulating', 'Synthesizing', 'Calibrating', 'Grep\'ing', 'Weaving', 'Untangling',
   'Orbiting', 'Distilling', 'Summoning', 'Decoding', 'Splicing', 'Fermenting',
   'Marinating', 'Simmering', 'Roasting', 'Brewing', 'Kneading', 'Forging',
@@ -310,6 +314,163 @@ function ClaudeSlashMenu({ matches, active }) {
 export const slashMenuHeight = (n) => Math.min(Math.max(n, 1), 8) + 1;
 // --- end Claude Slash Menu ----------------------------------------------------
 
+// --- Claude Todo List component (brainless/claude-todo-list) -------------------
+// Adapted from https://brainless.swerdlow.dev/r/claude-todo-list.json
+// Terminal React/Ink version matching Claude Code capture grammar:
+//   ⎿ ✔ done     (green + dim)
+//     ◼ active   (terracotta + bold)
+//     ◻ pending  (default/gray)
+
+const CTL_DONE = '#87d787';   // 38;5;114 - green
+const CTL_ACTIVE = '#d78787'; // 38;5;174 - Claude terracotta
+const CTL_DIM = '#949494';    // 38;5;246 - dim gray
+
+const CTL_ICONS = {
+  done: '✔',
+  active: '◼',
+  todo: '◻',
+};
+
+function ClaudeTodoList({ todos = [] }) {
+  if (!todos || !todos.length) return null;
+
+  return h(Box, { flexDirection: 'column' },
+    todos.map((t, i) => {
+      const icon = CTL_ICONS[t.status] || CTL_ICONS.todo;
+      const iconColor = t.status === 'done' ? CTL_DONE : (t.status === 'active' ? CTL_ACTIVE : CTL_DIM);
+      const labelColor = t.status === 'done' ? CTL_DIM : (t.status === 'active' ? '#ffffff' : '#c4c4c4');
+      const bold = t.status === 'active';
+      const prefix = i === 0 ? '  \u23BF ' : '    ';
+
+      return h(Box, { key: i },
+        h(Text, { color: CTL_DIM }, prefix),
+        h(Text, { color: iconColor }, `${icon} `),
+        h(Text, { color: labelColor, bold }, t.label)
+      );
+    })
+  );
+}
+// --- end Claude Todo List -----------------------------------------------------
+
+// --- Claude Tool Call component (brainless/claude-tool-call) -------------------
+// Adapted from https://brainless.swerdlow.dev/r/claude-tool-call.json
+// Terminal React/Ink version matching Claude Code capture grammar:
+//   ⏺ tool(arg)
+//     ⎿ result
+
+const TC_STATUS_COLOR = {
+  success: '#4ea96f', // green
+  error: '#f7768e',   // red
+  pending: '#e0af68', // yellow
+};
+const TC_TOOL = '#c0caf5';
+const TC_PAREN = '#565f89';
+const TC_ARG = '#7dcfff';
+const TC_BRANCH = '#565f89';
+const TC_RESULT = '#8b8fa3';
+
+function ClaudeToolCall({ tool, arg, result, status = 'success', todos }) {
+  const statusColor = TC_STATUS_COLOR[status] || TC_STATUS_COLOR.success;
+
+  return h(Box, { flexDirection: 'column', marginBottom: 1 },
+    // Header: ⏺ tool(arg)
+    h(Box, {},
+      h(Text, { color: statusColor }, '\u23FA '),
+      h(Text, { color: TC_TOOL }, tool),
+      arg !== undefined && arg !== '' ? h(Text, null,
+        h(Text, { color: TC_PAREN }, '('),
+        h(Text, { color: TC_ARG }, arg),
+        h(Text, { color: TC_PAREN }, ')')
+      ) : null
+    ),
+    // If todos present, render ClaudeTodoList
+    todos && todos.length ? h(ClaudeTodoList, { todos }) : null,
+    // If result present (and no todos)
+    (!todos || !todos.length) && result ? h(Box, {},
+      h(Text, { color: TC_BRANCH }, '  \u23BF '),
+      h(Text, { color: TC_RESULT }, result)
+    ) : null
+  );
+}
+// --- end Claude Tool Call -----------------------------------------------------
+
+function formatToolArg(name, args) {
+  if (!args) return '';
+  if (name === 'bash') {
+    return args.command || '';
+  }
+  if (name === 'read_file' || name === 'write_file' || name === 'edit_file') {
+    return args.path || '';
+  }
+  if (name === 'set_project') {
+    return args.name || '';
+  }
+  if (name === 'add_task_cluster') {
+    return args.title || '';
+  }
+  if (name === 'set_task_done') {
+    return `cluster ${args.cluster}, task ${args.taskIndex}`;
+  }
+  if (name === 'add_task_to_cluster') {
+    return args.text || '';
+  }
+  if (name === 'edit_task') {
+    return args.text || '';
+  }
+  if (name === 'delete_task') {
+    return `cluster ${args.cluster}, task ${args.taskIndex}`;
+  }
+  if (name === 'delete_cluster') {
+    return `cluster ${args.cluster}`;
+  }
+  if (name === 'search_sessions') {
+    return args.query || '';
+  }
+  if (name === 'read_session') {
+    return String(args.id || '');
+  }
+  if (name === 'spawn_subagent') {
+    return `@${args.role}: ${args.instruction || ''}`;
+  }
+  if (name === 'message_subagent') {
+    return `@${args.role}: ${args.message || ''}`;
+  }
+  if (name === 'ask') {
+    return args.question || '';
+  }
+  const keys = Object.keys(args);
+  if (keys.length === 1 && typeof args[keys[0]] === 'string') {
+    return args[keys[0]];
+  }
+  try {
+    return JSON.stringify(args);
+  } catch {
+    return '';
+  }
+}
+
+function getTodoItems(id) {
+  if (!id) return null;
+  try {
+    const clusters = getTasks(id);
+    if (!clusters || !clusters.length) return null;
+    const activeCluster = clusters.find((c) => c.status !== 'completed') || clusters[clusters.length - 1];
+    if (!activeCluster || !activeCluster.tasks.length) return null;
+
+    let foundActive = false;
+    return activeCluster.tasks.map((t) => {
+      if (t.done) return { label: t.text, status: 'done' };
+      if (!foundActive) {
+        foundActive = true;
+        return { label: t.text, status: 'active' };
+      }
+      return { label: t.text, status: 'todo' };
+    });
+  } catch {
+    return null;
+  }
+}
+
 // --- Safety stdin interceptor -------------------------------------------------
 // Intercepts process.stdin.read directly because Ink uses read() rather than 'data' events.
 // This completely consumes mouse escape sequences (\x1b[<...M/m and \x1b[M...) before
@@ -387,6 +548,80 @@ function buildDisplayLines(messages, width) {
   const safeWidth = Math.max(20, width);
 
   messages.forEach((msg, msgIdx) => {
+    if (msg.role === 'tool_call') {
+      const statusColor = TC_STATUS_COLOR[msg.status || 'success'] || TC_STATUS_COLOR.success;
+      lines.push({
+        key: `tc-${msgIdx}-head`,
+        node: h(Box, { key: `tc-${msgIdx}-head` },
+          h(Text, { color: statusColor }, '\u23FA '),
+          h(Text, { color: TC_TOOL }, msg.tool),
+          msg.arg !== undefined && msg.arg !== '' ? h(Text, null,
+            h(Text, { color: TC_PAREN }, '('),
+            h(Text, { color: TC_ARG }, msg.arg),
+            h(Text, { color: TC_PAREN }, ')')
+          ) : null
+        )
+      });
+
+      if (msg.todos && msg.todos.length) {
+        msg.todos.forEach((t, todoIdx) => {
+          const icon = CTL_ICONS[t.status] || CTL_ICONS.todo;
+          const iconColor = t.status === 'done' ? CTL_DONE : (t.status === 'active' ? CTL_ACTIVE : CTL_DIM);
+          const labelColor = t.status === 'done' ? CTL_DIM : (t.status === 'active' ? '#ffffff' : '#c4c4c4');
+          const bold = t.status === 'active';
+          const prefix = todoIdx === 0 ? '  \u23BF ' : '    ';
+
+          lines.push({
+            key: `tc-${msgIdx}-todo-${todoIdx}`,
+            node: h(Box, { key: `tc-${msgIdx}-todo-${todoIdx}` },
+              h(Text, { color: CTL_DIM }, prefix),
+              h(Text, { color: iconColor }, `${icon} `),
+              h(Text, { color: labelColor, bold }, t.label)
+            )
+          });
+        });
+      } else if (msg.status === 'pending') {
+        lines.push({
+          key: `tc-${msgIdx}-pending`,
+          node: h(Box, { key: `tc-${msgIdx}-pending` },
+            h(Text, { color: TC_BRANCH }, '  \u23BF '),
+            h(Text, { color: TC_STATUS_COLOR.pending }, 'running...')
+          )
+        });
+      } else if (msg.result) {
+        const rawLines = String(msg.result).trim().split('\n');
+        const maxResultLines = 6;
+        const visibleRes = rawLines.slice(0, maxResultLines);
+        visibleRes.forEach((rLine, rIdx) => {
+          const prefix = rIdx === 0 ? '  \u23BF ' : '    ';
+          const rWidth = Math.max(10, safeWidth - 4);
+          const chunk = rLine.length > rWidth ? rLine.slice(0, rWidth - 1) + '…' : rLine;
+          lines.push({
+            key: `tc-${msgIdx}-res-${rIdx}`,
+            node: h(Box, { key: `tc-${msgIdx}-res-${rIdx}` },
+              h(Text, { color: TC_BRANCH }, prefix),
+              h(Text, { color: TC_RESULT }, chunk)
+            )
+          });
+        });
+        if (rawLines.length > maxResultLines) {
+          lines.push({
+            key: `tc-${msgIdx}-res-more`,
+            node: h(Box, { key: `tc-${msgIdx}-res-more` },
+              h(Text, { color: TC_BRANCH }, '    '),
+              h(Text, { color: '#666666' }, `... (+${rawLines.length - maxResultLines} more lines)`)
+            )
+          });
+        }
+      }
+
+      lines.push({
+        key: `msg-${msgIdx}-sep`,
+        node: h(Text, { key: `msg-${msgIdx}-sep` }, ' ')
+      });
+      return;
+    }
+
     if (msg.role === 'agent' && msg.text === '...') {
       lines.push({
         key: `msg-${msgIdx}-thinking`,
@@ -512,8 +747,80 @@ function App({ mascot }) {
       if (id && !getTitle(id)) setTitle(id, await generateTitle(text));
 
       const onStep = (kind, data) => {
-        if (kind === 'tool_call') {
-          setMessages((prev) => [...prev.slice(0, -1), { role: 'agent', text: `${data.name}(${JSON.stringify(data.args)})` }, { role: 'agent', text: '...' }]);
+        if (kind === 'thought') {
+          if (data && data.clusterCreated && id) {
+            const todos = getTodoItems(id);
+            if (todos && todos.length) {
+              setMessages((prev) => [
+                ...prev.slice(0, -1),
+                {
+                  role: 'tool_call',
+                  id: 'cluster-' + data.clusterCreated.num,
+                  tool: 'TaskCreate',
+                  arg: data.clusterCreated.title,
+                  status: 'success',
+                  result: '',
+                  todos
+                },
+                { role: 'agent', text: '...' }
+              ]);
+            }
+          }
+        } else if (kind === 'tool_call') {
+          const arg = formatToolArg(data.name, data.args);
+          const isTaskTool = [
+            'add_task_cluster', 'set_task_done', 'add_task_to_cluster',
+            'edit_task', 'delete_task', 'delete_cluster', 'get_tasks'
+          ].includes(data.name);
+
+          const todos = isTaskTool && id ? getTodoItems(id) : null;
+
+          setMessages((prev) => [
+            ...prev.slice(0, -1),
+            {
+              role: 'tool_call',
+              id: data.id,
+              tool: data.name,
+              arg,
+              rawArgs: data.args,
+              status: 'pending',
+              result: '',
+              todos
+            },
+            { role: 'agent', text: '...' }
+          ]);
+        } else if (kind === 'tool_result') {
+          const resStr = String(data.result || '');
+          const isError = resStr.startsWith('Error:');
+          const isTaskTool = [
+            'add_task_cluster', 'set_task_done', 'add_task_to_cluster',
+            'edit_task', 'delete_task', 'delete_cluster', 'get_tasks'
+          ].includes(data.call?.name);
+
+          const todos = isTaskTool && id ? getTodoItems(id) : null;
+
+          setMessages((prev) => {
+            const next = [...prev];
+            let idx = -1;
+            for (let i = next.length - 1; i >= 0; i--) {
+              if (
+                next[i].role === 'tool_call' &&
+                (next[i].id === data.call?.id || (next[i].tool === data.call?.name && next[i].status === 'pending'))
+              ) {
+                idx = i;
+                break;
+              }
+            }
+            if (idx !== -1) {
+              next[idx] = {
+                ...next[idx],
+                status: isError ? 'error' : 'success',
+                result: resStr,
+                todos: todos || next[idx].todos
+              };
+            }
+            return next;
+          });
         }
       };
 
