@@ -11,7 +11,8 @@ export default function CommandBar({ output }) {
 
   if (output.kind === 'text') {
     return h(Box, { flexDirection: 'column', borderStyle: 'round', borderColor: BORDER, paddingX: 1 },
-      output.text.split('\n').map((line, i) => h(Text, { key: i, color: 'white' }, line))
+      output.text.split('\n').map((line, i) => h(Text, { key: i, color: 'white' }, line)),
+      h(Text, { color: GRAY }, 'Esc to close')
     );
   }
 
@@ -23,6 +24,7 @@ export default function CommandBar({ output }) {
         h(Text, { color: GRAY }, f.label + ': '),
         h(Text, { color: f.color || 'white' }, f.value)
       )
-    )
+    ),
+    h(Text, { color: GRAY }, 'Esc to close')
   );
 }

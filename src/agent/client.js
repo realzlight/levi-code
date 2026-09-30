@@ -34,12 +34,17 @@ export async function chat(messages, { system, maxTokens = 1024 } = {}) {
       headers: {
         'Content-Type': 'application/json',
         'x-api-key': m.api_key,
-        'anthropic-version': '2023-06-01'
+        'anthropic-version': '2023-06-01',
+        'anthropic-beta': 'prompt-caching-2024-07-31'
       },
       body: JSON.stringify({
         model: m.model,
         max_tokens: maxTokens,
-        system,
+        // system as a cached block — Anthropic reuses this across calls with
+        // an identical prefix instead of re-processing the full system prompt
+        // every time. Only applies to the anthropic SDK; other providers'
+        // OpenAI-compatible endpoints don't expose an equivalent knob here.
+        system: system ? [{ type: 'text', text: system, cache_control: { type: 'ephemeral' } }] : undefined,
         messages
       })
     }).then((r) => r.json());
@@ -79,12 +84,13 @@ export async function chatWithTools(messages, { system, tools = [], maxTokens = 
       headers: {
         'Content-Type': 'application/json',
         'x-api-key': m.api_key,
-        'anthropic-version': '2023-06-01'
+        'anthropic-version': '2023-06-01',
+        'anthropic-beta': 'prompt-caching-2024-07-31'
       },
       body: JSON.stringify({
         model: m.model,
         max_tokens: maxTokens,
-        system,
+        system: system ? [{ type: 'text', text: system, cache_control: { type: 'ephemeral' } }] : undefined,
         messages,
         tools: tools.map((t) => ({
           name: t.function.name,

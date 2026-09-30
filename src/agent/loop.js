@@ -236,3 +236,5 @@ export async function runAgent(userMessage, { onStep, maxSteps } = {}) {
   }
   return '(stopped: too many tool steps, no active task cluster to report progress from)';
 }
+
+export { buildSystem };

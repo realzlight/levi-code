@@ -12,6 +12,7 @@ import SessionPicker from './SessionPicker.js';
 import AskPrompt from './AskPrompt.js';
 import MemSync from './MemSync.js';
 import Confirm from './Confirm.js';
+import CommandBar from './CommandBar.js';
 import { filterCommands, runCapture } from './commands.js';
 import { currentSessionId, createSession, getTitle, setTitle, appendMessage, loadMessages, resumeSession, getSummary, getProject } from '../agent/session.js';
 import { generateTitle } from '../agent/title.js';
@@ -145,24 +146,27 @@ function App({ mascot }) {
   const [scrollOffset, setScrollOffset] = useState(0);
   const [sel, setSel] = useState(0);
   const [form, setForm] = useState(null);
+  const [commandOutput, setCommandOutput] = useState(null);
   const [closed, setClosed] = useState(false);
   const { exit } = useApp();
   const { columns: terminalWidth, rows: terminalHeight } = useTerminalSize();
   const paletteOn = input.startsWith('/') && !input.includes(' ') && !closed;
   const matches = paletteOn ? filterCommands(input.slice(1)) : [];
   const active = Math.min(sel, Math.max(matches.length - 1, 0));
-  useEffect(() => { setSel(0); setClosed(false); }, [input]);
+  useEffect(() => { setSel(0); setClosed(false); if (input.startsWith('/')) setCommandOutput(null); }, [input]);
   const fill = (cmd) => setInput('/' + cmd.name + ' ');
 
   async function runSlash(text) {
     setMessages((prev) => [...prev, { role: 'user', text }]);
-    const out = await runCapture(text, { clear: () => setMessages([]), exit, suspend, openForm: setForm });
-    if (out) setMessages((prev) => [...prev, { role: 'agent', text: out }]);
+    const { text: out, panel } = await runCapture(text, { clear: () => setMessages([]), exit, suspend, openForm: setForm });
+    if (panel) setCommandOutput({ kind: 'panel', ...panel });
+    else if (out) setCommandOutput({ kind: 'text', text: out });
   }
 
   function submit(raw) {
     const text = raw.trim();
     if (!text) return;
+    setCommandOutput(null);
     setInput('');
     setScrollOffset(0);
     setLatestInput(text);
@@ -216,7 +220,7 @@ function App({ mascot }) {
         return;
       }
     }
-    if (key.escape) { setClosed(true); return; }
+    if (key.escape) { setClosed(true); setCommandOutput(null); return; }
     if (key.upArrow) {
       setScrollOffset((o) => Math.min(o + 1, messages.length));
       return;
@@ -264,7 +268,10 @@ function App({ mascot }) {
   const inputAreaHeight = 1 + inputLines + 1;
   const footerHeight = 1;
   const hintReserve = 2;
-  const availableForMessages = Math.max(1, terminalHeight - headerHeight - inputAreaHeight - footerHeight - hintReserve - (paletteOn ? paletteHeight(matches.length) : 0) - (form ? 2 : 0));
+  const commandOutputHeight = commandOutput
+    ? 3 + (commandOutput.kind === 'panel' ? 1 + commandOutput.fields.length : commandOutput.text.split('\n').length)
+    : 0;
+  const availableForMessages = Math.max(1, terminalHeight - headerHeight - inputAreaHeight - footerHeight - hintReserve - (paletteOn ? paletteHeight(matches.length) : 0) - (form ? 2 : 0) - commandOutputHeight);
 
   const { start, end } = computeWindow(messages, scrollOffset, availableForMessages);
   const visibleMessages = messages.slice(start, end);
@@ -293,6 +300,7 @@ function App({ mascot }) {
     ),
 
     paletteOn ? h(Palette, { matches, active }) : null,
+    h(CommandBar, { output: commandOutput }),
     h(Box, { flexShrink: 0, flexDirection: 'column' },
       h(Rule),
       form
