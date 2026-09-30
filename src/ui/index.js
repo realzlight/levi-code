@@ -5,7 +5,7 @@ import os from 'os';
 import terminalImage from 'terminal-image';
 import { execaSync } from 'execa';
 import { setLatestInput } from './state.js';
-import Palette, { paletteHeight } from './Palette.js';
+import { getCommands } from './commands.js';
 import Footer, { activeModel } from './Footer.js';
 import ModelForm from './ModelForm.js';
 import SessionPicker from './SessionPicker.js';
@@ -124,13 +124,42 @@ function Message({ role, text, width }) {
   return h(ClaudeMessage, { role: role === 'agent' ? 'assistant' : 'user', width }, text);
 }
 
-function InputBox({ value }) {
+// --- Claude Prompt component (brainless/claude-prompt) -------------------------
+// Adapted from https://brainless.swerdlow.dev/r/claude-prompt.json
+// Original: browser JSX with CSS border + effort chips + mode line.
+// This version targets Ink (terminal React) using Box / Text with ANSI colors.
+
+const CP_FG = '#c0caf5';
+const CP_RULE = '#808080';
+const CP_MODE_COLORS = {
+  auto:    { glyph: '⏵⏵', label: 'auto mode on',    color: '#ffd700' },
+  manual:  { glyph: '⏸',  label: 'manual mode on',  color: '#949494' },
+};
+const CP_EFFORTS = {
+  low:    { glyph: '○', label: 'low · /effort' },
+  medium: { glyph: '◐', label: 'medium · /effort' },
+  high:   { glyph: '●', label: 'high · /effort' },
+  xhigh:  { glyph: '◉', label: 'xhigh · /effort' },
+  max:    { glyph: '◈', label: 'max · /effort' },
+};
+
+function ClaudePrompt({ value, width }) {
   const display = value + '\u2588';
   const lines = display.split('\n');
+  const ruleWidth = Math.max(10, (width || 80) - 2);
+
   return h(Box, { flexDirection: 'column' },
-    lines.map((line, i) => h(Text, { key: i, color: 'white' }, (i === 0 ? '\u276F ' : '  ') + line))
+    // top rule
+    h(Text, { color: CP_RULE }, '\u2500'.repeat(ruleWidth)),
+    // input lines
+    h(Box, { flexDirection: 'column', paddingLeft: 0 },
+      lines.map((line, i) => h(Text, { key: i, color: CP_FG }, (i === 0 ? '\u276F ' : '  ') + line))
+    ),
+    // bottom rule
+    h(Text, { color: CP_RULE }, '\u2500'.repeat(ruleWidth))
   );
 }
+// --- end Claude Prompt --------------------------------------------------------
 
 // --- Claude Thinking component (brainless/claude-thinking) ---------------------
 // Adapted from https://brainless.swerdlow.dev/r/claude-thinking.json
@@ -242,6 +271,44 @@ function ClaudeMessage({ role = 'assistant', children, width }) {
     h(Text, { color: CM_AGENT_TEXT }, ` ${children}`)
   );
 }
+
+// --- Claude Slash Menu component (brainless/claude-slash-menu) -----------------
+// Adapted from https://brainless.swerdlow.dev/r/claude-slash-menu.json
+// Original: browser JSX with <ul role="listbox">.
+// This version targets Ink (terminal React) using Box / Text with ANSI colors.
+
+const CSM_ACTIVE = '#afd7ff';    // light blue for selected row
+const CSM_INACTIVE = '#949494';  // gray for unselected rows
+const CSM_NAME_COLS = 20;        // padded command name column
+
+function ClaudeSlashMenu({ matches, active }) {
+  if (!matches.length) {
+    return h(Box, { flexDirection: 'column', marginBottom: 0 },
+      h(Text, { color: CSM_INACTIVE }, '  No matching commands')
+    );
+  }
+
+  const maxVisible = 8;
+  const start = Math.max(0, Math.min(active - Math.floor(maxVisible / 2), matches.length - maxVisible));
+  const visible = matches.slice(start, start + maxVisible);
+  const counter = matches.length > maxVisible ? `  ${active + 1}/${matches.length}` : '';
+
+  return h(Box, { flexDirection: 'column', marginBottom: 0 },
+    visible.map((c, i) => {
+      const isActive = start + i === active;
+      const name = ('/' + c.name).padEnd(CSM_NAME_COLS);
+      return h(Box, { key: c.name },
+        h(Text, { color: isActive ? CSM_ACTIVE : CSM_INACTIVE }, isActive ? '❯ ' : '  '),
+        h(Text, { color: isActive ? CSM_ACTIVE : CSM_INACTIVE, bold: isActive }, name),
+        h(Text, { color: isActive ? '#c4c4c4' : '#666666' }, c.description)
+      );
+    }),
+    h(Text, { color: '#666666' }, `  ↑↓ navigate · tab fill · enter run · esc close${counter}`)
+  );
+}
+
+export const slashMenuHeight = (n) => Math.min(Math.max(n, 1), 8) + 1;
+// --- end Claude Slash Menu ----------------------------------------------------
 
 // --- Safety stdin interceptor -------------------------------------------------
 // Intercepts process.stdin.read directly because Ink uses read() rather than 'data' events.
@@ -481,13 +548,14 @@ function App({ mascot }) {
   const headerHeight = isCompact ? 1 : Math.max(mascotLines, 3) + 1;
   const headerMargin = isCompact ? 1 : 2;
   const inputLines = (input + '\u2588').split('\n').length;
+  // ClaudePrompt: 1 top rule + inputLines + 1 bottom rule = 2 + inputLines
   const inputAreaHeight = 2 + inputLines;
   const footerHeight = 1;
   const commandOutputHeight = commandOutput
     ? 3 + (commandOutput.kind === 'panel' ? 1 + commandOutput.fields.length : commandOutput.text.split('\n').length)
     : 0;
 
-  const fixedHeight = headerHeight + headerMargin + inputAreaHeight + footerHeight + (paletteOn ? paletteHeight(matches.length) : 0) + (form ? 2 : 0) + commandOutputHeight;
+  const fixedHeight = headerHeight + headerMargin + inputAreaHeight + footerHeight + (paletteOn ? slashMenuHeight(matches.length) : 0) + (form ? 2 : 0) + commandOutputHeight;
   const rawAvailable = Math.max(1, terminalHeight - fixedHeight);
   const needsScrollIndicators = totalLines > rawAvailable;
   const availableForMessages = Math.max(1, rawAvailable - (needsScrollIndicators ? 2 : 0));
@@ -595,8 +663,8 @@ function App({ mascot }) {
   });
 
   useEffect(() => {
-    globalScrollUp = () => animateTo(targetScrollRef.current + 3);
-    globalScrollDown = () => animateTo(targetScrollRef.current - 3);
+    globalScrollUp = () => animateTo(targetScrollRef.current + 1);
+    globalScrollDown = () => animateTo(targetScrollRef.current - 1);
 
     let tapTimer = null;
     globalTap = () => {
@@ -635,10 +703,9 @@ function App({ mascot }) {
       hiddenBelow ? h(Text, { color: GRAY }, '\u2193 swipe up to return to latest') : null
     ),
 
-    paletteOn ? h(Palette, { matches, active }) : null,
+    paletteOn ? h(ClaudeSlashMenu, { matches, active }) : null,
     h(CommandBar, { output: commandOutput }),
     h(Box, { flexShrink: 0, flexDirection: 'column' },
-      h(Rule),
       form
         ? (form.mode === 'resume'
             ? h(SessionPicker, {
@@ -675,8 +742,7 @@ function App({ mascot }) {
             : form.mode === 'mem-sync-progress'
             ? h(MemSync, { mode: 'sync', onDone: () => setForm(null) })
             : h(ModelForm, { key: form.mode + (form.name ?? ''), mode: form.mode, name: form.name, onDone: () => setForm(null) }))
-        : h(InputBox, { value: input }),
-      h(Rule)
+        : h(ClaudePrompt, { value: input, width: terminalWidth })
     ),
 
     h(Footer, { width: terminalWidth, model: activeModel() })

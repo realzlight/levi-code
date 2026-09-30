@@ -51,7 +51,7 @@ defineCommand({
   run: (_, ctx) => ctx.print(getCommands().map(c => `${usage(c)}  ${c.description}`).join('\n'))
 });
 
-defineCommand({ name: 'clear', description: 'Clear the screen', run: (_, ctx) => ctx.clear?.() });
+defineCommand({ name: 'clear', description: 'Clear screen', run: (_, ctx) => ctx.clear?.() });
 defineCommand({ name: 'exit', description: 'Quit Levi', run: (_, ctx) => ctx.exit?.() });
 
 defineCommand({
@@ -65,16 +65,16 @@ defineCommand({
 });
 
 // wired in a later step
-defineCommand({ name: 'models:list', description: 'List your models' });
-defineCommand({ name: 'models:create', description: 'Add a new model', args: [{ name: 'name' }] });
+defineCommand({ name: 'models:list', description: 'List models' });
+defineCommand({ name: 'models:create', description: 'Add a model', args: [{ name: 'name' }] });
 defineCommand({ name: 'models:edit', description: 'Edit a model', args: [{ name: 'name', required: true }] });
-defineCommand({ name: 'models:use', description: 'Switch the active model', args: [{ name: 'name', required: true }] });
+defineCommand({ name: 'models:use', description: 'Switch active model', args: [{ name: 'name', required: true }] });
 defineCommand({ name: 'models:delete', description: 'Delete a model', args: [{ name: 'name', required: true }] });
-defineCommand({ name: 'whoami', description: 'Show who you are logged in as' });
+defineCommand({ name: 'whoami', description: 'Show current user' });
 
 defineCommand({
   name: 'logout',
-  description: 'Sign out of GitHub and quit',
+  description: 'Sign out and quit',
   run: async (_, ctx) => {
     const fs = await import('node:fs');
     const os = await import('node:os');
@@ -205,7 +205,7 @@ const sessionMod = () => import('../agent/session.js');
 
 defineCommand({
   name: 'new',
-  description: 'Start a fresh session',
+  description: 'New session',
   run: async (_, ctx) => {
     const { createSession } = await sessionMod();
     const id = createSession();
@@ -216,7 +216,7 @@ defineCommand({
 
 defineCommand({
   name: 'resume',
-  description: 'Switch to a past or current session',
+  description: 'Resume a session',
   run: async (_, ctx) => {
     const { listSessions, currentSessionId } = await sessionMod();
     const sessions0 = listSessions();
@@ -226,7 +226,7 @@ defineCommand({
 
 defineCommand({
   name: 'alone',
-  description: 'Toggle solo-only mode (never launch subagents)',
+  description: 'Toggle solo mode',
   run: async (_, ctx) => {
     const { isSoloOnly, setSoloOnly } = await sessionMod();
     const next = setSoloOnly(!isSoloOnly());
@@ -241,19 +241,19 @@ const memMod = () => import('../commands/mem.js');
 
 defineCommand({
   name: 'mem:push',
-  description: 'Commit and push ~/.levi to its git remote (sets up a local repo first if needed)',
+  description: 'Push ~/.levi to remote',
   run: (_, ctx) => ctx.openForm({ mode: 'mem-push' })
 });
 
 defineCommand({
   name: 'mem:sync',
-  description: 'Replace local ~/.levi with the remote version — destructive, asks for confirmation twice',
+  description: 'Pull remote → local ~/.levi',
   run: (_, ctx) => ctx.openForm({ mode: 'mem-sync-confirm1' })
 });
 
 defineCommand({
   name: 'agent',
-  description: 'Toggle sub-agent mode (same switch as /alone, opposite direction)',
+  description: 'Toggle subagent mode',
   run: async (_, ctx) => {
     const { isSoloOnly, setSoloOnly } = await sessionMod();
     const next = setSoloOnly(!isSoloOnly());
@@ -266,7 +266,7 @@ defineCommand({
 
 defineCommand({
   name: 'context',
-  description: 'Show total token usage for this session so far',
+  description: 'Session token usage',
   run: async (_, ctx) => {
     const { currentSessionId } = await sessionMod();
     const { getTotalUsage } = await import('../agent/usage.js');
@@ -287,7 +287,7 @@ defineCommand({
 
 defineCommand({
   name: 'usage',
-  description: 'Show token usage for the most recent message',
+  description: 'Last message token usage',
   run: async (_, ctx) => {
     const { currentSessionId } = await sessionMod();
     const { getLastTurnUsage } = await import('../agent/usage.js');
