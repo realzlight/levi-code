@@ -10,6 +10,8 @@ import Footer, { activeModel } from './Footer.js';
 import ModelForm from './ModelForm.js';
 import SessionPicker from './SessionPicker.js';
 import AskPrompt from './AskPrompt.js';
+import MemSync from './MemSync.js';
+import Confirm from './Confirm.js';
 import { filterCommands, runCapture } from './commands.js';
 import { currentSessionId, createSession, getTitle, setTitle, appendMessage, loadMessages, resumeSession, getSummary, getProject } from '../agent/session.js';
 import { generateTitle } from '../agent/title.js';
@@ -308,6 +310,26 @@ function App({ mascot }) {
                 allowCustom: form.allowCustom,
                 onPick: (answer) => { setForm(null); submit(answer); }
               })
+            : form.mode === 'mem-push'
+            ? h(MemSync, { mode: 'push', onDone: () => setForm(null) })
+            : form.mode === 'mem-sync-confirm1'
+            ? h(Confirm, {
+                message: 'This will PERMANENTLY REPLACE your local ~/.levi with the remote version.',
+                warning: 'Sessions, memory, projects, and config not already pushed will be LOST. This cannot be undone.',
+                options: ['Continue', 'Cancel'],
+                onConfirm: () => setForm({ mode: 'mem-sync-confirm2' }),
+                onCancel: () => setForm(null)
+              })
+            : form.mode === 'mem-sync-confirm2'
+            ? h(Confirm, {
+                message: 'Are you absolutely sure?',
+                warning: 'This is your last chance to cancel before local data is overwritten.',
+                options: ["Yes, I'm sure — replace it", 'Cancel'],
+                onConfirm: () => setForm({ mode: 'mem-sync-progress' }),
+                onCancel: () => setForm(null)
+              })
+            : form.mode === 'mem-sync-progress'
+            ? h(MemSync, { mode: 'sync', onDone: () => setForm(null) })
             : h(ModelForm, { key: form.mode + (form.name ?? ''), mode: form.mode, name: form.name, onDone: () => setForm(null) }))
         : h(InputBox, { value: input }),
       h(Rule)

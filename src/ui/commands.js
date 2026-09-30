@@ -29,7 +29,7 @@ export function filterCommands(query = '') {
 // input = full prompt text, e.g. '/models:use astra'
 // ctx   = { print, clear, exit } supplied by the UI
 export async function runCommand(input, ctx = {}) {
-  ctx = { shell, print: console.log, ...ctx };
+  ctx = { shell, print: console.log, printPanel: (p) => console.log(JSON.stringify(p)), ...ctx };
 
   const [name, ...rest] = tokenize(input.trim().replace(/^\//, ''));
   const cmd = registry.get(name);
@@ -91,8 +91,9 @@ defineCommand({
 // runs a command and returns everything it printed as one string
 export async function runCapture(input, ctx = {}) {
   const out = [];
-  await runCommand(input, { ...ctx, print: (t) => out.push(String(t)) });
-  return out.join('\n');
+  let panel = null;
+  await runCommand(input, { ...ctx, print: (t) => out.push(String(t)), printPanel: (p) => { panel = p; } });
+  return { text: out.join('\n'), panel };
 }
 
 // ---- config helper + working commands ----
@@ -120,11 +121,13 @@ defineCommand({
     const c = await cfg.read();
     const names = Object.keys(c.models || {});
     if (!names.length) return ctx.print('No models yet. Use /models:create');
-    ctx.print(
-      names
-        .map((n) => `${c.active_model === n ? '★' : ' '} ${n} | ${c.models[n].sdk} | ${c.models[n].model}`)
-        .join('\n')
-    );
+    ctx.printPanel({
+      title: 'Models',
+      fields: names.map((n) => ({
+        label: (c.active_model === n ? '★ ' : '  ') + n,
+        value: `${c.models[n].sdk} · ${c.models[n].model}`
+      }))
+    });
   }
 });
 
@@ -227,7 +230,37 @@ defineCommand({
   run: async (_, ctx) => {
     const { isSoloOnly, setSoloOnly } = await sessionMod();
     const next = setSoloOnly(!isSoloOnly());
-    ctx.print(next ? 'Solo-only mode ON — Levi will never launch subagents.' : 'Solo-only mode OFF — Levi may launch subagents when needed.');
+    ctx.printPanel({
+      title: 'Solo-only mode',
+      fields: [{ label: 'Status', value: next ? 'ON — Levi will never launch subagents' : 'OFF — Levi may launch subagents when needed', color: next ? 'yellow' : 'green' }]
+    });
+  }
+});
+
+const memMod = () => import('../commands/mem.js');
+
+defineCommand({
+  name: 'mem:push',
+  description: 'Commit and push ~/.levi to its git remote (sets up a local repo first if needed)',
+  run: (_, ctx) => ctx.openForm({ mode: 'mem-push' })
+});
+
+defineCommand({
+  name: 'mem:sync',
+  description: 'Replace local ~/.levi with the remote version — destructive, asks for confirmation twice',
+  run: (_, ctx) => ctx.openForm({ mode: 'mem-sync-confirm1' })
+});
+
+defineCommand({
+  name: 'agent',
+  description: 'Toggle sub-agent mode (same switch as /alone, opposite direction)',
+  run: async (_, ctx) => {
+    const { isSoloOnly, setSoloOnly } = await sessionMod();
+    const next = setSoloOnly(!isSoloOnly());
+    ctx.printPanel({
+      title: 'Sub-agent mode',
+      fields: [{ label: 'Status', value: next ? 'Solo-only ON — subagents disabled' : 'ON — Levi may launch subagents when useful', color: next ? 'yellow' : 'green' }]
+    });
   }
 });
 
@@ -240,7 +273,15 @@ defineCommand({
     const id = currentSessionId();
     if (!id) return ctx.print('No active session yet.');
     const u = getTotalUsage(id);
-    ctx.print(`SESSION-${id} total usage: ${u.inputTokens} in / ${u.outputTokens} out (${u.turnCount} turn${u.turnCount === 1 ? '' : 's'}, ${u.callCount} API call${u.callCount === 1 ? '' : 's'})`);
+    ctx.printPanel({
+      title: `SESSION-${id} — total usage`,
+      fields: [
+        { label: 'Input tokens', value: String(u.inputTokens) },
+        { label: 'Output tokens', value: String(u.outputTokens) },
+        { label: 'Turns', value: String(u.turnCount) },
+        { label: 'API calls', value: String(u.callCount) }
+      ]
+    });
   }
 });
 
@@ -254,6 +295,13 @@ defineCommand({
     if (!id) return ctx.print('No active session yet.');
     const u = getLastTurnUsage(id);
     if (!u.callCount) return ctx.print('No usage recorded yet this session.');
-    ctx.print(`Latest message usage: ${u.inputTokens} in / ${u.outputTokens} out (${u.callCount} API call${u.callCount === 1 ? '' : 's'})`);
+    ctx.printPanel({
+      title: 'Latest message usage',
+      fields: [
+        { label: 'Input tokens', value: String(u.inputTokens) },
+        { label: 'Output tokens', value: String(u.outputTokens) },
+        { label: 'API calls', value: String(u.callCount) }
+      ]
+    });
   }
 });

@@ -23,7 +23,7 @@ export async function login() {
   const deviceRes = await fetch('https://github.com/login/device/code', {
     method: 'POST',
     headers: { 'Accept': 'application/json', 'Content-Type': 'application/json' },
-    body: JSON.stringify({ client_id: CLIENT_ID, scope: 'read:user user:email' })
+    body: JSON.stringify({ client_id: CLIENT_ID, scope: 'read:user user:email public_repo' })
   }).then(r => r.json());
 
   if (deviceRes.error) return p.log.error(chalk.red(deviceRes.error_description));
