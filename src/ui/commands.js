@@ -225,6 +225,38 @@ defineCommand({
 });
 
 defineCommand({
+  name: 'compact',
+  description: 'Compact session',
+  run: async (_, ctx) => {
+    if (ctx.openForm) {
+      return ctx.openForm({ mode: 'compact' });
+    }
+    const { currentSessionId, getProject } = await sessionMod();
+    const id = currentSessionId();
+    if (!id) return ctx.print('No active session to compact.');
+    const project = getProject(id);
+    const { compact } = await import('../agent/compact.js');
+    ctx.print('Compacting session buffer...');
+    const result = await compact(id, project, { force: true });
+    if (result && result.ok) {
+      ctx.printPanel({
+        title: `SESSION-${id} compacted`,
+        fields: [
+          { label: 'Compacted', value: `${result.compactedCount} messages` },
+          { label: 'Kept', value: `${result.keptCount} recent messages` },
+          { label: 'Summary', value: result.summary }
+        ]
+      });
+      ctx.reload?.();
+    } else if (result && result.skipped) {
+      ctx.print(`Skipped: ${result.reason}`);
+    } else {
+      ctx.print(`Compaction failed: ${result?.error || 'Unknown error'}`);
+    }
+  }
+});
+
+defineCommand({
   name: 'alone',
   description: 'Toggle solo mode',
   run: async (_, ctx) => {

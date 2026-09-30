@@ -172,22 +172,40 @@ async function extractToMemory(transcript, projectName = null) {
   }
 }
 
-export async function maybeCompact(id, projectName = null) {
+export async function compact(id, projectName = null, { force = false, onProgress } = {}) {
+  onProgress?.('read', 'running');
   const file = bufferPath(id);
   let raw;
   try {
     raw = fs.readFileSync(file, 'utf-8');
   } catch {
-    return;
+    onProgress?.('read', 'error', 'Could not read session buffer');
+    return { ok: false, error: 'Could not read session buffer' };
   }
 
   const { summary, messages } = parse(raw);
   const bodySize = messages.reduce((n, m) => n + m.text.length, 0);
-  if (bodySize < THRESHOLD || messages.length <= KEEP_RECENT) return;
+  if (!force && (bodySize < THRESHOLD || messages.length <= KEEP_RECENT)) {
+    onProgress?.('read', 'done', 'Buffer under threshold');
+    return { ok: false, skipped: true, reason: 'Buffer is under threshold' };
+  }
+  if (messages.length <= 1) {
+    onProgress?.('read', 'error', 'Not enough messages');
+    return { ok: false, skipped: true, reason: 'Not enough messages to compact' };
+  }
 
-  const toCompact = messages.slice(0, -KEEP_RECENT);
-  const keep = messages.slice(-KEEP_RECENT);
+  const keepCount = Math.min(KEEP_RECENT, Math.max(1, messages.length - 1));
+  const toCompact = messages.slice(0, -keepCount);
+  const keep = messages.slice(-keepCount);
 
+  if (!toCompact.length) {
+    onProgress?.('read', 'done', 'No messages to compact');
+    return { ok: false, skipped: true, reason: 'No messages to compact' };
+  }
+
+  onProgress?.('read', 'done', `${messages.length} messages found`);
+
+  onProgress?.('summarize', 'running', `Summarizing ${toCompact.length} messages`);
   const transcript = toCompact.map((m) => `${m.role}: ${m.text}`).join('\n');
   const prompt = summary
     ? `Previous summary:\n${summary}\n\nNew messages to fold in:\n${transcript}`
@@ -196,11 +214,23 @@ export async function maybeCompact(id, projectName = null) {
   let newSummary;
   try {
     newSummary = (await chat([{ role: 'user', content: prompt }], { system: SUMMARY_PROMPT })).text.trim();
-  } catch {
-    return; // leave buffer as-is if the summarization call fails
+  } catch (e) {
+    onProgress?.('summarize', 'error', e.message);
+    return { ok: false, error: e.message };
   }
+  onProgress?.('summarize', 'done', 'Summary generated');
 
-  fs.writeFileSync(file, serialize(newSummary, keep));
-
+  onProgress?.('extract', 'running', 'Extracting facts to memory');
   await extractToMemory(transcript, projectName);
+  onProgress?.('extract', 'done', 'Memory updated');
+
+  onProgress?.('write', 'running', 'Saving compacted buffer');
+  fs.writeFileSync(file, serialize(newSummary, keep));
+  onProgress?.('write', 'done', `Kept ${keep.length} recent messages`);
+
+  return { ok: true, summary: newSummary, compactedCount: toCompact.length, keptCount: keep.length };
+}
+
+export async function maybeCompact(id, projectName = null) {
+  return compact(id, projectName, { force: false });
 }

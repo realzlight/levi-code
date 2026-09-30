@@ -12,6 +12,7 @@ import SessionPicker from './SessionPicker.js';
 import AskPrompt from './AskPrompt.js';
 import MemSync from './MemSync.js';
 import Confirm from './Confirm.js';
+import CompactProgress from './CompactProgress.js';
 import CommandBar from './CommandBar.js';
 import { filterCommands, runCapture } from './commands.js';
 import { currentSessionId, createSession, getTitle, setTitle, appendMessage, loadMessages, resumeSession, getSummary, getProject } from '../agent/session.js';
@@ -724,7 +725,21 @@ function App({ mascot }) {
 
   async function runSlash(text) {
     setMessages((prev) => [...prev, { role: 'user', text }]);
-    const { text: out, panel } = await runCapture(text, { clear: () => setMessages([]), exit, suspend, openForm: setForm });
+    const { text: out, panel } = await runCapture(text, {
+      clear: () => setMessages([]),
+      exit,
+      suspend,
+      openForm: setForm,
+      reload: () => {
+        const id = currentSessionId();
+        if (id) {
+          const s = getSummary(id);
+          const msgs = loadMessages(id);
+          setMessages(s ? [{ role: 'agent', text: '[recap] ' + s }, ...msgs] : msgs);
+          setScrollOffset(0);
+        }
+      }
+    });
     if (panel) setCommandOutput({ kind: 'panel', ...panel });
     else if (out) setCommandOutput({ kind: 'text', text: out });
   }
@@ -862,7 +877,11 @@ function App({ mascot }) {
     ? 3 + (commandOutput.kind === 'panel' ? 1 + commandOutput.fields.length : commandOutput.text.split('\n').length)
     : 0;
 
-  const fixedHeight = headerHeight + headerMargin + inputAreaHeight + footerHeight + (paletteOn ? slashMenuHeight(matches.length) : 0) + (form ? 2 : 0) + commandOutputHeight;
+  const formHeight = form
+    ? (form.mode === 'compact' ? 9 : (form.mode.startsWith('mem-') ? 7 : 4))
+    : 0;
+  const bottomAreaHeight = form ? formHeight : inputAreaHeight;
+  const fixedHeight = headerHeight + headerMargin + bottomAreaHeight + footerHeight + (paletteOn ? slashMenuHeight(matches.length) : 0) + commandOutputHeight;
   const rawAvailable = Math.max(1, terminalHeight - fixedHeight);
   const needsScrollIndicators = totalLines > rawAvailable;
   const availableForMessages = Math.max(1, rawAvailable - (needsScrollIndicators ? 2 : 0));
@@ -1048,6 +1067,22 @@ function App({ mascot }) {
               })
             : form.mode === 'mem-sync-progress'
             ? h(MemSync, { mode: 'sync', onDone: () => setForm(null) })
+            : form.mode === 'compact'
+            ? h(CompactProgress, {
+                sessionId: currentSessionId(),
+                onDone: (result) => {
+                  setForm(null);
+                  if (result && result.ok) {
+                    const id = currentSessionId();
+                    if (id) {
+                      const s = getSummary(id);
+                      const msgs = loadMessages(id);
+                      setMessages(s ? [{ role: 'agent', text: '[recap] ' + s }, ...msgs] : msgs);
+                      setScrollOffset(0);
+                    }
+                  }
+                }
+              })
             : h(ModelForm, { key: form.mode + (form.name ?? ''), mode: form.mode, name: form.name, onDone: () => setForm(null) }))
         : h(ClaudePrompt, { value: input, width: terminalWidth })
     ),
