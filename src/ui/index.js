@@ -117,7 +117,6 @@ function Header({ mascot, compact }) {
 function Message({ role, text, width }) {
   if (role === 'agent' && text === '...') {
     return h(Box, { marginBottom: 1 },
-      h(Text, { color: DOT_COLOR }, '\u25CF '),
       h(ClaudeThinking, { running: true })
     );
   }
@@ -139,27 +138,45 @@ function InputBox({ value }) {
 // This version targets Ink (terminal React) using Box / Text with ANSI colors.
 
 // Captured cycle from claude/thinking frames: · ✢ ✳ ✶ ✻ ✽ ✻ ✶ ✳ ✢
+
 const CT_GLYPHS = ['·', '✢', '✳', '✶', '✻', '✽', '✻', '✶', '✳', '✢'];
 const CT_VERBS = [
-  'Thinking',
-  'Levitating',
-  'Schlepping',
-  'Herding',
-  'Percolating',
-  'Noodling',
-  'Conjuring',
+  'Levitating', 'Schlepping', 'Herding', 'Percolating', 'Noodling', 'Conjuring',
+  'Reticulating', 'Synthesizing', 'Calibrating', 'Grep\'ing', 'Weaving', 'Untangling',
+  'Orbiting', 'Distilling', 'Summoning', 'Decoding', 'Splicing', 'Fermenting',
+  'Marinating', 'Simmering', 'Roasting', 'Brewing', 'Kneading', 'Forging',
+  'Sculpting', 'Chiseling', 'Polishing', 'Buffing', 'Sandblasting', 'Welding',
+  'Braiding', 'Knitting', 'Crocheting', 'Folding', 'Origami-ing', 'Tetris-ing',
+  'Mining', 'Excavating', 'Prospecting', 'Dowsing', 'Spelunking', 'Burrowing',
+  'Triaging', 'Sherpa-ing', 'Carrying', 'Unboxing', 'Unfurling', 'Unleashing',
+  'Channeling', 'Manifesting', 'Divining', 'Scrying', 'Downgrading', 'Upgrading',
+  'Shuffling', 'Lurking', 'Hovering', 'Drifting', 'Meandering', 'Wandering',
+  'Pondering', 'Contemplating', 'Ruminating', 'Meditating', 'Vibing', 'Cooking',
+  'Squinting', 'Peering', 'Sleuthing', 'Investigating', 'Foraging', 'Hunting',
+  'Gathering', 'Indexing', 'Cataloging', 'Archiving', 'Combing', 'Sifting',
+  'Wrangling', 'Taming', 'Domesticating', 'Negotiating', 'Bargaining', 'Haggling',
+  'Yeeting', 'Yoinking', 'Borrowing', 'Liberating', 'Recruiting', 'Drafting',
 ];
-const CLAUDE_COLOR = '#22d3ee'; // cyan — matching project palette
+const CLAUDE_COLOR = '#22d3ee';
 const CT_DIM = '#7d7d7d';
+
+const CT_DOTS = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
 
 function ClaudeThinking({ running = true, verbs = CT_VERBS, showTokens = true }) {
   const [glyph, setGlyph] = useState(0);
   const [verbIdx, setVerbIdx] = useState(0);
   const [secs, setSecs] = useState(0);
+  const [dot, setDot] = useState(0);
 
   useEffect(() => {
     if (!running) return;
     const id = setInterval(() => setGlyph((g) => (g + 1) % CT_GLYPHS.length), 110);
+    return () => clearInterval(id);
+  }, [running]);
+
+  useEffect(() => {
+    if (!running) return;
+    const id = setInterval(() => setDot((d) => (d + 1) % CT_DOTS.length), 80);
     return () => clearInterval(id);
   }, [running]);
 
@@ -171,16 +188,17 @@ function ClaudeThinking({ running = true, verbs = CT_VERBS, showTokens = true })
 
   useEffect(() => {
     if (!running) return;
-    const id = setInterval(() => setVerbIdx((v) => (v + 1) % verbs.length), 5200);
+    const id = setInterval(() => setVerbIdx((v) => (v + 1) % verbs.length), 1000); // <-- 1s now
     return () => clearInterval(id);
   }, [running, verbs.length]);
 
   if (!running) return null;
 
   const verb = verbs[verbIdx % verbs.length];
-  const tokens = showTokens ? ` \u00b7 \u2191 ${Math.max(0, secs * 137)} tokens` : '';
+  const tokens = showTokens? ` \u00b7 \u2191 ${Math.max(0, secs * 137)} tokens` : '';
 
   return h(Box, { gap: 1 },
+    h(Text, { color: CLAUDE_COLOR }, CT_DOTS[dot]),
     h(Text, { color: CLAUDE_COLOR }, CT_GLYPHS[glyph]),
     h(Text, { color: CLAUDE_COLOR, bold: true }, `${verb}\u2026`),
     h(Text, { color: CT_DIM }, `(${secs}s${tokens} \u00b7 esc to interrupt)`)
@@ -226,29 +244,55 @@ function ClaudeMessage({ role = 'assistant', children, width }) {
 }
 
 // --- Safety stdin interceptor -------------------------------------------------
-// Catches any raw SGR mouse escape sequences (\x1b[<...M/m) so they NEVER leak
-// into the input bar as text, and translates wheel events to smooth scrolling.
+// Intercepts process.stdin.read directly because Ink uses read() rather than 'data' events.
+// This completely consumes mouse escape sequences (\x1b[<...M/m and \x1b[M...) before
+// Ink ever sees them, preventing any numbers/characters from being typed into the input bar.
 let globalScrollUp = null;
 let globalScrollDown = null;
+let globalTap = null;
 
-const origEmit = process.stdin.emit;
-process.stdin.emit = function (event, ...args) {
-  if (event === 'data' && args[0]) {
-    const str = typeof args[0] === 'string' ? args[0] : args[0].toString('utf8');
-    if (str.includes('\x1b[<')) {
-      const re = /\x1b\[<(\d+);\d+;\d+[Mm]/g;
-      let match;
-      while ((match = re.exec(str)) !== null) {
-        const btn = parseInt(match[1], 10);
-        if (btn === 64 && globalScrollUp) globalScrollUp();
-        else if (btn === 65 && globalScrollDown) globalScrollDown();
+const origRead = process.stdin.read;
+process.stdin.read = function (...args) {
+  const chunk = origRead.apply(this, args);
+  if (!chunk) return chunk;
+
+  let str = typeof chunk === 'string' ? chunk : chunk.toString('utf8');
+
+  // SGR mouse mode: \x1b[<btn;col;rowM or m
+  if (str.includes('\x1b[<')) {
+    const re = /\x1b\[<(\d+);\d+;\d+([Mm])/g;
+    let match;
+    while ((match = re.exec(str)) !== null) {
+      const btn = parseInt(match[1], 10);
+      const action = match[2];
+      if (btn === 64) {
+        if (globalScrollUp) globalScrollUp();
+      } else if (btn === 65) {
+        if (globalScrollDown) globalScrollDown();
+      } else if (btn === 0 && action === 'M') {
+        if (globalTap) globalTap();
       }
-      const cleaned = str.replace(/\x1b\[<\d+;\d+;\d+[Mm]/g, '');
-      if (!cleaned) return false;
-      args[0] = Buffer.isBuffer(args[0]) ? Buffer.from(cleaned) : cleaned;
     }
+    str = str.replace(/\x1b\[<\d+;\d+;\d+[Mm]/g, '');
   }
-  return origEmit.apply(this, [event, ...args]);
+
+  // X11 mouse mode fallback: \x1b[M + 3 bytes
+  if (str.includes('\x1b[M')) {
+    const reX11 = /\x1b\[M([\s\S]{3})/g;
+    let mX;
+    while ((mX = reX11.exec(str)) !== null) {
+      const b = mX[1].charCodeAt(0) - 32;
+      if (b === 64 && globalScrollUp) globalScrollUp();
+      else if (b === 65 && globalScrollDown) globalScrollDown();
+    }
+    str = str.replace(/\x1b\[M[\s\S]{3}/g, '');
+  }
+
+  // Strip any remaining orphan escape codes
+  str = str.replace(/\x1b\[<\d+;\d+;?\d*[Mm]?/g, '');
+
+  if (!str) return Buffer.isBuffer(chunk) ? Buffer.alloc(0) : '';
+  return Buffer.isBuffer(chunk) ? Buffer.from(str) : str;
 };
 
 function wrapText(text, width) {
@@ -280,7 +324,6 @@ function buildDisplayLines(messages, width) {
       lines.push({
         key: `msg-${msgIdx}-thinking`,
         node: h(Box, { key: `msg-${msgIdx}-thinking` },
-          h(Text, { color: DOT_COLOR }, '\u25CF '),
           h(ClaudeThinking, { running: true })
         )
       });
@@ -348,6 +391,8 @@ function App({ mascot }) {
 
   const [input, setInput] = useState('');
   const [scrollOffset, setScrollOffset] = useState(0);
+  const targetScrollRef = React.useRef(0);
+  const animTimerRef = React.useRef(null);
   const [sel, setSel] = useState(0);
   const [form, setForm] = useState(null);
   const [commandOutput, setCommandOutput] = useState(null);
@@ -356,7 +401,18 @@ function App({ mascot }) {
   const { columns: terminalWidth, rows: terminalHeight } = useTerminalSize();
 
   // When the terminal resizes (keyboard up/down), snap to latest messages
-  useEffect(() => { setScrollOffset(0); }, [terminalHeight]);
+  useEffect(() => {
+    if (animTimerRef.current) clearTimeout(animTimerRef.current);
+    animTimerRef.current = null;
+    targetScrollRef.current = 0;
+    setScrollOffset(0);
+  }, [terminalHeight]);
+
+  useEffect(() => {
+    return () => {
+      if (animTimerRef.current) clearTimeout(animTimerRef.current);
+    };
+  }, []);
 
   const paletteOn = input.startsWith('/') && !input.includes(' ') && !closed;
   const matches = paletteOn ? filterCommands(input.slice(1)) : [];
@@ -376,6 +432,7 @@ function App({ mascot }) {
     if (!text) return;
     setCommandOutput(null);
     setInput('');
+    targetScrollRef.current = 0;
     setScrollOffset(0);
     setLatestInput(text);
     if (text.startsWith('/')) { runSlash(text); return; }
@@ -389,7 +446,7 @@ function App({ mascot }) {
 
       const onStep = (kind, data) => {
         if (kind === 'tool_call') {
-          setMessages((prev) => [...prev.slice(0, -1), { role: 'agent', text: `${data.name}(${JSON.stringify(data.args)})` }]);
+          setMessages((prev) => [...prev.slice(0, -1), { role: 'agent', text: `${data.name}(${JSON.stringify(data.args)})` }, { role: 'agent', text: '...' }]);
         }
       };
 
@@ -415,71 +472,6 @@ function App({ mascot }) {
       maybeCompact(id, getProject(id));
     })();
   }
-
-  useInput((char, key) => {
-    if (form) return;
-    if (paletteOn && matches.length) {
-      if (key.upArrow) { setSel((active - 1 + matches.length) % matches.length); return; }
-      if (key.downArrow) { setSel((active + 1) % matches.length); return; }
-      if (key.tab) { fill(matches[active]); return; }
-      if (key.return) {
-        const cmd = matches[active];
-        if ((cmd.args || []).some((a) => a.required)) fill(cmd); else submit('/' + cmd.name);
-        return;
-      }
-    }
-    if (key.escape) { setClosed(true); setCommandOutput(null); return; }
-
-    if (key.pageUp) {
-      setScrollOffset((o) => Math.min(o + 5, maxScroll));
-      return;
-    }
-    if (key.pageDown) {
-      setScrollOffset((o) => Math.max(o - 5, 0));
-      return;
-    }
-    if (key.upArrow) {
-      setScrollOffset((o) => Math.min(o + 1, maxScroll));
-      return;
-    }
-    if (key.downArrow) {
-      setScrollOffset((o) => Math.max(o - 1, 0));
-      return;
-    }
-
-    if (!key.return && (char === '\r' || char === '\n')) { submit(input); return; }
-    if (key.return) {
-      if (input.startsWith('/')) { submit(input); return; }
-      if (key.ctrl || key.meta) {
-        submit(input);
-        return;
-      }
-      const beforeAt = input.length > 1 ? input[input.length - 2] : '';
-      const atTouchesText = input.endsWith('@') && beforeAt !== '' && !/\s/.test(beforeAt);
-      if (atTouchesText) {
-        submit(input.slice(0, -1));
-      } else {
-        setInput((value) => value + '\n');
-      }
-      return;
-    }
-
-    if (key.backspace || key.delete) {
-      setScrollOffset(0);
-      setInput((value) => value.slice(0, -1));
-      return;
-    }
-
-    if (key.ctrl || key.meta) {
-      return;
-    }
-
-    if (char) {
-      if (/[\x00-\x08\x0b-\x1f\x7f]/.test(char) || char.startsWith('\x1b')) return;
-      setScrollOffset(0);
-      setInput((value) => value + char);
-    }
-  });
 
   const displayLines = React.useMemo(() => buildDisplayLines(messages, terminalWidth), [messages, terminalWidth]);
   const totalLines = displayLines.length;
@@ -510,14 +502,119 @@ function App({ mascot }) {
   const hiddenAbove = start > 0;
   const hiddenBelow = end < totalLines;
 
+  const animateTo = React.useCallback((targetVal) => {
+    targetScrollRef.current = Math.max(0, Math.min(targetVal, maxScroll));
+    if (animTimerRef.current) return;
+
+    const tick = () => {
+      setScrollOffset((curr) => {
+        const target = targetScrollRef.current;
+        const diff = target - curr;
+        if (diff === 0) {
+          animTimerRef.current = null;
+          return target;
+        }
+        const step = Math.sign(diff) * Math.max(1, Math.ceil(Math.abs(diff) * 0.18));
+        const next = curr + step;
+        if (next === target) {
+          animTimerRef.current = null;
+          return target;
+        }
+        animTimerRef.current = setTimeout(tick, 12);
+        return next;
+      });
+    };
+    animTimerRef.current = setTimeout(tick, 12);
+  }, [maxScroll]);
+
+  useInput((char, key) => {
+    if (form) return;
+    if (paletteOn && matches.length) {
+      if (key.upArrow) { setSel((active - 1 + matches.length) % matches.length); return; }
+      if (key.downArrow) { setSel((active + 1) % matches.length); return; }
+      if (key.tab) { fill(matches[active]); return; }
+      if (key.return) {
+        const cmd = matches[active];
+        if ((cmd.args || []).some((a) => a.required)) fill(cmd); else submit('/' + cmd.name);
+        return;
+      }
+    }
+    if (key.escape) { setClosed(true); setCommandOutput(null); return; }
+
+    if (key.pageUp) {
+      animateTo(targetScrollRef.current + 6);
+      return;
+    }
+    if (key.pageDown) {
+      animateTo(targetScrollRef.current - 6);
+      return;
+    }
+    if (key.upArrow) {
+      animateTo(targetScrollRef.current + 1);
+      return;
+    }
+    if (key.downArrow) {
+      animateTo(targetScrollRef.current - 1);
+      return;
+    }
+
+    if (!key.return && (char === '\r' || char === '\n')) { submit(input); return; }
+    if (key.return) {
+      if (input.startsWith('/')) { submit(input); return; }
+      if (key.ctrl || key.meta) {
+        submit(input);
+        return;
+      }
+      const beforeAt = input.length > 1 ? input[input.length - 2] : '';
+      const atTouchesText = input.endsWith('@') && beforeAt !== '' && !/\s/.test(beforeAt);
+      if (atTouchesText) {
+        submit(input.slice(0, -1));
+      } else {
+        setInput((value) => value + '\n');
+      }
+      return;
+    }
+
+    if (key.backspace || key.delete) {
+      targetScrollRef.current = 0;
+      setScrollOffset(0);
+      setInput((value) => value.slice(0, -1));
+      return;
+    }
+
+    if (key.ctrl || key.meta) {
+      return;
+    }
+
+    if (char) {
+      if (/[\x00-\x08\x0b-\x1f\x7f]/.test(char) || char.startsWith('\x1b')) return;
+      targetScrollRef.current = 0;
+      setScrollOffset(0);
+      setInput((value) => value + char);
+    }
+  });
+
   useEffect(() => {
-    globalScrollUp = () => setScrollOffset((o) => Math.min(o + 1, maxScroll));
-    globalScrollDown = () => setScrollOffset((o) => Math.max(o - 1, 0));
+    globalScrollUp = () => animateTo(targetScrollRef.current + 3);
+    globalScrollDown = () => animateTo(targetScrollRef.current - 3);
+
+    let tapTimer = null;
+    globalTap = () => {
+      // Drop mouse mode for 1 second so Termux delivers touch to the soft keyboard
+      process.stdout.write('\x1b[?1002l\x1b[?1006l');
+      if (tapTimer) clearTimeout(tapTimer);
+      tapTimer = setTimeout(() => {
+        process.stdout.write('\x1b[?1002h\x1b[?1006h');
+      }, 1000);
+    };
+
     return () => {
       globalScrollUp = null;
       globalScrollDown = null;
+      globalTap = null;
+      if (tapTimer) clearTimeout(tapTimer);
     };
-  }, [maxScroll]);
+  }, [animateTo]);
 
   return h(
     Box,
@@ -602,15 +699,16 @@ try {
 }
 
 const enterAltScreen = () => {
-  // \x1b[?1049h: Alternate screen buffer
-  // \x1b[?1007h: Alternate scroll mode (translates touch swipes in Termux to Up/Down arrows)
-  // \x1b[?1000l...: Keeps mouse tracking OFF so touching the screen opens the soft keyboard
-  process.stdout.write('\x1b[?1049h\x1b[?1007h\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1006l');
-  execaSync(process.platform === 'win32' ? 'cls' : 'clear', { shell: true, stdio: 'inherit' });
+  try {
+    // Clear screen, clear scrollback, home cursor, enter alt screen and enable mouse reporting
+    process.stdout.write('\x1b[2J\x1b[3J\x1b[H\x1b[?1049h\x1b[?1002h\x1b[?1006h');
+  } catch {}
 };
 
 const exitAltScreen = () => {
-  process.stdout.write('\x1b[?1007l\x1b[?1049l\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1006l');
+  try {
+    process.stdout.write('\x1b[?1002l\x1b[?1006l\x1b[?1049l');
+  } catch {}
 };
 
 process.on('exit', exitAltScreen);
