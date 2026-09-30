@@ -50,17 +50,25 @@ function useTerminalSize() {
   return size;
 }
 
-function messageCost(message) {
-  const lineCount = message.text.split('\n').length;
-  return lineCount + 1;
+
+
+function messageCost(message, width = 80) {
+  if (!message || !message.text) return 1;
+  const effectiveWidth = Math.max(15, width - 4);
+  let rows = 0;
+  const lines = message.text.split('\n');
+  for (const line of lines) {
+    rows += Math.max(1, Math.ceil(line.length / effectiveWidth));
+  }
+  return rows + 1;
 }
 
-function computeWindow(messages, scrollOffset, availableRows) {
+function computeWindow(messages, scrollOffset, availableRows, width = 80) {
   const end = Math.max(0, messages.length - scrollOffset);
   let start = end;
   let used = 0;
   while (start > 0) {
-    const cost = messageCost(messages[start - 1]);
+    const cost = messageCost(messages[start - 1], width);
     if (used + cost > availableRows && start !== end) break;
     used += cost;
     start -= 1;
@@ -89,7 +97,13 @@ function sessionLine() {
   return `SESSION-${id}${title ? ' \u2014 ' + title : ''}`;
 }
 
-function Header({ mascot }) {
+function Header({ mascot, compact }) {
+  if (compact) {
+    return h(Box, { flexDirection: 'row', justifyContent: 'space-between', width: '100%' },
+      h(Text, { color: 'white', bold: true }, 'Levi Code ', h(Text, { color: GRAY }, 'v2.1.25')),
+      h(Text, { color: GRAY }, sessionLine())
+    );
+  }
   return h(Box, { alignItems: 'center' },
     mascot ? h(Text, null, mascot) : null,
     h(Box, { flexDirection: 'column', marginLeft: mascot ? 3 : 0 },
@@ -227,6 +241,10 @@ function App({ mascot }) {
   const [closed, setClosed] = useState(false);
   const { exit } = useApp();
   const { columns: terminalWidth, rows: terminalHeight } = useTerminalSize();
+
+  // When the terminal resizes (keyboard up/down), snap to latest messages
+  useEffect(() => { setScrollOffset(0); }, [terminalHeight]);
+
   const paletteOn = input.startsWith('/') && !input.includes(' ') && !closed;
   const matches = paletteOn ? filterCommands(input.slice(1)) : [];
   const active = Math.min(sel, Math.max(matches.length - 1, 0));
@@ -298,11 +316,19 @@ function App({ mascot }) {
       }
     }
     if (key.escape) { setClosed(true); setCommandOutput(null); return; }
+
+    if (key.pageUp) {
+      setScrollOffset((o) => Math.min(o + 5, messages.length));
+      return;
+    }
+    if (key.pageDown) {
+      setScrollOffset((o) => Math.max(o - 5, 0));
+      return;
+    }
     if (key.upArrow) {
       setScrollOffset((o) => Math.min(o + 1, messages.length));
       return;
     }
-
     if (key.downArrow) {
       setScrollOffset((o) => Math.max(o - 1, 0));
       return;
@@ -326,6 +352,7 @@ function App({ mascot }) {
     }
 
     if (key.backspace || key.delete) {
+      setScrollOffset(0);
       setInput((value) => value.slice(0, -1));
       return;
     }
@@ -335,22 +362,25 @@ function App({ mascot }) {
     }
 
     if (char) {
+      setScrollOffset(0);
       setInput((value) => value + char);
     }
   });
 
-  const mascotLines = mascot ? mascot.split('\n').length : 0;
-  const headerHeight = Math.max(mascotLines, 3) + 1;
+  const isCompact = terminalHeight < 22;
+  const mascotLines = (!isCompact && mascot) ? mascot.split('\n').length : 0;
+  const headerHeight = isCompact ? 1 : Math.max(mascotLines, 3) + 1;
+  const headerMargin = isCompact ? 1 : 2;
   const inputLines = (input + '\u2588').split('\n').length;
-  const inputAreaHeight = 1 + inputLines + 1;
+  const inputAreaHeight = 2 + inputLines;
   const footerHeight = 1;
-  const hintReserve = 2;
+  const hintReserve = (scrollOffset > 0) ? 2 : 1;
   const commandOutputHeight = commandOutput
     ? 3 + (commandOutput.kind === 'panel' ? 1 + commandOutput.fields.length : commandOutput.text.split('\n').length)
     : 0;
-  const availableForMessages = Math.max(1, terminalHeight - headerHeight - inputAreaHeight - footerHeight - hintReserve - (paletteOn ? paletteHeight(matches.length) : 0) - (form ? 2 : 0) - commandOutputHeight);
+  const availableForMessages = Math.max(1, terminalHeight - headerHeight - headerMargin - inputAreaHeight - footerHeight - hintReserve - (paletteOn ? paletteHeight(matches.length) : 0) - (form ? 2 : 0) - commandOutputHeight);
 
-  const { start, end } = computeWindow(messages, scrollOffset, availableForMessages);
+  const { start, end } = computeWindow(messages, scrollOffset, availableForMessages, terminalWidth);
   const visibleMessages = messages.slice(start, end);
   const hiddenAbove = start > 0;
   const hiddenBelow = scrollOffset > 0;
@@ -359,8 +389,8 @@ function App({ mascot }) {
     Box,
     { flexDirection: 'column', width: terminalWidth, height: terminalHeight },
 
-    h(Box, { flexShrink: 0, flexDirection: 'column', marginBottom: 2 },
-      h(Header, { mascot })
+    h(Box, { flexShrink: 0, flexDirection: 'column', marginBottom: headerMargin },
+      h(Header, { mascot: isCompact ? null : mascot, compact: isCompact })
     ),
 
     h(Box, {
@@ -369,11 +399,11 @@ function App({ mascot }) {
       flexShrink: 1,
       overflow: 'hidden'
     },
-      hiddenAbove ? h(Text, { color: GRAY }, '\u2191 more above \u2014 \u2191 to scroll') : null,
+      hiddenAbove ? h(Text, { color: GRAY }, '\u2191 more above \u2014 \u2191/PgUp to scroll') : null,
       visibleMessages.map((message, index) =>
         h(Message, { key: start + index, role: message.role, text: message.text, width: terminalWidth })
       ),
-      hiddenBelow ? h(Text, { color: GRAY }, '\u2193 \u2193 to return to latest') : null
+      hiddenBelow ? h(Text, { color: GRAY }, '\u2193 \u2193/PgDn to return to latest') : null
     ),
 
     paletteOn ? h(Palette, { matches, active }) : null,
@@ -439,8 +469,10 @@ try {
   mascot = "";
 }
 
-const clearScreen = () =>
+const clearScreen = () => {
+  process.stdout.write('\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1006l');
   execaSync(process.platform === 'win32' ? 'cls' : 'clear', { shell: true, stdio: 'inherit' });
+};
 
 function mount() {
   clearScreen();
