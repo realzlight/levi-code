@@ -32,6 +32,22 @@ const files = {
     soloOnly: false,
     currentSession: null
   }, null, 2),
+  'mcp.json': JSON.stringify({
+    mcpServers: {
+      duckduckgo: {
+        command: "npx",
+        args: ["-y", "duckduckgo-mcp-server"]
+      },
+      fetch: {
+        command: "npx",
+        args: ["-y", "@modelcontextprotocol/server-fetch"]
+      },
+      playwright: {
+        command: "npx",
+        args: ["-y", "@executeautomation/playwright-mcp-server"]
+      }
+    }
+  }, null, 2),
   'LEVI.md': '# LEVI\n',
   'MEMORY/USER.md': '# USER\n',
   'MEMORY/PREFERENCE.md': '# PREFERENCES\n',

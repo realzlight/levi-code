@@ -14,8 +14,11 @@
   },
   "dependencies": {
     "@clack/prompts": "^1.8.1",
+    "@executeautomation/playwright-mcp-server": "^1.0.12",
+    "@modelcontextprotocol/sdk": "^1.31.0",
     "chalk": "^6.0.0",
     "commander": "^15.0.0",
+    "duckduckgo-mcp-server": "^0.1.2",
     "execa": "^8.0.1",
     "fs-extra": "^11.2.0"
   }
