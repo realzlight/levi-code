@@ -53,6 +53,8 @@ This does NOT replace actually reading the real code files before making claims 
   return `${intro}
 Use read_file/write_file/edit_file/bash when the task needs real info or changes. Use sed and grep/regex where you can and always verify! avoid dumping files content and dumping again to verify! Don't guess at file contents you haven't read.
 
+Web access: you have real-time web access. Use google_search to search Google via Serper for live documentation, APIs, errors, and current info. Use fetch to read web page or documentation content by URL.
+
 ${retrievalNote}
 
 ${projectContextNote}

@@ -439,6 +439,15 @@ function formatToolArg(name, args) {
   if (name === 'ask') {
     return args.question || '';
   }
+  if (name === 'google_search' || name === 'serper_search' || name === 'brave_web_search') {
+    return args.q || args.query || '';
+  }
+  if (name === 'fetch' || name === 'playwright_navigate') {
+    return args.url || '';
+  }
+  if (name === 'playwright_click' || name === 'playwright_fill') {
+    return args.selector || '';
+  }
   const keys = Object.keys(args);
   if (keys.length === 1 && typeof args[keys[0]] === 'string') {
     return args[keys[0]];
@@ -874,7 +883,9 @@ function App({ mascot }) {
   const inputAreaHeight = 2 + inputLines;
   const footerHeight = 1;
   const commandOutputHeight = commandOutput
-    ? 3 + (commandOutput.kind === 'panel' ? 1 + commandOutput.fields.length : commandOutput.text.split('\n').length)
+    ? (commandOutput.kind === 'init'
+        ? 7 + (commandOutput.fields ? commandOutput.fields.length : 0)
+        : 3 + (commandOutput.fields ? 1 + commandOutput.fields.length : commandOutput.text.split('\n').length))
     : 0;
 
   const formHeight = form

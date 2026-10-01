@@ -92,10 +92,11 @@ export async function chatWithTools(messages, { system, tools = [], maxTokens = 
         max_tokens: maxTokens,
         system: system ? [{ type: 'text', text: system, cache_control: { type: 'ephemeral' } }] : undefined,
         messages,
-        tools: tools.map((t) => ({
+        tools: tools.map((t, i) => ({
           name: t.function.name,
           description: t.function.description,
-          input_schema: t.function.parameters
+          input_schema: t.function.parameters,
+          cache_control: i === tools.length - 1 ? { type: 'ephemeral' } : undefined
         }))
       })
     }).then((r) => r.json());

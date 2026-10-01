@@ -55,6 +55,33 @@ defineCommand({ name: 'clear', description: 'Clear screen', run: (_, ctx) => ctx
 defineCommand({ name: 'exit', description: 'Quit Levi', run: (_, ctx) => ctx.exit?.() });
 
 defineCommand({
+  name: 'init',
+  description: 'Bootstrap ~/.levi',
+  run: async (_, ctx) => {
+    const { runBootstrap } = await import('../bootstrap.js');
+    const res = await runBootstrap({ quiet: true });
+    const dirInfo = res.createdDirs.length
+      ? `Created: ${res.createdDirs.join(', ')}`
+      : '5 core directories verified';
+    const fileInfo = res.createdFiles.length
+      ? `Created: ${res.createdFiles.join(', ')}`
+      : 'All files verified';
+
+    ctx.printPanel({
+      kind: 'init',
+      title: 'LEVI Workspace Initialized',
+      fields: [
+        { label: 'Environment', value: res.home, color: '#22d3ee' },
+        { label: 'Directories', value: dirInfo, color: '#4ade80' },
+        { label: 'Files', value: fileInfo, color: '#c0caf5' },
+        { label: 'MCP Servers', value: 'Serper · Fetch · Playwright', color: '#a78bfa' },
+        { label: 'Status', value: 'Ready for pair programming', color: '#ffd700' }
+      ]
+    });
+  }
+});
+
+defineCommand({
   name: 'sh',
   description: 'Run a shell command',
   args: [{ name: 'command', required: true, rest: true }],
@@ -337,3 +364,21 @@ defineCommand({
     });
   }
 });
+
+defineCommand({
+  name: 'search:api',
+  description: 'Set Serper search API key',
+  args: [{ name: 'api', required: true }],
+  run: async (args, ctx) => {
+    const { setSearchApiKey } = await import('../mcp.js');
+    const err = setSearchApiKey(args.api);
+    if (err) return ctx.print(err);
+    ctx.print('Serper API key saved to ~/.levi/config.json');
+  }
+});
+
+
+
+
+
+

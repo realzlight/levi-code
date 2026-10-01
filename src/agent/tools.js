@@ -265,6 +265,132 @@ export const toolDefs = [
         required: ['question', 'options']
       }
     }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'google_search',
+      description: 'Search the web using Serper Google Search API. Use this to find live documentation, articles, news, code examples, or answers from Google.',
+      parameters: {
+        type: 'object',
+        properties: {
+          q: { type: 'string', description: 'Search query' },
+          num: { type: 'number', description: 'Number of results to return (default: 10)' },
+          site: { type: 'string', description: 'Limit results to specific domain (e.g. github.com, stackoverflow.com)' }
+        },
+        required: ['q']
+      }
+    }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'serper_search',
+      description: 'Search Google via Serper API. Alias for google_search.',
+      parameters: {
+        type: 'object',
+        properties: {
+          query: { type: 'string', description: 'Search query' },
+          num: { type: 'number', description: 'Number of results (default: 10)' }
+        },
+        required: ['query']
+      }
+    }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'fetch',
+      description: 'Fetch the text/markdown content of any web page by URL. Converts HTML to readable markdown text.',
+      parameters: {
+        type: 'object',
+        properties: {
+          url: { type: 'string', description: 'URL to fetch' },
+          max_length: { type: 'number', description: 'Maximum character length of content to return (default: 5000)' },
+          start_index: { type: 'number', description: 'Character offset to start reading from (default: 0)' },
+          raw: { type: 'boolean', description: 'Return raw HTML if true, clean markdown if false' }
+        },
+        required: ['url']
+      }
+    }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'playwright_navigate',
+      description: 'Navigate the browser to a URL.',
+      parameters: {
+        type: 'object',
+        properties: {
+          url: { type: 'string', description: 'URL to navigate to' }
+        },
+        required: ['url']
+      }
+    }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'playwright_click',
+      description: 'Click an element on the browser page matching selector.',
+      parameters: {
+        type: 'object',
+        properties: {
+          selector: { type: 'string', description: 'CSS selector or text to click' }
+        },
+        required: ['selector']
+      }
+    }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'playwright_fill',
+      description: 'Fill out an input field on the browser page.',
+      parameters: {
+        type: 'object',
+        properties: {
+          selector: { type: 'string', description: 'CSS selector of the input field' },
+          value: { type: 'string', description: 'Value to fill in' }
+        },
+        required: ['selector', 'value']
+      }
+    }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'playwright_screenshot',
+      description: 'Take a screenshot of the current browser page.',
+      parameters: {
+        type: 'object',
+        properties: {
+          name: { type: 'string', description: 'Optional name for the screenshot' }
+        }
+      }
+    }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'playwright_get_visible_text',
+      description: 'Get the visible text content of the current browser page.',
+      parameters: {
+        type: 'object',
+        properties: {}
+      }
+    }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'playwright_close',
+      description: 'Close the browser and release all resources.',
+      parameters: {
+        type: 'object',
+        properties: {}
+      }
+    }
   }
 ];
 
@@ -463,6 +589,25 @@ export async function runTool(name, args) {
         options: Array.isArray(args.options) ? args.options : [],
         allowCustom: args.allowCustom !== false
       });
+    }
+
+    if (name === 'google_search' || name === 'serper_search' || name === 'brave_web_search') {
+      const { runMcpTool, getSearchApiKey } = await import('../mcp.js');
+      const apiKey = getSearchApiKey();
+      if (!apiKey) {
+        return 'Error: Serper API key is not configured. Set it using the slash command: /search:api <your-api-key>';
+      }
+      return await runMcpTool(name, args);
+    }
+
+    if (name === 'fetch' || name.startsWith('playwright_')) {
+      const { runMcpTool } = await import('../mcp.js');
+      return await runMcpTool(name, args);
+    }
+
+    const { isMcpTool, runMcpTool } = await import('../mcp.js');
+    if (isMcpTool(name)) {
+      return await runMcpTool(name, args);
     }
 
     return `Error: unknown tool ${name}`;

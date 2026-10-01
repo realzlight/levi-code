@@ -9,28 +9,68 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const LEVI_HOME = path.join(os.homedir(), '.levi');
 const MCP_CONFIG_PATH = path.join(LEVI_HOME, 'mcp.json');
+const CONFIG_PATH = path.join(LEVI_HOME, 'config.json');
 
 // Registry of connected clients and tools
 const clients = new Map(); // serverName -> Client
 const mcpToolMap = new Map(); // toolName -> { client, serverName, originalName, schema }
 let initialized = false;
 
+// --- Search API key helpers ---------------------------------------------------
+
+/**
+ * Read the Serper API key from ~/.levi/config.json or environment.
+ * Returns the key string or null. Never creates files.
+ */
+export function getSearchApiKey() {
+  try {
+    if (!fs.existsSync(CONFIG_PATH)) return process.env.SERPER_API_KEY || null;
+    const cfg = JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf-8'));
+    return cfg.search?.api_key || cfg.search?.api || process.env.SERPER_API_KEY || null;
+  } catch {
+    return process.env.SERPER_API_KEY || null;
+  }
+}
+
+/**
+ * Store a Serper API key into ~/.levi/config.json.
+ * Never creates config.json or ~/.levi — returns an error string if missing.
+ */
+export function setSearchApiKey(apiKey) {
+  if (!fs.existsSync(LEVI_HOME)) return 'Error: ~/.levi directory not found. Run levi first to bootstrap.';
+  if (!fs.existsSync(CONFIG_PATH)) return 'Error: ~/.levi/config.json not found. Run levi first to bootstrap.';
+
+  try {
+    const cfg = JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf-8'));
+    cfg.search = {
+      provider: 'serper',
+      api_key: apiKey.trim()
+    };
+    fs.writeFileSync(CONFIG_PATH, JSON.stringify(cfg, null, 2));
+    initialized = false;
+    return null; // success
+  } catch (e) {
+    return `Error: ${e.message}`;
+  }
+}
+
+// --- MCP config ---------------------------------------------------------------
+
 export function loadMcpConfig() {
   if (fs.existsSync(MCP_CONFIG_PATH)) {
     try {
-      const content = fs.readFileSync(MCP_CONFIG_PATH, 'utf-8');
-      return JSON.parse(content);
+      return JSON.parse(fs.readFileSync(MCP_CONFIG_PATH, 'utf-8'));
     } catch (e) {
       console.error(`[mcp] Error reading ${MCP_CONFIG_PATH}: ${e.message}`);
     }
   }
 
-  // Default config if mcp.json does not exist
   return {
     mcpServers: {
-      duckduckgo: {
+      serper: {
         command: "npx",
-        args: ["-y", "duckduckgo-mcp-server"]
+        args: ["-y", "mcp-server-serper"],
+        env: { SERPER_API_KEY: "" }
       },
       fetch: {
         command: "npx",
@@ -45,20 +85,20 @@ export function loadMcpConfig() {
 }
 
 /**
- * Resolves transport parameters adapting for local Termux and node modules.
+ * Resolves transport params adapting for local Termux and node modules.
  */
 function resolveServerCommand(serverName, serverCfg) {
   const rootDir = path.resolve(__dirname, '..');
-  const ddgPath = path.join(rootDir, 'node_modules', 'duckduckgo-mcp-server', 'build', 'index.js');
   const fetchPath = path.join(__dirname, 'fetch-server.js');
+  const serperPath = path.join(rootDir, 'node_modules', 'mcp-server-serper', 'build', 'index.js');
   const playwrightPath = path.join(rootDir, 'node_modules', '@executeautomation', 'playwright-mcp-server', 'dist', 'index.js');
 
   const argsStr = (serverCfg.args || []).join(' ');
 
-  // DuckDuckGo MCP Server
-  if (serverName === 'duckduckgo' || argsStr.includes('duckduckgo-mcp-server')) {
-    if (fs.existsSync(ddgPath)) {
-      return { command: 'node', args: [ddgPath] };
+  // Serper MCP Server
+  if (serverName === 'serper' || argsStr.includes('serper')) {
+    if (fs.existsSync(serperPath)) {
+      return { command: 'node', args: [serperPath], env: serverCfg.env };
     }
   }
 
@@ -69,23 +109,17 @@ function resolveServerCommand(serverName, serverCfg) {
     }
   }
 
-  // Playwright MCP Server - spoof linux platform to avoid Termux "android" platform rejection
+  // Playwright MCP Server — spoof linux to avoid Termux "android" rejection
   if (serverName === 'playwright' || argsStr.includes('playwright-mcp-server')) {
     if (fs.existsSync(playwrightPath)) {
       return {
         command: 'node',
-        args: [
-          '-e',
-          `Object.defineProperty(process, 'platform', { value: 'linux' }); import('${playwrightPath}');`
-        ]
+        args: ['-e', `Object.defineProperty(process, 'platform', { value: 'linux' }); import('${playwrightPath}');`]
       };
     }
   }
 
-  return {
-    command: serverCfg.command || 'npx',
-    args: serverCfg.args || []
-  };
+  return { command: serverCfg.command || 'npx', args: serverCfg.args || [] };
 }
 
 /**
@@ -97,16 +131,35 @@ export async function initMcp({ verbose = false } = {}) {
   const config = loadMcpConfig();
   const servers = config.mcpServers || {};
 
+  // Inject Serper API key from config.json into environment
+  const serperKey = getSearchApiKey();
+
   for (const [serverName, serverCfg] of Object.entries(servers)) {
     if (serverCfg.disabled) continue;
 
+    // Skip serper if no API key is configured
+    if (serverName === 'serper' || (serverCfg.args || []).join(' ').includes('serper')) {
+      const envKey = serverCfg.env?.SERPER_API_KEY || serperKey;
+      if (!envKey) {
+        if (verbose) console.log(`[mcp] Skipping ${serverName} — no SERPER_API_KEY. Set it with /search:api <key>`);
+        continue;
+      }
+      serverCfg.env = { ...serverCfg.env, SERPER_API_KEY: envKey };
+    }
+
     try {
-      const { command, args } = resolveServerCommand(serverName, serverCfg);
+      const resolved = resolveServerCommand(serverName, serverCfg);
       if (verbose) {
-        console.log(`[mcp] Connecting to ${serverName} (${command} ${args.join(' ')})...`);
+        console.log(`[mcp] Connecting to ${serverName} (${resolved.command} ${resolved.args.join(' ').slice(0, 60)})...`);
       }
 
-      const transport = new StdioClientTransport({ command, args });
+      const transportOpts = { command: resolved.command, args: resolved.args };
+      // Pass env vars to child process
+      if (resolved.env || serverCfg.env) {
+        transportOpts.env = { ...process.env, ...(resolved.env || serverCfg.env) };
+      }
+
+      const transport = new StdioClientTransport(transportOpts);
       const client = new Client(
         { name: `levi-${serverName}-client`, version: '1.0.0' },
         { capabilities: {} }
@@ -132,7 +185,7 @@ export async function initMcp({ verbose = false } = {}) {
       }
     } catch (err) {
       if (verbose) {
-        console.error(`[mcp] Failed to connect to server "${serverName}": ${err.message}`);
+        console.error(`[mcp] Failed to connect to "${serverName}": ${err.message}`);
       }
     }
   }
@@ -163,36 +216,8 @@ export function getMcpTools() {
  * Check if a tool name belongs to an MCP server.
  */
 export function isMcpTool(name) {
+  if (name === 'serper_search' && mcpToolMap.has('google_search')) return true;
   return mcpToolMap.has(name);
-}
-
-export async function searchDuckDuckGoFallback(query, count = 10) {
-  try {
-    const res = await fetch('https://html.duckduckgo.com/html/?q=' + encodeURIComponent(query), {
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (Linux; Android 10) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36',
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8'
-      }
-    });
-    if (!res.ok) return `Search failed (HTTP ${res.status})`;
-    const html = await res.text();
-    const titles = [...html.matchAll(/<h2 class=\"result__title\">[\s\S]*?<a[^>]+href=[\"']([^\"']*)[\"'][^>]*>([\s\S]*?)<\/a>/g)];
-    const snippets = [...html.matchAll(/class=\"result__snippet\"[^>]*>([\s\S]*?)<\/a>/g)];
-    const results = [];
-    for (let i = 0; i < Math.min(titles.length, count); i++) {
-      const rawUrl = titles[i][1];
-      let url = rawUrl;
-      if (rawUrl.includes('uddg=')) {
-        url = decodeURIComponent(rawUrl.split('uddg=')[1].split('&')[0]);
-      }
-      const title = titles[i][2].replace(/<[^>]+>/g, '').trim();
-      const snippet = snippets[i] ? snippets[i][1].replace(/<[^>]+>/g, '').trim() : '';
-      results.push(`${i + 1}. [${title}](${url})\n   ${snippet}`);
-    }
-    return results.length ? results.join('\n\n') : 'No results found.';
-  } catch (err) {
-    return `Search error: ${err.message}`;
-  }
 }
 
 /**
@@ -203,47 +228,112 @@ export async function runMcpTool(name, args = {}) {
     await initMcp();
   }
 
-  // Handle DuckDuckGo with seamless fallback if MCP encounters rate limits
-  if (name === 'duckduckgo_web_search') {
-    const toolInfo = mcpToolMap.get(name);
-    if (toolInfo) {
-      try {
-        const result = await toolInfo.client.callTool({
-          name: toolInfo.originalName,
-          arguments: args
-        });
-        if (!result.isError && Array.isArray(result.content)) {
-          const text = result.content.map(c => c.text || JSON.stringify(c)).join('\n');
-          if (text && !text.includes('anomaly')) return text;
-        }
-      } catch {}
+  // Handle serper / google_search aliases and query normalization
+  let targetTool = name;
+  let callArgs = { ...args };
+
+  if (name === 'serper_search' || name === 'google_search') {
+    targetTool = mcpToolMap.has('google_search') ? 'google_search' : name;
+    if (callArgs.query && !callArgs.q) {
+      callArgs.q = callArgs.query;
+      delete callArgs.query;
     }
-    return searchDuckDuckGoFallback(args.query, args.count || 10);
   }
 
-  const toolInfo = mcpToolMap.get(name);
+  const toolInfo = mcpToolMap.get(targetTool);
   if (!toolInfo) {
     throw new Error(`MCP tool not found: ${name}`);
   }
 
   const { client, originalName } = toolInfo;
-  const result = await client.callTool({
-    name: originalName,
-    arguments: args
-  });
+  try {
+    const result = await client.callTool({
+      name: originalName,
+      arguments: callArgs
+    });
 
-  if (result.isError) {
-    const errMsg = result.content?.map(c => c.text || JSON.stringify(c)).join('\n') || 'MCP tool error';
-    return `Error: ${errMsg}`;
+    if (result.isError) {
+      const errMsg = result.content?.map(c => c.text || JSON.stringify(c)).join('\n') || 'MCP tool error';
+      return `Error: ${errMsg}`;
+    }
+
+    let outputText = '';
+    if (Array.isArray(result.content)) {
+      outputText = result.content
+        .map(c => (typeof c.text === 'string' ? c.text : JSON.stringify(c, null, 2)))
+        .join('\n');
+    } else {
+      outputText = typeof result === 'string' ? result : JSON.stringify(result, null, 2);
+    }
+
+    // Summarize search results, fetched pages, and web activities using active model from config.json
+    return await summarizeWebOutput(outputText, { toolName: name, args });
+  } catch (err) {
+    return `Error: ${err.message}`;
+  }
+}
+
+/**
+ * Summarizes web search, fetch, and browsing results before returning them to the agent.
+ * Uses the active model selected in ~/.levi/config.json with a concise prompt.
+ */
+async function summarizeWebOutput(content, { toolName, args = {} } = {}) {
+  if (!content || typeof content !== 'string') return content;
+  if (content.startsWith('Error:') || content.trim().length < 180) return content;
+
+  // Tools that should have their output summarized
+  const isSearch = toolName === 'google_search' || toolName === 'serper_search' || toolName === 'brave_web_search';
+  const isFetch = toolName === 'fetch' || toolName === 'scrape';
+  const isWebActivity = toolName.startsWith('playwright_') || isSearch || isFetch;
+
+  if (!isWebActivity) return content;
+
+  let context = '';
+  if (isSearch) {
+    const q = args.q || args.query || '';
+    context = q ? `Web Search Query: "${q}"` : 'Web Search';
+  } else if (isFetch) {
+    const url = args.url || '';
+    context = url ? `Fetched URL: ${url}` : 'Web Page Content';
+  } else {
+    context = `Browser Activity: ${toolName}`;
   }
 
-  if (Array.isArray(result.content)) {
-    return result.content
-      .map(c => (typeof c.text === 'string' ? c.text : JSON.stringify(c, null, 2)))
-      .join('\n');
+  // Cap content length to prevent model context limits
+  const maxChars = 20000;
+  const truncated = content.length > maxChars
+    ? content.slice(0, maxChars) + '\n\n[... Remaining content truncated for summary]'
+    : content;
+
+  const system = `You are an expert, concise web content summarizer for an AI assistant.
+Summarize the key information, factual answers, data, and relevant URLs from the provided raw web content.
+Rules:
+- Be dense, direct, and factual.
+- Retain important specifics (names, code snippets, numbers, versions, URLs).
+- Do NOT include unnecessary filler, conversational intro, or boilerplate.`;
+
+  const prompt = `Context: ${context}
+
+Raw Content:
+${truncated}
+
+Provide a concise, high-signal summary of the above content focusing on the key information.`;
+
+  try {
+    const { chat } = await import('./agent/client.js');
+    const res = await chat([{ role: 'user', content: prompt }], {
+      system,
+      maxTokens: 1024
+    });
+    if (res?.text && res.text.trim()) {
+      return res.text.trim();
+    }
+  } catch (err) {
+    // If summarization fails (e.g. offline, rate limit), return raw output gracefully
+    return content;
   }
 
-  return typeof result === 'string' ? result : JSON.stringify(result, null, 2);
+  return content;
 }
 
 /**
@@ -267,7 +357,8 @@ process.on('exit', () => {
 // Standalone execution: node src/mcp.js
 if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
   console.log('=== Levi MCP Integration Tester ===');
-  console.log(`Config: ${MCP_CONFIG_PATH}\n`);
+  console.log(`Config: ${MCP_CONFIG_PATH}`);
+  console.log(`Serper API key: ${getSearchApiKey() ? '*** (set)' : '(not set — use /search:api <key>)'}\n`);
 
   try {
     const tools = await initMcp({ verbose: true });
@@ -278,15 +369,15 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
       console.log(`- ${t.function.name}: ${t.function.description.slice(0, 70)}...`);
     }
 
-    // 1. Test search with DuckDuckGo
-    if (isMcpTool('duckduckgo_web_search')) {
-      console.log('\n--- Testing duckduckgo_web_search("Anthropic MCP") ---');
-      const searchRes = await runMcpTool('duckduckgo_web_search', { query: 'Anthropic Model Context Protocol', count: 2 });
+    // Test search with Serper
+    if (isMcpTool('google_search') || isMcpTool('serper_search')) {
+      console.log('\n--- Testing google_search("Anthropic MCP") ---');
+      const searchRes = await runMcpTool('google_search', { q: 'Anthropic Model Context Protocol' });
       console.log('Search Output (sample):');
       console.log(searchRes.slice(0, 300) + '...\n');
     }
 
-    // 2. Test fetching with Fetch
+    // Test fetching with Fetch
     if (isMcpTool('fetch')) {
       console.log('--- Testing fetch("https://example.com") ---');
       const fetchRes = await runMcpTool('fetch', { url: 'https://example.com', max_length: 200 });
