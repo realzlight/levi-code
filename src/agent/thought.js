@@ -12,128 +12,99 @@ const PROJECTS_ROOT = path.join(LEVI_HOME, 'PROJECTS');
 function listCandidateFiles(projectName) {
   const files = [];
   for (const f of ['USER.md', 'PREFERENCE.md', 'PATTERNS.md']) {
-    const p = path.join(MEMORY_ROOT, f);
-    if (fs.existsSync(p)) files.push('~/.levi/MEMORY/' + f);
+    if (fs.existsSync(path.join(MEMORY_ROOT, f))) files.push('~/.levi/MEMORY/' + f);
   }
   if (projectName) {
-    const root = path.join(PROJECTS_ROOT, projectName);
     for (const f of ['DATA.md', 'PREFERENCE.md', 'PATTERNS.md']) {
-      const p = path.join(root, f);
-      if (fs.existsSync(p)) files.push(`~/.levi/PROJECTS/${projectName}/${f}`);
+      if (fs.existsSync(path.join(PROJECTS_ROOT, projectName, f))) files.push(`~/.levi/PROJECTS/${projectName}/${f}`);
     }
   }
   return files;
 }
 
-// Reads DATA.md and current task cluster status directly — no AI call, no
-// tool-call round trip. This lets both the classification prompt and the
-// main loop start already knowing the project's recorded state, instead of
-// spending a tool call every turn just to discover it. Capped in size to
-// keep this cheap; the actual code files still get verified separately.
-function readProjectContext(projectName, sessionId) {
+// free, no AI call: DATA.md snippet + task cluster status for the [context] block
+export function readProjectContext(projectName, sessionId) {
   let dataContent = '';
   if (projectName) {
     try {
       dataContent = fs.readFileSync(path.join(PROJECTS_ROOT, projectName, 'DATA.md'), 'utf-8').slice(0, 800);
     } catch {}
   }
-
   let taskSummary = '';
   if (sessionId) {
     try {
-      const clusters = getTasks(sessionId);
-      if (clusters.length) {
-        taskSummary = clusters
-          .map((c) => {
-            const done = c.tasks.filter((t) => t.done).length;
-            return `Cluster ${c.num} "${c.title}" [${c.status}] ${done}/${c.tasks.length} tasks done`;
-          })
-          .join('; ')
-          .slice(0, 600);
-      }
+      taskSummary = getTasks(sessionId)
+        .map((c) => `Cluster ${c.num} "${c.title}" [${c.status}] ${c.tasks.filter((t) => t.done).length}/${c.tasks.length} done`)
+        .join('; ')
+        .slice(0, 600);
     } catch {}
   }
-
   return { dataContent, taskSummary };
 }
 
-const THOUGHT_PROMPT = `You are a fast pre-processing step before a coding assistant replies. Given a user message and a list of files that actually exist right now, output ONLY valid JSON, no markdown fences, no explanation, in this exact shape:
-{
-  "retrieval": true or false,
-  "type": "chitchat" or "coding" or "question" or "task" or "other",
-  "files": [{"path": "<exact path from the candidate list>", "confidence": 0.0-1.0}],
-  "cross_session": true or false,
-  "task_cluster": null or {"title": "short title", "tasks": ["task 1", "task 2"]},
-  "max_turns": integer 1-20,
-  "note": "one short line of reasoning"
+// constant string on purpose: stays cacheable
+const THINK_SYSTEM = `You are a planning aid for a coding agent. You do NOT solve the task and never write code. You only give direction. Output ONLY JSON, no fences:
+{"files":[{"path":"<exact candidate path>","confidence":0.0-1.0}],"plan":["short concrete step"],"subagents":null or {"count":1-3,"why":"short"},"ambiguity":null or "what is unclear","question":null or "one short question for the user"}
+Rules:
+- files: only exact paths from the candidate list, empty if none help.
+- plan: 2-6 concrete, completable steps. Never vague wrap-ups like "verify" or "test".
+- subagents: only if the work splits into independent chunks, else null.
+- ambiguity/question: only for a consequential fork, else null.
+- If new results are given, replan: adjust only the remaining steps.`;
+
+const THINK_DESC = 'Get short planning direction: which memory files to read first, a step plan, whether sub-agents help, open questions. Use only for ambiguous, complex multi-file, or replanning moments. Skip for simple tasks.';
+const THINK_SCHEMA = {
+  type: 'object',
+  properties: {
+    goal: { type: 'string', description: 'what you are trying to do' },
+    situation: { type: 'string', description: 'what is unclear, or new results to replan from' }
+  },
+  required: ['goal']
+};
+
+// matches whatever shape the existing tool defs use
+export function thinkToolDef(sample) {
+  if (sample && sample.function) return { type: sample.type || 'function', function: { name: 'think', description: THINK_DESC, parameters: THINK_SCHEMA } };
+  if (sample && sample.input_schema) return { name: 'think', description: THINK_DESC, input_schema: THINK_SCHEMA };
+  return { name: 'think', description: THINK_DESC, parameters: THINK_SCHEMA };
 }
 
-Rules:
-- FIRST check the recent thread given below. If the last assistant message asked a question or presented options, and the current user message looks like an answer to it (e.g. "yes", "homedir", "the second one", a short confirmation), this is a CONTINUATION of that flow, not a new topic — set retrieval to whatever fits continuing that work (usually false, since it's just confirming something already in progress), cross_session: false, task_cluster: null, and note should say it's a continuation. Do NOT treat a short answer like "yes" as a fresh greeting or chit-chat.
-- If PROJECT CONTEXT (DATA.md content and task status) is given below, use it to resolve pronouns like "it"/"that" and to judge whether a request fits what's already built. If the request clearly doesn't fit the recorded project type (e.g. a UI feature for a CLI tool with no UI, per DATA.md), still classify it normally (type: coding, task_cluster describing the actual needed work, e.g. "convert X to a web app") — the main loop will confirm the mismatch with the user, you're just routing correctly.
-- retrieval: false for pure chit-chat/greetings/general knowledge that needs nothing about this specific user or project, AND for continuations as above. true for anything that might depend on remembered facts, preferences, or project state, OR references a past conversation.
-- cross_session: true if the message explicitly or implicitly refers to a PAST CONVERSATION (words like "last time", "earlier", "before", "we talked about", "what did we decide", "you said"), meaning the answer likely lives in another session's history, not in MEMORY/PROJECTS files. false otherwise, including for same-session continuations. If true, also set retrieval: true.
-- files: ONLY pick paths from the candidate list given to you. Never invent a path. Empty array if none seem relevant or retrieval is false. Order doesn't matter, confidence does.
-- task_cluster: ONLY set this when the message describes real multi-step build/coding work worth tracking as a checklist. null for anything else, including simple one-off asks. Tasks must be concrete, completable actions (e.g. "fix add() in math_utils.py") — never include vague wrap-up steps like "verify", "test", or "report status" as their own task items; those aren't discrete actions and shouldn't be on the checklist.
-- max_turns: your honest estimate of how many tool-call round trips this will realistically take. Simple Q&A: 1-3. Small edit: 3-6. Real feature/build: 6-15. Complex multi-file work: 15-20.
-- note: brief, for debugging, not shown to the user.`;
-
-export async function think(userMessage, { projectName, recentMessages = [], sessionId } = {}) {
-  const candidateFiles = listCandidateFiles(projectName);
+export async function think(args, { projectName, sessionId } = {}) {
+  let a = args;
+  if (typeof a === 'string') {
+    try { a = JSON.parse(a); } catch { a = { goal: a }; }
+  }
+  const goal = String(a?.goal || '').slice(0, 800);
+  const situation = String(a?.situation || '').slice(0, 1500);
+  const candidates = listCandidateFiles(projectName);
   const { dataContent, taskSummary } = readProjectContext(projectName, sessionId);
 
-  const threadBlock = recentMessages.length
-    ? recentMessages.map((m) => `${m.role}: ${m.text}`).join('\n')
-    : '(no prior messages in this session)';
+  const prompt = `goal: ${goal}
+situation / new results: ${situation || '(none)'}
+project: ${projectName || '(none)'}
+DATA.md: ${dataContent || '(empty)'}
+tasks: ${taskSummary || '(none)'}
+candidate files:
+${candidates.length ? candidates.map((f) => `- ${f}`).join('\n') : '(none)'}`;
 
-  const projectContextBlock = projectName
-    ? `PROJECT CONTEXT for "${projectName}":
-DATA.md: ${dataContent || '(empty or not yet written)'}
-Task status: ${taskSummary || '(no task clusters yet)'}`
-    : '(no active project for this session)';
-
-  const prompt = `Recent thread in this session, up to the last 3 exchanges (most recent last). Use this to judge whether the current message connects to what's already in progress or is a completely different request — you don't need to use all of it, just as much as actually helps:
-${threadBlock}
-
-${projectContextBlock}
-
-Current user message: "${userMessage}"
-
-Candidate files that exist right now (pick only from this list if any apply):
-${candidateFiles.length ? candidateFiles.map((f) => `- ${f}`).join('\n') : '(none exist yet)'}
-
-Current project: ${projectName || '(none)'}`;
-
-  let data;
   try {
-    const res = await chat([{ role: 'user', content: prompt }], { system: THOUGHT_PROMPT });
+    const res = await chat([{ role: 'user', content: prompt }], { system: THINK_SYSTEM });
     if (sessionId) recordUsage(sessionId, res.usage);
-    const cleaned = res.text.trim().replace(/^```json\s*|```\s*$/g, '');
-    data = JSON.parse(cleaned);
+    const d = JSON.parse(res.text.trim().replace(/^```json\s*|```\s*$/g, ''));
+    const valid = new Set(candidates);
+    const files = (Array.isArray(d.files) ? d.files : [])
+      .filter((f) => f && valid.has(f.path))
+      .sort((x, y) => (y.confidence || 0) - (x.confidence || 0));
+    const plan = Array.isArray(d.plan) ? d.plan.filter((s) => typeof s === 'string') : [];
+
+    const out = [];
+    if (files.length) out.push('read first: ' + files.map((f) => `${f.path} (${f.confidence})`).join(', '));
+    if (plan.length) out.push('plan:\n' + plan.map((s, i) => `${i + 1}. ${s}`).join('\n'));
+    if (d.subagents) out.push(`sub-agents: ${d.subagents.count}, ${d.subagents.why}`);
+    if (d.ambiguity) out.push('unclear: ' + d.ambiguity);
+    if (d.question) out.push('ask the user: ' + d.question);
+    return out.join('\n') || 'no extra direction, proceed with your own judgment';
   } catch {
-    return { retrieval: true, type: 'unknown', files: [], cross_session: false, task_cluster: null, max_turns: 10, note: 'thought step failed, using safe defaults', dataContent: '', taskSummary: '' };
+    return 'think step failed, proceed with your own judgment';
   }
-
-  const validCandidates = new Set(candidateFiles);
-  const maxTurns = Math.min(60, Math.max(1, Number(data.max_turns) || 10)); // hard ceiling raised — real scaling by task count happens in loop.js
-
-  const crossSession = !!data.cross_session;
-  return {
-    retrieval: !!data.retrieval,
-    type: typeof data.type === 'string' ? data.type : 'unknown',
-    cross_session: crossSession,
-    files: crossSession
-      ? []
-      : Array.isArray(data.files)
-      ? data.files.filter((f) => f && typeof f.path === 'string' && validCandidates.has(f.path))
-      : [],
-    task_cluster:
-      data.task_cluster && typeof data.task_cluster.title === 'string' && Array.isArray(data.task_cluster.tasks) && data.task_cluster.tasks.length
-        ? { title: data.task_cluster.title, tasks: data.task_cluster.tasks }
-        : null,
-    max_turns: maxTurns,
-    note: typeof data.note === 'string' ? data.note.slice(0, 200) : '',
-    dataContent,
-    taskSummary
-  };
 }

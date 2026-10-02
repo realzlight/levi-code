@@ -4,11 +4,11 @@ import path from 'node:path';
 import { chat, chatWithTools } from './client.js';
 import { toolDefs, runTool } from './tools.js';
 import { think, readProjectContext, thinkToolDef } from './thought.js';
-import { currentSessionId, getProject, loadMessages, isSoloOnly } from './session.js';
+import { currentSessionId, getProject, loadMessages } from './session.js';
 import { getTasks } from './tasks.js';
 import { startTurn, recordUsage } from './usage.js';
 import { route } from './router.js';
-import { CONVO_PROMPT, agentPrompt, buildContext } from './prompts.js';
+import { CONVO_PROMPT, AGENT_PROMPT, buildContext } from './prompts.js';
 
 const agentTools = [...toolDefs, thinkToolDef(toolDefs[0])];
 
@@ -23,7 +23,7 @@ function currentUserName() {
 }
 
 function buildSystem() {
-  return agentPrompt(isSoloOnly());
+  return AGENT_PROMPT;
 }
 
 // messages = [{ role: 'user'|'assistant', content: string }]
@@ -70,8 +70,6 @@ export async function runAgent(userMessage, { onStep, maxSteps, forceAgent } = {
   // a cap, not spend: agent mode is real work, so keep a high ceiling
   const effectiveMaxSteps = maxSteps || Math.max(pendingTasks * 4 + 10, 100);
   const system = buildSystem();
-  const SUB = ['spawn_subagent', 'list_subagents', 'message_subagent'];
-  const tools = isSoloOnly() ? agentTools.filter((t) => !SUB.includes(t.function?.name || t.name)) : agentTools;
   // give the tool-calling loop real conversation history, not just a hint via
   // the system prompt — this is what lets it resolve "it"/"that"/pronouns
   // directly instead of guessing and going searching for something it already knows
@@ -83,7 +81,7 @@ export async function runAgent(userMessage, { onStep, maxSteps, forceAgent } = {
   let blankRetries = 0;
 
   for (let step = 0; step < effectiveMaxSteps; step++) {
-    const { text, toolCalls, message, usage } = await chatWithTools(messages, { system, tools });
+    const { text, toolCalls, message, usage } = await chatWithTools(messages, { system, tools: agentTools });
     if (sessionId) recordUsage(sessionId, usage);
 
     if (!toolCalls.length) {

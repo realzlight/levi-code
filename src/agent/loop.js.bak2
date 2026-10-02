@@ -3,14 +3,12 @@ import os from 'node:os';
 import path from 'node:path';
 import { chat, chatWithTools } from './client.js';
 import { toolDefs, runTool } from './tools.js';
-import { think, readProjectContext, thinkToolDef } from './thought.js';
-import { currentSessionId, getProject, loadMessages, isSoloOnly } from './session.js';
-import { getTasks } from './tasks.js';
+import { think } from './thought.js';
+import { currentSessionId, getProject, loadMessages } from './session.js';
+import { addCluster, getTasks } from './tasks.js';
 import { startTurn, recordUsage } from './usage.js';
 import { route } from './router.js';
-import { CONVO_PROMPT, agentPrompt, buildContext } from './prompts.js';
-
-const agentTools = [...toolDefs, thinkToolDef(toolDefs[0])];
+import { CONVO_PROMPT, AGENT_PROMPT, buildContext } from './prompts.js';
 
 function currentUserName() {
   try {
@@ -23,7 +21,7 @@ function currentUserName() {
 }
 
 function buildSystem() {
-  return agentPrompt(isSoloOnly());
+  return AGENT_PROMPT;
 }
 
 // messages = [{ role: 'user'|'assistant', content: string }]
@@ -62,28 +60,52 @@ export async function runAgent(userMessage, { onStep, maxSteps, forceAgent } = {
 
   // agent mode: existing flow
   const recentMessages = stored.slice(-6);
-  const project = readProjectContext(projectName, sessionId);
-  let pendingTasks = 0;
-  if (sessionId) {
-    pendingTasks = getTasks(sessionId).reduce((n, c) => n + (c.status === 'completed' ? 0 : c.tasks.filter((t) => !t.done).length), 0);
+  const thought = await think(userMessage, { projectName, recentMessages, sessionId });
+  onStep?.('thought', thought);
+
+  if (thought.task_cluster && sessionId) {
+    const existingActive = getTasks(sessionId).some((c) => c.status !== 'completed');
+    if (!existingActive) {
+      const num = addCluster(sessionId, thought.task_cluster.title, thought.task_cluster.tasks);
+      thought.clusterCreated = { num, title: thought.task_cluster.title };
+    }
+    // if an active cluster already exists, trust that instead of creating a duplicate —
+    // Levi's own add_task_cluster/add_task_to_cluster tools handle genuinely new work from here
   }
-  // a cap, not spend: agent mode is real work, so keep a high ceiling
-  const effectiveMaxSteps = maxSteps || Math.max(pendingTasks * 4 + 10, 100);
-  const system = buildSystem();
-  const SUB = ['spawn_subagent', 'list_subagents', 'message_subagent'];
-  const tools = isSoloOnly() ? agentTools.filter((t) => !SUB.includes(t.function?.name || t.name)) : agentTools;
+
+  // scale by real pending task count: new cluster from this turn, or any
+  // existing incomplete clusters (picking up multi-run work), whichever is bigger
+  let pendingTasks = thought.task_cluster ? thought.task_cluster.tasks.length : 0;
+  if (sessionId) {
+    const existing = getTasks(sessionId);
+    const existingPending = existing.reduce((n, c) => n + (c.status === 'completed' ? 0 : c.tasks.filter((t) => !t.done).length), 0);
+    pendingTasks = Math.max(pendingTasks, existingPending);
+  }
+  const autoMax = pendingTasks ? pendingTasks * 4 + 10 : 0;
+  // cross-session lookups always need at least search + read + answer, enforce a floor
+  const crossSessionFloor = thought.cross_session ? 4 : 0;
+  // static floors, not fully trusting the AI's own turn estimate: 30 for anything
+  // normal, 100 whenever real multi-step work is involved, so a run doesn't cut off
+  // mid-work just because a guess came in low — TASK.md progress persists either way
+  const isHardWork = pendingTasks > 0 || !!thought.task_cluster || thought.type === 'coding' || thought.type === 'task';
+  const staticFloor = isHardWork ? 100 : 30;
+  const effectiveMaxSteps = maxSteps || Math.max(thought.max_turns || 20, autoMax, crossSessionFloor, staticFloor);
+  const system = buildSystem(thought);
   // give the tool-calling loop real conversation history, not just a hint via
   // the system prompt — this is what lets it resolve "it"/"that"/pronouns
   // directly instead of guessing and going searching for something it already knows
   const history = recentMessages.map((m) => ({ role: m.role === 'agent' ? 'assistant' : 'user', content: m.text }));
-  const context = buildContext({ userName: currentUserName(), insight: routed.insight, dataContent: project.dataContent, taskSummary: project.taskSummary });
+  const hint = thought.clusterCreated
+    ? 'task cluster ' + thought.clusterCreated.num + ' "' + thought.clusterCreated.title + '" was auto-created as a starting point; edit it freely as the work evolves'
+    : '';
+  const context = buildContext({ userName: currentUserName(), insight: routed.insight, dataContent: thought.dataContent, taskSummary: thought.taskSummary, hint });
   const messages = [...history, { role: 'user', content: context + userMessage }];
 
   const MAX_BLANK_RETRIES = 3; // independent of effectiveMaxSteps — don't silently burn the whole step budget on invisible retries
   let blankRetries = 0;
 
   for (let step = 0; step < effectiveMaxSteps; step++) {
-    const { text, toolCalls, message, usage } = await chatWithTools(messages, { system, tools });
+    const { text, toolCalls, message, usage } = await chatWithTools(messages, { system, tools: toolDefs });
     if (sessionId) recordUsage(sessionId, usage);
 
     if (!toolCalls.length) {
@@ -146,9 +168,7 @@ export async function runAgent(userMessage, { onStep, maxSteps, forceAgent } = {
 
     for (const call of toolCalls) {
       onStep?.('tool_call', call);
-      const result = call.name === 'think'
-        ? await think(call.args, { projectName, sessionId })
-        : await runTool(call.name, call.args);
+      const result = await runTool(call.name, call.args);
       onStep?.('tool_result', { call, result });
       messages.push({ role: 'tool', tool_call_id: call.id, content: String(result) });
     }
