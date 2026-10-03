@@ -1,12 +1,15 @@
 {
   "name": "levi-ai",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "bin": {
     "levi-code": "./bin/cli.js",
     "levi": "./bin/cli.js"
   },
   "type": "module",
-  "files": ["bin", "src"],
+  "files": [
+    "bin",
+    "src"
+  ],
   "dependencies": {
     "@clack/prompts": "^1.8.1",
     "@executeautomation/playwright-mcp-server": "^1.0.12",
