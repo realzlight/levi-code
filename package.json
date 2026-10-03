@@ -1,17 +1,12 @@
 {
-  "name": "levi",
+  "name": "levi-code",
   "version": "1.0.0",
   "bin": {
+    "levi-code": "./bin/cli.js",
     "levi": "./bin/cli.js"
   },
   "type": "module",
-  "files": [
-    "bin",
-    "src"
-  ],
-  "scripts": {
-    "postinstall": "node ./src/bootstrap.js"
-  },
+  "files": ["bin", "src"],
   "dependencies": {
     "@clack/prompts": "^1.8.1",
     "@executeautomation/playwright-mcp-server": "^1.0.12",

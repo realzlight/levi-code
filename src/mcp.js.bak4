@@ -75,6 +75,10 @@ export function loadMcpConfig() {
       fetch: {
         command: "npx",
         args: ["-y", "@modelcontextprotocol/server-fetch"]
+      },
+      playwright: {
+        command: "npx",
+        args: ["-y", "@executeautomation/playwright-mcp-server"]
       }
     }
   };
@@ -87,6 +91,7 @@ function resolveServerCommand(serverName, serverCfg) {
   const rootDir = path.resolve(__dirname, '..');
   const fetchPath = path.join(__dirname, 'fetch-server.js');
   const serperPath = path.join(rootDir, 'node_modules', 'mcp-server-serper', 'build', 'index.js');
+  const playwrightPath = path.join(rootDir, 'node_modules', '@executeautomation', 'playwright-mcp-server', 'dist', 'index.js');
 
   const argsStr = (serverCfg.args || []).join(' ');
 
@@ -104,6 +109,16 @@ function resolveServerCommand(serverName, serverCfg) {
     }
   }
 
+  // Playwright MCP Server — spoof linux to avoid Termux "android" rejection
+  if (serverName === 'playwright' || argsStr.includes('playwright-mcp-server')) {
+    if (fs.existsSync(playwrightPath)) {
+      return {
+        command: 'node',
+        args: ['-e', `Object.defineProperty(process, 'platform', { value: 'linux' }); import('${playwrightPath}');`]
+      };
+    }
+  }
+
   return { command: serverCfg.command || 'npx', args: serverCfg.args || [] };
 }
 
@@ -114,8 +129,7 @@ export async function initMcp({ verbose = false } = {}) {
   if (initialized) return getMcpTools();
 
   const config = loadMcpConfig();
-  const servers = { ...(config.mcpServers || {}) };
-  delete servers.playwright;
+  const servers = config.mcpServers || {};
 
   // Inject Serper API key from config.json into environment
   const serperKey = getSearchApiKey();

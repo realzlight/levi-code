@@ -1,0 +1,5 @@
+*.bak
+*.bak*
+src/ui/assets/
+src/ui/*.bak
+src/agent/*.bak

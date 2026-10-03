@@ -13,21 +13,7 @@ function resolve(p) {
   if (p.startsWith('~/')) return path.join(os.homedir(), p.slice(2));
   return p;
 }
-const CATEGORIES = {
-  fs: ['read_file','write_file','edit_file','bash'],
-  web: ['google_search','serper_search','fetch'],
-  tasks: ['add_task_cluster','get_tasks','set_task_done','edit_task','delete_task','delete_cluster','add_task_to_cluster'],
-  memory: ['set_project','search_sessions','read_session'],
-  meta: ['list_commands','list_fs_commands','list_web_commands','list_task_commands','list_memory_commands','list_meta_commands','list_subagent_commands','ask'],
-  subagent: ['spawn_subagent','list_subagents','message_subagent']
-};
 
-function buildUsage(fn) {
-  const props = fn.parameters?.properties || {};
-  const required = fn.parameters?.required || [];
-  const args = Object.keys(props).map(k => required.includes(k)? k : `${k}?`).join(', ');
-  return `${fn.name}(${args})`;
-}
 // OpenAI-style function tool definitions
 export const toolDefs = [
   {
@@ -85,14 +71,14 @@ export const toolDefs = [
       }
     }
   },
-
-    { type: 'function', function: { name: 'list_fs_commands', description: 'Show FS tools with usage', parameters: { type: 'object', properties: {} } } },
-  { type: 'function', function: { name: 'list_web_commands', description: 'Show Web tools with usage', parameters: { type: 'object', properties: {} } } },
-  { type: 'function', function: { name: 'list_task_commands', description: 'Show Task tools with usage', parameters: { type: 'object', properties: {} } } },
-  { type: 'function', function: { name: 'list_memory_commands', description: 'Show Memory tools with usage', parameters: { type: 'object', properties: {} } } },
-  { type: 'function', function: { name: 'list_meta_commands', description: 'Show Meta tools with usage', parameters: { type: 'object', properties: {} } } },
-  { type: 'function', function: { name: 'list_subagent_commands', description: 'Show Sub-agent tools (only when solo OFF)', parameters: { type: 'object', properties: {} } } },
-
+  {
+    type: 'function',
+    function: {
+      name: 'list_commands',
+      description: "List everything Levi can do: both slash commands the user can type, and the tools Levi can call itself.",
+      parameters: { type: 'object', properties: {} }
+    }
+  },
   {
     type: 'function',
     function: {
@@ -327,6 +313,84 @@ export const toolDefs = [
         required: ['url']
       }
     }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'playwright_navigate',
+      description: 'Navigate the browser to a URL.',
+      parameters: {
+        type: 'object',
+        properties: {
+          url: { type: 'string', description: 'URL to navigate to' }
+        },
+        required: ['url']
+      }
+    }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'playwright_click',
+      description: 'Click an element on the browser page matching selector.',
+      parameters: {
+        type: 'object',
+        properties: {
+          selector: { type: 'string', description: 'CSS selector or text to click' }
+        },
+        required: ['selector']
+      }
+    }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'playwright_fill',
+      description: 'Fill out an input field on the browser page.',
+      parameters: {
+        type: 'object',
+        properties: {
+          selector: { type: 'string', description: 'CSS selector of the input field' },
+          value: { type: 'string', description: 'Value to fill in' }
+        },
+        required: ['selector', 'value']
+      }
+    }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'playwright_screenshot',
+      description: 'Take a screenshot of the current browser page.',
+      parameters: {
+        type: 'object',
+        properties: {
+          name: { type: 'string', description: 'Optional name for the screenshot' }
+        }
+      }
+    }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'playwright_get_visible_text',
+      description: 'Get the visible text content of the current browser page.',
+      parameters: {
+        type: 'object',
+        properties: {}
+      }
+    }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'playwright_close',
+      description: 'Close the browser and release all resources.',
+      parameters: {
+        type: 'object',
+        properties: {}
+      }
+    }
   }
 ];
 
@@ -359,33 +423,14 @@ export async function runTool(name, args) {
       return `Edited ${p}`;
     }
 
-if (name === 'list_commands' || name === 'list_fs_commands' || name === 'list_web_commands' || name === 'list_task_commands' || name === 'list_memory_commands' || name === 'list_meta_commands' || name === 'list_subagent_commands') {
-  const { getCommands } = await import('../ui/commands.js');
-  const { usage } = await import('../ui/args.js');
-  const slash = getCommands().map((c) => `${usage(c)} -- ${c.description}`).join('\n');
-
-  // category filtering
-  let filtered = toolDefs;
-  if (name!== 'list_commands') {
-    const cat = name.replace('list_','').replace('_commands','').replace(/^task$/, 'tasks'); // fs, web, tasks, memory, meta, subagent
-    const names = CATEGORIES[cat] || [];
-    if (cat === 'subagent' && isSoloOnly()) {
-      return `Slash commands:\n${slash}\n\n[SOLO MODE ON - subagent tools hidden, /solo off to enable]`;
+    if (name === 'list_commands') {
+      const { getCommands } = await import('../ui/commands.js');
+      const { usage } = await import('../ui/args.js');
+      const slash = getCommands().map((c) => `${usage(c)} -- ${c.description}`).join('\n');
+      const tools = toolDefs.map((t) => `${t.function.name}() -- ${t.function.description}`).join('\n');
+      return `Slash commands (typed by the user, prefixed with /):\n${slash}\n\nTools I can call directly:\n${tools}`;
     }
-    filtered = toolDefs.filter(t => names.includes(t.function.name));
-  } else {
-    // index only - cheap
-    return `Slash commands:\n${slash}\n\n${JSON.stringify(getAllCategoriesSummary(), null, 2)}`;
-  }
 
-  const tools = filtered.map((t) => {
-    const fn=t.function;
-    const u = buildUsage(fn);
-    return `${u} -- ${fn.description} | params: ${JSON.stringify(fn.parameters)}`;
-  }).join('\n');
-
-  return `Slash commands (typed by the user, prefixed with /):\n${slash}\n\nTools [${name}]:\n${tools}`;
-}
     if (name === 'bash') {
       const r = await execa(args.command, { shell: true, reject: false, all: true });
       return r.all || `(exit ${r.exitCode}, no output)`;
@@ -555,7 +600,7 @@ if (name === 'list_commands' || name === 'list_fs_commands' || name === 'list_we
       return await runMcpTool(name, args);
     }
 
-    if (name === 'fetch') {
+    if (name === 'fetch' || name.startsWith('playwright_')) {
       const { runMcpTool } = await import('../mcp.js');
       return await runMcpTool(name, args);
     }
@@ -569,45 +614,4 @@ if (name === 'list_commands' || name === 'list_fs_commands' || name === 'list_we
   } catch (e) {
     return `Error: ${e.message}`;
   }
-}
-
-export function getToolsByCategory(cat) {
-  const names = CATEGORIES[cat] || [];
-  if (isSoloOnly() && cat === 'subagent') return [];
-  return toolDefs.filter(t => {
-    const name = t.function.name;
-    if (name.startsWith('/')) return false; // <-- exclude user commands
-    return names.includes(name);
-  }).map(t => ({
-    name: t.function.name,
-    description: t.function.description,
-    parameters: t.function.parameters,
-    usage: buildUsage(t.function)
-  }));
-}
-
-// new — for list_commands
-export function getUserCommands() {
-  return toolDefs.filter(t => t.function.name.startsWith('/')).map(t => ({
-    name: t.function.name,
-    description: t.function.description,
-    usage: buildUsage(t.function)
-  }));
-}
-
-export function getAllCategoriesSummary() {
-  const solo = isSoloOnly();
-  return {
-    solo_mode: solo? "ON" : "OFF",
-    usage: "Run list_<category>_commands to see tools with params, /commands for user commands",
-    categories: {
-      fs: "use list_fs_commands -> 4 tools",
-      web: "use list_web_commands -> 3 tools",
-      tasks: "use list_task_commands -> 7 tools",
-      memory: "use list_memory_commands -> 3 tools",
-      meta: "use list_meta_commands -> 8 tools",
-      subagent: solo? "HIDDEN (solo ON) - /solo off to enable" : "use list_subagent_commands -> 3 tools",
-      user: "use list_commands -> slash commands"
-    }
-  };
 }

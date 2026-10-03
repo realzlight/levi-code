@@ -8,7 +8,7 @@ import { currentSessionId, getProject, loadMessages, isSoloOnly } from './sessio
 import { getTasks } from './tasks.js';
 import { startTurn, recordUsage } from './usage.js';
 import { route } from './router.js';
-import { CONVO_PROMPT, LIGHT_PROMPT, agentPrompt, buildContext } from './prompts.js';
+import { CONVO_PROMPT, agentPrompt, buildContext } from './prompts.js';
 
 const LIST_COMMANDS = ['list_commands','list_fs_commands','list_web_commands','list_task_commands','list_memory_commands','list_meta_commands','list_subagent_commands'];
 const TRIVIAL = new Set(['bash','read_file','write_file','edit_file',...LIST_COMMANDS]);
@@ -60,30 +60,6 @@ async function runConversation(routed, sessionId, onStep) {
   }
   return null;
 }
-const LIGHT_TOOLS = toolDefs.filter((t) => ['bash', 'read_file', 'write_file', 'edit_file'].includes(t.function.name));
-
-async function runLight(routed, sessionId, onStep) {
-  const context = buildContext({ userName: currentUserName(), insight: routed.insight, recent: routed.recentMessages });
-  const messages = [{ role: 'user', content: context + routed.query }];
-  for (let step = 0; step < 8; step++) {
-    const { text, toolCalls, message, usage } = await chatWithTools(messages, { system: LIGHT_PROMPT, tools: LIGHT_TOOLS });
-    if (sessionId) recordUsage(sessionId, usage);
-    if (!toolCalls.length) {
-      const out = (text || '').trim();
-      return !out || out.includes('[[AGENT]]') ? null : out;
-    }
-    messages.push(message);
-    for (const call of toolCalls) {
-      onStep?.('tool_call', call);
-      const ok = LIGHT_TOOLS.some((t) => t.function.name === call.name);
-      const result = ok ? await runTool(call.name, call.args) : 'Error: tool not available in light mode';
-      onStep?.('tool_result', { call, result });
-      messages.push({ role: 'tool', tool_call_id: call.id, content: String(result) });
-    }
-  }
-  return null;
-}
-
 export async function runAgent(userMessage, { onStep, maxSteps, forceAgent } = {}) {
   const sessionId = currentSessionId();
   if (sessionId) startTurn(sessionId);
@@ -99,15 +75,6 @@ export async function runAgent(userMessage, { onStep, maxSteps, forceAgent } = {
   onStep?.('route', routed);
 
   // conversation mode: tiny prompt, no tools, no thought step
-  if (routed.route === 'light') {
-    const reply = await runLight(routed, sessionId, onStep);
-    if (reply) {
-      onStep?.('done', reply);
-      return reply;
-    }
-    routed.insight = 'escalated from light mode';
-  }
-
   if (routed.route === 'conversation') {
     const reply = await runConversation(routed, sessionId, onStep);
     if (reply) {

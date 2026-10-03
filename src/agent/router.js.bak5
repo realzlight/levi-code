@@ -2,14 +2,13 @@ import { chat } from './client.js';
 import { recordUsage } from './usage.js';
 
 // constant string on purpose: identical prefix every call, so it stays cacheable
-const ROUTER_SYSTEM = `Route a message for a coding assistant. Output ONLY JSON: {"route":"conversation"|"light"|"agent","insight":"max 15 words"}
-agent = needs tools or multi-step work: coding, files, bash/git, browser, MCP, deep multi-source research, planning, tasks, sub-agents, refers to a past conversation, or continues agent work (e.g. "yes", "the second one" when last_route is agent).
-light = ONE simple file or shell action needing no memory, project, task, or sub-agent state (make a dir, list files, print a file, run one command, one small edit).
-conversation = casual chat, general questions, explanations, short follow-ups, and quick lookups answerable with one web search (news, prices, versions, game info).
+const ROUTER_SYSTEM = `Route a message for a coding assistant. Output ONLY JSON: {"route":"conversation"|"agent","insight":"max 15 words"}
+agent = needs tools or multi-step work: coding, files, bash/git, browser, MCP, research needing tools, planning, tasks, sub-agents, refers to a past conversation, or continues agent work (e.g. "yes", "the second one" when last_route is agent).
+conversation = casual chat, general questions, explanations, short follow-ups that need no tools.
 When unsure, choose agent.`;
 
 const GREETING = /^(hi+|hey+|yo|hello|sup|thanks|thank you|thx|ty|cool|nice|lol|gm|gn|bye)[\s!.?]*$/i;
-const FILE_HINT = /```/; // only multi-line code skips the router call
+const FILE_HINT = /(```|~\/|\.\/|\bsrc\/|\b[\w-]+\.(js|jsx|ts|tsx|py|json|md|sh|css|html|yml|yaml|toml|env)\b)/i;
 
 let lastRoute = 'conversation';
 
@@ -27,7 +26,7 @@ current: ${query.slice(0, 600)}`;
     if (sessionId) recordUsage(sessionId, res.usage);
     const data = JSON.parse(res.text.trim().replace(/^```json\s*|```\s*$/g, ''));
     return {
-      route: ['conversation', 'light'].includes(data.route) ? data.route : 'agent',
+      route: data.route === 'conversation' ? 'conversation' : 'agent',
       insight: String(data.insight || '').slice(0, 120)
     };
   } catch {

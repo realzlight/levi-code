@@ -367,7 +367,7 @@ if (name === 'list_commands' || name === 'list_fs_commands' || name === 'list_we
   // category filtering
   let filtered = toolDefs;
   if (name!== 'list_commands') {
-    const cat = name.replace('list_','').replace('_commands','').replace(/^task$/, 'tasks'); // fs, web, tasks, memory, meta, subagent
+    const cat = name.replace('list_','').replace('_commands',''); // fs, web, tasks, memory, meta, subagent
     const names = CATEGORIES[cat] || [];
     if (cat === 'subagent' && isSoloOnly()) {
       return `Slash commands:\n${slash}\n\n[SOLO MODE ON - subagent tools hidden, /solo off to enable]`;
