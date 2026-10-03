@@ -37,7 +37,7 @@ export const toolDefs = [
       description: 'Read the contents of a text file.',
       parameters: {
         type: 'object',
-        properties: { path: { type: 'string', description: 'File path (~ ok)' } },
+        properties: { path: { type: 'string', description: 'File path, absolute or relative to cwd, ~ allowed' } },
         required: ['path']
       }
     }
@@ -46,7 +46,7 @@ export const toolDefs = [
     type: 'function',
     function: {
       name: 'write_file',
-      description: 'Write a file (overwrites; creates parent dirs).',
+      description: 'Create a new file or overwrite an existing one with new content. Creates parent folders if needed.',
       parameters: {
         type: 'object',
         properties: {
@@ -61,7 +61,7 @@ export const toolDefs = [
     type: 'function',
     function: {
       name: 'edit_file',
-      description: 'Replace old_str (must match exactly once) with new_str in a file.',
+      description: 'Replace an exact substring in a file with new text. old_str must match exactly once.',
       parameters: {
         type: 'object',
         properties: {
@@ -77,7 +77,7 @@ export const toolDefs = [
     type: 'function',
     function: {
       name: 'bash',
-      description: 'Run a shell command.',
+      description: 'Run a shell command and return its output.',
       parameters: {
         type: 'object',
         properties: { command: { type: 'string' } },
@@ -268,13 +268,13 @@ export const toolDefs = [
     type: 'function',
     function: {
       name: 'ask',
-      description: 'Ask the user a question with clickable options (e.g. yes/no). Ends your turn; their pick comes back as the next message.',
+      description: 'Ask the user a question with a structured set of choices (e.g. yes/no, or a short list of options) instead of asking in plain text. Use this whenever the question has a small set of likely answers — the user gets clickable options instead of typing. Always ends your turn; the user\'s pick (or custom answer) comes back as their next message.',
       parameters: {
         type: 'object',
         properties: {
           question: { type: 'string', description: 'The question to ask' },
-          options: { type: 'array', items: { type: 'string' }, description: 'Short option labels, e.g. ["Yes", "No"]' },
-          allowCustom: { type: 'boolean', description: 'Also allow a typed answer (default true)' }
+          options: { type: 'array', items: { type: 'string' }, description: 'Short option labels, e.g. ["Yes", "No"] or ["Home directory", "Current directory"]' },
+          allowCustom: { type: 'boolean', description: 'If true, also let the user type a free-text answer instead of picking an option. Defaults to true.' }
         },
         required: ['question', 'options']
       }
@@ -284,13 +284,13 @@ export const toolDefs = [
     type: 'function',
     function: {
       name: 'google_search',
-      description: 'Google search (Serper) for live info, docs, news, examples.',
+      description: 'Search the web using Serper Google Search API. Use this to find live documentation, articles, news, code examples, or answers from Google.',
       parameters: {
         type: 'object',
         properties: {
           q: { type: 'string', description: 'Search query' },
-          num: { type: 'number', description: 'Result count (default 10)' },
-          site: { type: 'string', description: 'Limit to a domain, e.g. github.com' }
+          num: { type: 'number', description: 'Number of results to return (default: 10)' },
+          site: { type: 'string', description: 'Limit results to specific domain (e.g. github.com, stackoverflow.com)' }
         },
         required: ['q']
       }
@@ -315,14 +315,14 @@ export const toolDefs = [
     type: 'function',
     function: {
       name: 'fetch',
-      description: 'Fetch a web page as readable markdown.',
+      description: 'Fetch the text/markdown content of any web page by URL. Converts HTML to readable markdown text.',
       parameters: {
         type: 'object',
         properties: {
           url: { type: 'string', description: 'URL to fetch' },
-          max_length: { type: 'number', description: 'Max chars (default 5000)' },
-          start_index: { type: 'number', description: 'Start offset (default 0)' },
-          raw: { type: 'boolean', description: 'Raw HTML if true' }
+          max_length: { type: 'number', description: 'Maximum character length of content to return (default: 5000)' },
+          start_index: { type: 'number', description: 'Character offset to start reading from (default: 0)' },
+          raw: { type: 'boolean', description: 'Return raw HTML if true, clean markdown if false' }
         },
         required: ['url']
       }
@@ -360,6 +360,9 @@ export async function runTool(name, args) {
     }
 
 if (name === 'list_commands' || name === 'list_fs_commands' || name === 'list_web_commands' || name === 'list_task_commands' || name === 'list_memory_commands' || name === 'list_meta_commands' || name === 'list_subagent_commands') {
+  const { getCommands } = await import('../ui/commands.js');
+  const { usage } = await import('../ui/args.js');
+  const slash = getCommands().map((c) => `${usage(c)} -- ${c.description}`).join('\n');
 
   // category filtering
   let filtered = toolDefs;
@@ -367,21 +370,21 @@ if (name === 'list_commands' || name === 'list_fs_commands' || name === 'list_we
     const cat = name.replace('list_','').replace('_commands','').replace(/^task$/, 'tasks'); // fs, web, tasks, memory, meta, subagent
     const names = CATEGORIES[cat] || [];
     if (cat === 'subagent' && isSoloOnly()) {
-      return '[SOLO MODE ON - subagent tools hidden, /solo off to enable]';
+      return `Slash commands:\n${slash}\n\n[SOLO MODE ON - subagent tools hidden, /solo off to enable]`;
     }
     filtered = toolDefs.filter(t => names.includes(t.function.name));
   } else {
     // index only - cheap
-    return JSON.stringify(getAllCategoriesSummary(), null, 2);
+    return `Slash commands:\n${slash}\n\n${JSON.stringify(getAllCategoriesSummary(), null, 2)}`;
   }
 
   const tools = filtered.map((t) => {
     const fn=t.function;
     const u = buildUsage(fn);
-    return u;
+    return `${u} -- ${fn.description} | params: ${JSON.stringify(fn.parameters)}`;
   }).join('\n');
 
-  return `Tools [${name}] now loaded, call them directly:\n${tools}`;
+  return `Slash commands (typed by the user, prefixed with /):\n${slash}\n\nTools [${name}]:\n${tools}`;
 }
     if (name === 'bash') {
       const r = await execa(args.command, { shell: true, reject: false, all: true });

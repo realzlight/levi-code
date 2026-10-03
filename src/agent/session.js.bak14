@@ -240,20 +240,3 @@ export function setSoloOnly(value) {
   writeConfig(config);
   return value;
 }
-
-// Permanently removes one session folder. Guards: id must be a positive integer and the
-// folder must be SESSION-<id> directly inside ACTIVE-BUFFER. Clears currentSession if it was this one.
-export function deleteSession(id) {
-  const n = Number(id);
-  if (!Number.isInteger(n) || n < 1) return false;
-  const dir = sessionDir(n);
-  if (path.dirname(dir) !== BUFFER_ROOT || !/^SESSION-\d+$/.test(path.basename(dir))) return false;
-  if (!fs.existsSync(dir)) return false;
-  fs.rmSync(dir, { recursive: true, force: true });
-  const config = readConfig();
-  if (Number(config.currentSession) === n) {
-    config.currentSession = null;
-    writeConfig(config);
-  }
-  return true;
-}

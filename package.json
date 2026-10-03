@@ -1,5 +1,5 @@
 {
-  "name": "levi-code",
+  "name": "levi-ai",
   "version": "1.0.0",
   "bin": {
     "levi-code": "./bin/cli.js",

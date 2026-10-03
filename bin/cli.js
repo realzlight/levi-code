@@ -1,5 +1,4 @@
 #!/usr/bin/env node
-//#!/data/data/com.termux/files/usr/bin/env node
 import { Command } from 'commander';
 import fs from 'fs';
 import path from 'path';

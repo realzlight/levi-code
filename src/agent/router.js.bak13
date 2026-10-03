@@ -44,7 +44,7 @@ export async function route(query, { recentUser = [], forceAgent = false, sessio
   if (forceAgent) r = { route: 'agent', insight: 'agent mode forced' };
   else if (GREETING.test(q)) r = { route: 'conversation', insight: 'greeting or thanks' };
   else if (FILE_HINT.test(q)) r = { route: 'agent', insight: 'mentions code or file paths' };
-  else if (/^(remember|note that|from now on|btw|fyi)\b|\bi (always|never|usually|prefer|like|love|hate|enjoy|use|play|work (as|at|on)|live in) |\bmy (name is|favou?rite|setup is)/i.test(q)) r = { route: 'agent', insight: 'states a durable fact or preference to save' };
+  else if (/^(remember|note that|from now on|btw|fyi)\b|\bi (always|never|usually|prefer) |\bmy (name is|favou?rite|setup is)/i.test(q)) r = { route: 'agent', insight: 'states a durable fact or preference to save' };
   else r = await classify(q, recent, sessionId);
 
   lastRoute = r.route;

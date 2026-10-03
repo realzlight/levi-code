@@ -3,7 +3,7 @@ import { recordUsage } from './usage.js';
 
 // constant string on purpose: identical prefix every call, so it stays cacheable
 const ROUTER_SYSTEM = `Route a message for a coding assistant. Output ONLY JSON: {"route":"conversation"|"light"|"agent","insight":"max 15 words"}
-agent = needs tools or multi-step work: states a durable fact, habit, or preference to remember (about the user or a project), coding, files, bash/git, browser, MCP, deep multi-source research, planning, tasks, sub-agents, refers to a past conversation, or continues agent work (e.g. "yes", "the second one" when last_route is agent).
+agent = needs tools or multi-step work: coding, files, bash/git, browser, MCP, deep multi-source research, planning, tasks, sub-agents, refers to a past conversation, or continues agent work (e.g. "yes", "the second one" when last_route is agent).
 light = ONE simple file or shell action needing no memory, project, task, or sub-agent state (make a dir, list files, print a file, run one command, one small edit).
 conversation = casual chat, general questions, explanations, short follow-ups, and quick lookups answerable with one web search (news, prices, versions, game info).
 When unsure, choose agent.`;
@@ -44,7 +44,6 @@ export async function route(query, { recentUser = [], forceAgent = false, sessio
   if (forceAgent) r = { route: 'agent', insight: 'agent mode forced' };
   else if (GREETING.test(q)) r = { route: 'conversation', insight: 'greeting or thanks' };
   else if (FILE_HINT.test(q)) r = { route: 'agent', insight: 'mentions code or file paths' };
-  else if (/^(remember|note that|from now on|btw|fyi)\b|\bi (always|never|usually|prefer|like|love|hate|enjoy|use|play|work (as|at|on)|live in) |\bmy (name is|favou?rite|setup is)/i.test(q)) r = { route: 'agent', insight: 'states a durable fact or preference to save' };
   else r = await classify(q, recent, sessionId);
 
   lastRoute = r.route;

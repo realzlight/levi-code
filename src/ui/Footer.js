@@ -5,9 +5,9 @@ import os from 'node:os';
 import path from 'node:path';
 
 const h = React.createElement;
-const CYAN = '#22d3ee';
+const CYAN = '#666666';
 const SOFT = '#c4c4c4';
-const GRAY = '#666666';
+const GRAY = '#afd7ff';
 
 const HINTS = [
   ['/', 'commands'],

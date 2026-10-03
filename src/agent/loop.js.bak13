@@ -8,7 +8,6 @@ import { currentSessionId, getProject, loadMessages, isSoloOnly } from './sessio
 import { getTasks } from './tasks.js';
 import { startTurn, recordUsage } from './usage.js';
 import { route } from './router.js';
-import { readMemoryDigest } from './memory.js';
 import { CONVO_PROMPT, LIGHT_PROMPT, agentPrompt, buildContext } from './prompts.js';
 
 const LIST_COMMANDS = ['list_commands','list_fs_commands','list_web_commands','list_task_commands','list_memory_commands','list_meta_commands','list_subagent_commands'];
@@ -33,44 +32,46 @@ function buildSystem() {
 
 // messages = [{ role: 'user'|'assistant', content: string }]
 // onStep(kind, data) — optional progress callback: 'tool_call' | 'tool_result' | 'done' | 'thought'
-const LITE_NAMES = ['bash', 'read_file', 'write_file', 'edit_file', 'google_search', 'fetch', 'ask'];
-const LITE_TOOLS = toolDefs.filter((t) => LITE_NAMES.includes(t.function.name));
-const WEB_NAMES = ['google_search', 'fetch'];
-const WEB_BUDGET = 3;
-const RESULT_CAP = 1500;
+const CONVO_TOOLS = toolDefs.filter(t => ['google_search','fetch',...LIST_COMMANDS].includes(t.function.name))
 
-// shared by chat (conversation) and light modes: small prompt, small tool set, no agent prompt
-async function runLite(routed, sessionId, onStep, system) {
-  const context = buildContext({ userName: currentUserName(), insight: routed.insight, recent: routed.recentMessages, memory: readMemoryDigest({ prefsOnly: true }) });
+async function runConversation(routed, sessionId, onStep) {
+  const context = buildContext({ userName: currentUserName(), insight: routed.insight, recent: routed.recentMessages });
   const messages = [{ role: 'user', content: context + routed.query }];
-  let webCalls = 0;
-  let budgetNoted = false;
+  for (let step = 0; step < 3; step++) {
+    const { text, toolCalls, message, usage } = await chatWithTools(messages, { system: CONVO_PROMPT, tools: CONVO_TOOLS });
+    if (sessionId) recordUsage(sessionId, usage);
+    if (!toolCalls.length) {
+      const out = (text || '').trim();
+      return!out || out.includes('[[AGENT]]')? null : out;
+    }
+    messages.push(message);
+    for (const call of toolCalls) {
+      onStep?.('tool_call', call);
+      const ok = ['google_search','fetch',...LIST_COMMANDS].includes(call.name);
+      let result = ok? await runTool(call.name, call.args) : 'Error: tool not available in chat mode';
+      onStep?.('tool_result', { call, result });
+      messages.push({ role: 'tool', tool_call_id: call.id, content: String(result) });
+    }
+  }
+  return null;
+}
+const LIGHT_TOOLS = toolDefs.filter((t) => ['bash', 'read_file', 'write_file', 'edit_file'].includes(t.function.name));
+
+async function runLight(routed, sessionId, onStep) {
+  const context = buildContext({ userName: currentUserName(), insight: routed.insight, recent: routed.recentMessages });
+  const messages = [{ role: 'user', content: context + routed.query }];
   for (let step = 0; step < 8; step++) {
-    if (webCalls >= WEB_BUDGET && !budgetNoted) {
-        messages.push({ role: 'user', content: '(web budget used up. answer now with what you found and say plainly what you could not confirm. do not guess.)' });
-        budgetNoted = true;
-      }
-      const { text, toolCalls, message, usage } = await chatWithTools(messages, { system, tools: webCalls >= WEB_BUDGET ? LITE_TOOLS.filter((t) => !WEB_NAMES.includes(t.function.name)) : LITE_TOOLS });
+    const { text, toolCalls, message, usage } = await chatWithTools(messages, { system: LIGHT_PROMPT, tools: LIGHT_TOOLS });
     if (sessionId) recordUsage(sessionId, usage);
     if (!toolCalls.length) {
       const out = (text || '').trim();
       return !out || out.includes('[[AGENT]]') ? null : out;
     }
     messages.push(message);
-    const askCall = toolCalls.find((c) => c.name === 'ask');
-    if (askCall) {
-      onStep?.('tool_call', askCall);
-      const result = await runTool(askCall.name, askCall.args);
-      onStep?.('tool_result', { call: askCall, result });
-      return JSON.parse(result);
-    }
     for (const call of toolCalls) {
       onStep?.('tool_call', call);
-      const ok = LITE_NAMES.includes(call.name);
-      let result = ok ? await runTool(call.name, call.args) : 'Error: tool not available here';
-      if (WEB_NAMES.includes(call.name)) webCalls++;
-      result = String(result);
-      if (result.length > RESULT_CAP) result = result.slice(0, RESULT_CAP) + '\n...[truncated]';
+      const ok = LIGHT_TOOLS.some((t) => t.function.name === call.name);
+      const result = ok ? await runTool(call.name, call.args) : 'Error: tool not available in light mode';
       onStep?.('tool_result', { call, result });
       messages.push({ role: 'tool', tool_call_id: call.id, content: String(result) });
     }
@@ -94,7 +95,7 @@ export async function runAgent(userMessage, { onStep, maxSteps, forceAgent } = {
 
   // conversation mode: tiny prompt, no tools, no thought step
   if (routed.route === 'light') {
-    const reply = await runLite(routed, sessionId, onStep, LIGHT_PROMPT);
+    const reply = await runLight(routed, sessionId, onStep);
     if (reply) {
       onStep?.('done', reply);
       return reply;
@@ -103,7 +104,7 @@ export async function runAgent(userMessage, { onStep, maxSteps, forceAgent } = {
   }
 
   if (routed.route === 'conversation') {
-    const reply = await runLite(routed, sessionId, onStep, CONVO_PROMPT);
+    const reply = await runConversation(routed, sessionId, onStep);
     if (reply) {
       onStep?.('done', reply);
       return reply;
@@ -140,12 +141,11 @@ const lastAgent = [...recentMessages].reverse().find(m => m.role === 'agent');
 if (lastAgent) {
   history.push({ role: 'assistant', content: lastAgent.text.slice(0, 500) + "..." });
 }
-  const context = buildContext({ userName: currentUserName(), insight: routed.insight, dataContent: project.dataContent, taskSummary: project.taskSummary, memory: readMemoryDigest() });
+  const context = buildContext({ userName: currentUserName(), insight: routed.insight, dataContent: project.dataContent, taskSummary: project.taskSummary });
   const messages = [...history, { role: 'user', content: context + userMessage }];
 
   const MAX_BLANK_RETRIES = 3; // independent of effectiveMaxSteps — don't silently burn the whole step budget on invisible retries
   let blankRetries = 0;
-  let stallNudges = 0;
 
   for (let step = 0; step < effectiveMaxSteps; step++) {
     const { text, toolCalls, message, usage } = await chatWithTools(messages, { system, tools: pickTools() });
@@ -192,13 +192,6 @@ if (lastAgent) {
         }
         onStep?.('done', fallback);
         return fallback;
-      }
-      if (stallNudges < 2 && step < effectiveMaxSteps - 1 && !messages.some((m) => m.role === 'tool') && !text.trim().slice(-160).includes('?') && /\b(i'll|i will|let me|going to|gonna|about to|setting (it )?up)\b/i.test(text)) {
-        stallNudges++;
-        onStep?.('stall_nudge', { attempt: stallNudges, step });
-        messages.push(message);
-        messages.push({ role: 'user', content: '(you announced a plan but made no tool call. the instruction was clear, so do it now with your tools. only ask if there is a real fork.)' });
-        continue;
       }
       onStep?.('done', text);
       return text;

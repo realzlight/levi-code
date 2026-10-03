@@ -377,31 +377,8 @@ defineCommand({
   }
 });
 
-defineCommand({
-  name: 'end',
-  description: 'Compact, then permanently delete the current session',
-  args: [{ name: 'confirm', rest: true }],
-  run: async (args, ctx) => {
-    const typed = (typeof args === 'string' ? args : Array.isArray(args) ? args.join(' ') : Object.values(args || {}).join(' '))
-      .toLowerCase().replace(/\s+/g, ' ').trim();
-    const { currentSessionId, getTitle, getProject, deleteSession } = await sessionMod();
-    const id = currentSessionId();
-    if (!id) return ctx.print('No active session to end.');
-    const anyway = typed === 'i want to delete anyway';
-    if (typed !== 'i want to delete' && !anyway) {
-      const title = getTitle(id);
-      return ctx.print('This permanently deletes SESSION-' + id + (title ? ' "' + title + '"' : '') + '. /compact runs first so your memory is saved.\nTo confirm, type exactly: /end i want to delete');
-    }
-    if (!anyway) {
-      const { compact } = await import('../agent/compact.js');
-      ctx.print('Compacting first...');
-      const result = await compact(id, getProject(id), { force: true });
-      if (!(result && (result.ok || result.skipped))) {
-        return ctx.print('Compaction failed: ' + (result?.error || 'unknown error') + '. Nothing was deleted.\nTo delete without compacting, type: /end i want to delete anyway');
-      }
-    }
-    if (!deleteSession(id)) return ctx.print('Could not delete SESSION-' + id + '.');
-    ctx.clear?.();
-    ctx.print('SESSION-' + id + ' deleted. Your next message starts a new session.');
-  }
-});
+
+
+
+
+
