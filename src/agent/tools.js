@@ -15,7 +15,7 @@ function resolve(p) {
 }
 export const CATEGORIES = {
   fs: ['read_file','write_file','edit_file','bash'],
-  web: ['google_search','serper_search','fetch'],
+  web: ['google_search','fetch'],
   tasks: ['add_task_cluster','get_tasks','set_task_done','edit_task','delete_task','delete_cluster','add_task_to_cluster'],
   memory: ['set_project','search_sessions','read_session'],
   meta: ['list_commands','list_fs_commands','list_web_commands','list_task_commands','list_memory_commands','list_meta_commands','list_subagent_commands','ask'],
@@ -97,10 +97,10 @@ export const toolDefs = [
     type: 'function',
     function: {
       name: 'set_project',
-      description: 'Mark the current session as working on a specific project. Creates ~/.levi/PROJECTS/<name>/ with DATA.md, PREFERENCE.md, PATTERNS.md if they do not exist, and points future memory writes/compaction at that folder instead of the global MEMORY/ files.',
+      description: 'Set the current session project. Creates ~/.levi/PROJECTS/<name>/ with DATA.md, PREFERENCE.md, PATTERNS.md; memory writes go there.',
       parameters: {
         type: 'object',
-        properties: { name: { type: 'string', description: 'Short lowercase project name, e.g. "pacman" or "calculator"' } },
+        properties: { name: { type: 'string', description: 'Short lowercase name' } },
         required: ['name']
       }
     }
@@ -109,12 +109,12 @@ export const toolDefs = [
     type: 'function',
     function: {
       name: 'add_task_cluster',
-      description: 'Create a new task cluster in the current session\'s TASK.md — a named, numbered group of related tasks/roadmap items. Use this when a request breaks down into multiple concrete steps worth tracking.',
+      description: 'Create a task cluster: a titled, numbered group of concrete subtasks in TASK.md. Use for multi-step work.',
       parameters: {
         type: 'object',
         properties: {
-          title: { type: 'string', description: 'Short title for this cluster, e.g. "Ghost AI" or "Scoring system"' },
-          tasks: { type: 'array', items: { type: 'string' }, description: 'List of task descriptions, one per subtask' }
+          title: { type: 'string', description: 'Short cluster title' },
+          tasks: { type: 'array', items: { type: 'string' }, description: 'One string per subtask' }
         },
         required: ['title', 'tasks']
       }
@@ -124,13 +124,13 @@ export const toolDefs = [
     type: 'function',
     function: {
       name: 'set_task_done',
-      description: 'Mark a task within a cluster done or not done, by cluster number and the task\'s 0-based index within that cluster. When every task in a cluster is marked done, the cluster auto-completes with a date and summary.',
+      description: 'Mark a task done or not done by cluster number and 0-based task index. A cluster auto-completes when all its tasks are done.',
       parameters: {
         type: 'object',
         properties: {
-          cluster: { type: 'number', description: 'Cluster number, e.g. 1' },
-          taskIndex: { type: 'number', description: '0-based index of the task within the cluster' },
-          done: { type: 'boolean', description: 'true to mark done, false to un-mark. Defaults to true.' }
+          cluster: { type: 'number', description: 'Cluster number' },
+          taskIndex: { type: 'number', description: '0-based task index' },
+          done: { type: 'boolean', description: 'Default true' }
         },
         required: ['cluster', 'taskIndex']
       }
@@ -206,10 +206,10 @@ export const toolDefs = [
     type: 'function',
     function: {
       name: 'search_sessions',
-      description: 'Search other sessions (title and content) for a keyword. Use when the user refers to something discussed "before", "earlier", "last time", or in another session, and it is not in the current buffer.',
+      description: 'Search other sessions by keyword. Use when the user refers to something from before or another session.',
       parameters: {
         type: 'object',
-        properties: { query: { type: 'string', description: 'Keyword or short phrase to search for' } },
+        properties: { query: { type: 'string', description: 'Keyword' } },
         required: ['query']
       }
     }
@@ -218,10 +218,10 @@ export const toolDefs = [
     type: 'function',
     function: {
       name: 'read_session',
-      description: 'Read another session\'s summary (if it has one) or a truncated view of its raw buffer, by session id. Use after search_sessions finds a likely match.',
+      description: 'Read another session summary or truncated buffer by id. Use after search_sessions.',
       parameters: {
         type: 'object',
-        properties: { id: { type: 'number', description: 'Session id, from search_sessions results' } },
+        properties: { id: { type: 'number', description: 'Session id' } },
         required: ['id']
       }
     }
@@ -230,12 +230,12 @@ export const toolDefs = [
     type: 'function',
     function: {
       name: 'spawn_subagent',
-      description: 'Delegate ONE concrete, self-contained task to a sub-agent (e.g. "edit movement.js and fix the collision bug, report what you changed"). Sub-agents have file/bash access only — no memory, no task management, no ability to ask questions. Give a specific, direct instruction, not a vague goal. Only use this for real, separable work — never for simple tasks you can just do yourself. Blocked if the user has solo mode on (/alone).',
+      description: 'Delegate ONE concrete, self-contained task to a sub-agent (file/bash only; no memory, tasks, or questions). Give exact file(s), change, and what to report. Blocked in solo mode (/alone).',
       parameters: {
         type: 'object',
         properties: {
-          role: { type: 'string', description: 'Short name for this sub-agent, e.g. "bugfixer" or "css-styler"' },
-          instruction: { type: 'string', description: 'The exact, concrete task for the sub-agent to do — specific file(s), specific change, specific report target. Not a vague goal.' }
+          role: { type: 'string', description: 'Short role name, e.g. "bugfixer"' },
+          instruction: { type: 'string', description: 'Exact task: file(s), change, what to report' }
         },
         required: ['role', 'instruction']
       }
@@ -253,11 +253,11 @@ export const toolDefs = [
     type: 'function',
     function: {
       name: 'message_subagent',
-      description: 'Send a follow-up instruction to a specific sub-agent by role, continuing its own conversation thread from where it left off. Use this instead of spawn_subagent when you want to follow up with one that already exists (e.g. ask it to fix something in its own report, or extend its task) rather than starting a new one.',
+      description: 'Send a follow-up to an existing sub-agent by role instead of spawning a duplicate.',
       parameters: {
         type: 'object',
         properties: {
-          role: { type: 'string', description: 'The exact role name of the existing sub-agent to message' },
+          role: { type: 'string', description: 'Existing sub-agent role' },
           message: { type: 'string', description: 'The follow-up instruction' }
         },
         required: ['role', 'message']
@@ -599,7 +599,7 @@ export function getAllCategoriesSummary() {
     usage: "Run list_<category>_commands to see tools with params, /commands for user commands",
     categories: {
       fs: "use list_fs_commands -> 4 tools",
-      web: "use list_web_commands -> 3 tools",
+      web: "use list_web_commands -> 2 tools",
       tasks: "use list_task_commands -> 7 tools",
       memory: "use list_memory_commands -> 3 tools",
       meta: "use list_meta_commands -> 8 tools",

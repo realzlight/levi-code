@@ -38,6 +38,16 @@ const LITE_TOOLS = toolDefs.filter((t) => LITE_NAMES.includes(t.function.name));
 const WEB_NAMES = ['google_search', 'fetch'];
 const WEB_BUDGET = 3;
 const RESULT_CAP = 1500;
+const AGENT_WEB_BUDGET = 6;
+const AGENT_WEB_CAP = 3000;
+async function runToolGuarded(call, state) {
+  if (!WEB_NAMES.includes(call.name)) return runTool(call.name, call.args);
+  if (state.web >= AGENT_WEB_BUDGET) return 'Error: web budget used up for this message. Answer with what you have and say plainly what you could not confirm.';
+  state.web++;
+  const r = String(await runTool(call.name, call.args));
+  return r.length > AGENT_WEB_CAP ? r.slice(0, AGENT_WEB_CAP) + '\n...[truncated]' : r;
+}
+
 
 // shared by chat (conversation) and light modes: small prompt, small tool set, no agent prompt
 async function runLite(routed, sessionId, onStep, system) {
@@ -146,6 +156,7 @@ if (lastAgent) {
   const MAX_BLANK_RETRIES = 3; // independent of effectiveMaxSteps — don't silently burn the whole step budget on invisible retries
   let blankRetries = 0;
   let stallNudges = 0;
+  const webState = { web: 0 };
 
   for (let step = 0; step < effectiveMaxSteps; step++) {
     const { text, toolCalls, message, usage } = await chatWithTools(messages, { system, tools: pickTools() });
@@ -220,7 +231,7 @@ if (lastAgent) {
       onStep?.('tool_call', call);
       const result = call.name === 'think'
         ? await think(call.args, { projectName, sessionId })
-        : await runTool(call.name, call.args);
+        : await runToolGuarded(call, webState);
       const lc = call.name.match(/^list_(\w+)_commands$/);
       if (lc) for (const n of CATEGORIES[lc[1] === 'task' ? 'tasks' : lc[1]] || []) unlocked.add(n);
       onStep?.('tool_result', { call, result });
