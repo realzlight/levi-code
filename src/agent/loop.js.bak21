@@ -15,7 +15,7 @@ const LIST_COMMANDS = ['list_commands','list_fs_commands','list_web_commands','l
 const TRIVIAL = new Set(['bash','read_file','write_file','edit_file',...LIST_COMMANDS]);
 
 
-const BASE_TOOLS = [...toolDefs.filter((t) => TRIVIAL.has(t.function.name) || ['ask', 'remember'].includes(t.function.name)), thinkToolDef(toolDefs[0])];
+const BASE_TOOLS = [...toolDefs.filter((t) => TRIVIAL.has(t.function.name) || t.function.name === 'ask'), thinkToolDef(toolDefs[0])];
 
 function currentUserName() {
   try {
@@ -33,7 +33,7 @@ function buildSystem() {
 
 // messages = [{ role: 'user'|'assistant', content: string }]
 // onStep(kind, data) — optional progress callback: 'tool_call' | 'tool_result' | 'done' | 'thought'
-const LITE_NAMES = ['bash', 'read_file', 'write_file', 'edit_file', 'google_search', 'fetch', 'ask', 'remember'];
+const LITE_NAMES = ['bash', 'read_file', 'write_file', 'edit_file', 'google_search', 'fetch', 'ask'];
 const LITE_TOOLS = toolDefs.filter((t) => LITE_NAMES.includes(t.function.name));
 const WEB_NAMES = ['google_search', 'fetch'];
 const WEB_BUDGET = 3;

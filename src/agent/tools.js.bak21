@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { execa } from 'execa';
-import { currentSessionId, setProject, searchSessions, readSessionOverview, isSoloOnly, getProject } from './session.js';
+import { currentSessionId, setProject, searchSessions, readSessionOverview, isSoloOnly } from './session.js';
 import { runSubAgent } from './subagent.js';
 import { upsertSubAgent, getSubAgent, loadRegistry } from './subagent-registry.js';
 import { recordUsage } from './usage.js';
@@ -327,21 +327,6 @@ export const toolDefs = [
         required: ['url']
       }
     }
-  },
-  {
-    type: 'function',
-    function: {
-      name: 'remember',
-      description: 'Save one durable fact to memory. Picks the right file (project or global) and skips duplicates.',
-      parameters: {
-        type: 'object',
-        properties: {
-          kind: { type: 'string', enum: ['user', 'preference', 'pattern', 'project'], description: 'user=who they are, preference=how they want things, pattern=recurring habit, project=project facts' },
-          fact: { type: 'string', description: 'One short fact' }
-        },
-        required: ['kind', 'fact']
-      }
-    }
   }
 ];
 
@@ -398,28 +383,6 @@ if (name === 'list_commands' || name === 'list_fs_commands' || name === 'list_we
 
   return `Tools [${name}] now loaded, call them directly:\n${tools}`;
 }
-    if (name === 'remember') {
-      const kind = String(args.kind || '').toLowerCase();
-      const fact = String(args.fact || '').replace(/\s+/g, ' ').trim().slice(0, 240);
-      if (!fact) return 'Error: fact required';
-      if (!['user', 'preference', 'pattern', 'project'].includes(kind)) return 'Error: kind must be user, preference, pattern, or project';
-      const sid = currentSessionId();
-      const project = sid ? getProject(sid) : null;
-      if (kind === 'project' && !project) return 'Error: no project set for this session. Use set_project first, or save as user or preference.';
-      const home = path.join(os.homedir(), '.levi');
-      const fileName = { user: 'USER.md', preference: 'PREFERENCE.md', pattern: 'PATTERNS.md', project: 'DATA.md' }[kind];
-      const dir = kind !== 'user' && project ? path.join(home, 'PROJECTS', project) : path.join(home, 'MEMORY');
-      const p = path.join(dir, fileName);
-      fs.mkdirSync(dir, { recursive: true });
-      const existing = fs.existsSync(p) ? fs.readFileSync(p, 'utf-8') : '';
-      if (existing.length > 8000) return `Error: ${fileName} is large (${existing.length} chars); condense it with edit_file first.`;
-      const norm = (s) => s.toLowerCase().replace(/^[-*\s]+/, '').replace(/\|.*$/, '').replace(/[^a-z0-9]+/g, ' ').trim();
-      if (existing.split('\n').some((l) => norm(l) === norm(fact))) return 'Already saved.';
-      const line = kind === 'pattern' ? `- ${fact} | status: unconfirmed | confidence: 0.5` : `- ${fact}`;
-      fs.appendFileSync(p, (existing && !existing.endsWith('\n') ? '\n' : '') + line + '\n');
-      return `Saved to ${path.relative(home, p)}: ${fact}`;
-    }
-
     if (name === 'bash') {
       const r = await execa(args.command, { shell: true, reject: false, all: true });
       return r.all || `(exit ${r.exitCode}, no output)`;
