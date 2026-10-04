@@ -6,6 +6,7 @@ import { currentSessionId, setProject, searchSessions, readSessionOverview, isSo
 import { runSubAgent } from './subagent.js';
 import { upsertSubAgent, getSubAgent, loadRegistry } from './subagent-registry.js';
 import { recordUsage } from './usage.js';
+import { RULES } from './prompts.js';
 import { addCluster, setTaskDone, getTasks, editTask, deleteTask, deleteCluster, addTaskToCluster } from './tasks.js';
 
 function resolve(p) {
@@ -86,12 +87,7 @@ export const toolDefs = [
     }
   },
 
-    { type: 'function', function: { name: 'list_fs_commands', description: 'Show FS tools with usage', parameters: { type: 'object', properties: {} } } },
-  { type: 'function', function: { name: 'list_web_commands', description: 'Show Web tools with usage', parameters: { type: 'object', properties: {} } } },
-  { type: 'function', function: { name: 'list_task_commands', description: 'Show Task tools with usage', parameters: { type: 'object', properties: {} } } },
-  { type: 'function', function: { name: 'list_memory_commands', description: 'Show Memory tools with usage', parameters: { type: 'object', properties: {} } } },
-  { type: 'function', function: { name: 'list_meta_commands', description: 'Show Meta tools with usage', parameters: { type: 'object', properties: {} } } },
-  { type: 'function', function: { name: 'list_subagent_commands', description: 'Show Sub-agent tools (only when solo OFF)', parameters: { type: 'object', properties: {} } } },
+  { type: 'function', function: { name: 'list_tools', description: 'Load a tool category and see its usage: fs, web, tasks, memory, meta, or subagent.', parameters: { type: 'object', properties: { category: { type: 'string', enum: ['fs', 'web', 'tasks', 'memory', 'meta', 'subagent'] } }, required: ['category'] } } },
 
   {
     type: 'function',
@@ -374,7 +370,15 @@ export async function runTool(name, args) {
       return `Edited ${p}`;
     }
 
-if (name === 'list_commands' || name === 'list_fs_commands' || name === 'list_web_commands' || name === 'list_task_commands' || name === 'list_memory_commands' || name === 'list_meta_commands' || name === 'list_subagent_commands') {
+if (name === 'list_tools') {
+      const cat = String(args?.category || '').toLowerCase().replace(/^task$/, 'tasks');
+      const alias = { fs: 'list_fs_commands', web: 'list_web_commands', tasks: 'list_task_commands', memory: 'list_memory_commands', meta: 'list_meta_commands', subagent: 'list_subagent_commands' }[cat];
+      if (!alias) return 'Error: category must be fs, web, tasks, memory, meta, or subagent';
+      const out = await runTool(alias, {});
+      return RULES[cat] && !out.startsWith('[SOLO') ? out + '\n\n' + RULES[cat] : out;
+    }
+
+    if (name === 'list_commands' || name === 'list_fs_commands' || name === 'list_web_commands' || name === 'list_task_commands' || name === 'list_memory_commands' || name === 'list_meta_commands' || name === 'list_subagent_commands') {
 
   // category filtering
   let filtered = toolDefs;

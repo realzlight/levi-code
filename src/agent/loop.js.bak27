@@ -45,7 +45,6 @@ const AGENT_WEB_CAP = 3000;
 const AGENT_OUTPUT_CAP = 8000;
 const OUTPUT_TOOLS = ['read_file', 'bash'];
 async function runToolGuarded(call, state) {
-  if (state.over) return 'Error: token budget for this message is used up. Answer now with what you have and say what you would check next.';
   if (!WEB_NAMES.includes(call.name)) {
     const out = await runTool(call.name, call.args);
     const s = typeof out === 'string' ? out : String(out);
@@ -146,8 +145,7 @@ export async function runAgent(userMessage, { onStep, maxSteps, forceAgent } = {
     pendingTasks = getTasks(sessionId).reduce((n, c) => n + (c.status === 'completed' ? 0 : c.tasks.filter((t) => !t.done).length), 0);
   }
   // a cap, not spend: agent mode is real work, so keep a high ceiling
-  const effectiveMaxSteps = maxSteps || Math.max(pendingTasks * 4 + 10, 30);
-  const tokenBudget = 40000 + pendingTasks * 10000;
+  const effectiveMaxSteps = maxSteps || Math.max(pendingTasks * 4 + 10, 100);
   const system = buildSystem();
   const SUB = ['spawn_subagent', 'list_subagents', 'message_subagent'];
   const unlocked = new Set();
@@ -174,24 +172,10 @@ if (lastAgent) {
   const MAX_BLANK_RETRIES = 3; // independent of effectiveMaxSteps — don't silently burn the whole step budget on invisible retries
   let blankRetries = 0;
   let stallNudges = 0;
-  const webState = { web: 0, tokens: 0, over: false, noted: false, overSteps: 0 };
+  const webState = { web: 0 };
 
   for (let step = 0; step < effectiveMaxSteps; step++) {
-    if (webState.over) {
-      webState.overSteps++;
-      if (webState.overSteps > 4) return 'Stopped: token budget (' + tokenBudget + ') reached for this message. Send another message to continue from here.';
-      if (!webState.noted) {
-        messages.push({ role: 'user', content: '(token budget for this message is used up. answer now with what you found and say what you would check next. do not call more tools.)' });
-        webState.noted = true;
-      }
-    }
-    const toolIdx = messages.map((m, i) => (m.role === 'tool' ? i : -1)).filter((i) => i >= 0);
-    for (const i of toolIdx.slice(0, -5)) {
-      if (String(messages[i].content).length > 300) messages[i] = { ...messages[i], content: String(messages[i].content).slice(0, 300) + '\n...[older result trimmed]' };
-    }
     const { text, toolCalls, message, usage } = await chatWithTools(messages, { system, tools: pickTools() });
-    webState.tokens += (usage && usage.inputTokens) || 0;
-    if (webState.tokens >= tokenBudget) webState.over = true;
     if (sessionId) recordUsage(sessionId, usage);
 
     if (!toolCalls.length) {

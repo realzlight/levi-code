@@ -2,15 +2,17 @@ import { chat } from './client.js';
 import { recordUsage } from './usage.js';
 
 // constant string on purpose: identical prefix every call, so it stays cacheable
-const ROUTER_SYSTEM = `Route a message for a coding assistant. Output ONLY JSON: {"route":"conversation"|"light"|"agent","insight":"max 15 words"}
-agent = needs tools or multi-step work: coding, files, bash/git, browser, MCP, deep multi-source research, planning, tasks, sub-agents, refers to a past conversation, or continues agent work (e.g. "yes", "the second one" when last_route is agent).
-light = ONE simple file or shell action needing no memory, project, task, or sub-agent state (make a dir, list files, print a file, run one command, one small edit).
+const ROUTER_SYSTEM = `Route a message for a coding assistant. Output ONLY JSON: {"route":"conversation"|"light"|"agent","tools":"none"|"memory"|"web"|"shell"|"tasks"|"all","insight":"max 15 words"}
+agent = needs tools or multi-step work: coding or builds, multi-file work, git, browser, MCP, deep multi-source research, planning, creating or reorganizing task plans, sub-agents, refers to a past conversation, or continues agent work (e.g. "yes", "the second one" when last_route is agent).
+light = a short job of up to 3 simple steps using only file or shell actions, one or two web lookups, or saving a fact, with no project, task, or sub-agent state (make a dir, print a file, one small edit, look something up and save it to a file, show or tick off task clusters). Use tools = all for mixed jobs.
 conversation = states a durable fact, habit, or preference to remember (saved with a small tool), casual chat, general questions, explanations, short follow-ups, and quick lookups answerable with one web search (news, prices, versions, game info).
-When unsure, choose agent.`;
+For conversation or light, also pick tools: none = plain chat or thanks, memory = user states a durable fact or preference, web = needs live info (news, prices, versions), shell = one file or shell action, tasks = show or tick off task clusters, all = unsure or mixed.
+When unsure, choose agent. Dont router to agent mode if the request can be full filled easily by the conversation route like basic file writing, searching, commanding in all one prompt`;
 
 const GREETING = /^(hi+|hey+|yo|hello|sup|thanks|thank you|thx|ty|cool|nice|lol|gm|gn|bye)[\s!.?]*$/i;
 const FILE_HINT = /```/; // only multi-line code skips the router call
 
+const TASK_VIEW = /^(show|list|check|see|get|what)\b.*\b(my|the|current) (task clusters?|tasks)\b/i;
 let lastRoute = 'conversation';
 
 export function resetRouter() {
@@ -28,6 +30,7 @@ current: ${query.slice(0, 600)}`;
     const data = JSON.parse(res.text.trim().replace(/^```json\s*|```\s*$/g, ''));
     return {
       route: ['conversation', 'light'].includes(data.route) ? data.route : 'agent',
+      tools: ['none', 'memory', 'web', 'shell', 'tasks', 'all'].includes(data.tools) ? data.tools : 'all',
       insight: String(data.insight || '').slice(0, 120)
     };
   } catch {
@@ -42,11 +45,12 @@ export async function route(query, { recentUser = [], forceAgent = false, sessio
 
   let r;
   if (forceAgent) r = { route: 'agent', insight: 'agent mode forced' };
-  else if (GREETING.test(q)) r = { route: 'conversation', insight: 'greeting or thanks' };
+  else if (GREETING.test(q)) r = { route: 'conversation', tools: 'none', insight: 'greeting or thanks' };
   else if (FILE_HINT.test(q)) r = { route: 'agent', insight: 'mentions code or file paths' };
-  else if (/^(remember|note that|from now on|btw|fyi)\b|\bi (always|never|usually|prefer|like|love|hate|enjoy|use|play|work (as|at|on)|live in) |\bmy (name is|favou?rite|setup is)/i.test(q)) r = { route: 'conversation', insight: 'durable fact or preference: save with remember' };
+  else if (/^(remember|note that|from now on|btw|fyi)\b|\bi (always|never|usually|prefer|like|love|hate|enjoy|use|play|work (as|at|on)|live in) |\bmy (name is|favou?rite|setup is)/i.test(q)) r = { route: 'conversation', tools: 'memory', insight: 'durable fact or preference: save with remember' };
+  else if (TASK_VIEW.test(q)) r = { route: 'light', tools: 'tasks', insight: 'show or update task clusters' };
   else r = await classify(q, recent, sessionId);
 
   lastRoute = r.route;
-  return { route: r.route, query: q, recentMessages: recent, insight: r.insight };
+  return { route: r.route, tools: r.tools || 'all', query: q, recentMessages: recent, insight: r.insight };
 }

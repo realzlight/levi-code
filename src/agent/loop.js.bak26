@@ -15,7 +15,7 @@ const LIST_COMMANDS = ['list_commands','list_fs_commands','list_web_commands','l
 const TRIVIAL = new Set(['bash','read_file','write_file','edit_file',...LIST_COMMANDS]);
 
 
-const BASE_TOOLS = [...toolDefs.filter((t) => TRIVIAL.has(t.function.name) || t.function.name === 'ask'), thinkToolDef(toolDefs[0])];
+const BASE_TOOLS = [...toolDefs.filter((t) => TRIVIAL.has(t.function.name) || ['ask', 'remember', 'list_tools'].includes(t.function.name)), thinkToolDef(toolDefs[0])];
 
 function currentUserName() {
   try {
@@ -33,8 +33,10 @@ function buildSystem() {
 
 // messages = [{ role: 'user'|'assistant', content: string }]
 // onStep(kind, data) — optional progress callback: 'tool_call' | 'tool_result' | 'done' | 'thought'
-const LITE_NAMES = ['bash', 'read_file', 'write_file', 'edit_file', 'google_search', 'fetch', 'ask'];
+const LITE_NAMES = ['bash', 'read_file', 'write_file', 'edit_file', 'google_search', 'fetch', 'ask', 'remember', 'get_tasks', 'set_task_done', 'add_task_cluster'];
 const LITE_TOOLS = toolDefs.filter((t) => LITE_NAMES.includes(t.function.name));
+const LITE_GROUPS = { none: [], memory: ['remember'], web: ['google_search', 'fetch'], shell: ['bash', 'read_file', 'write_file', 'edit_file'], all: ['bash', 'read_file', 'write_file', 'edit_file', 'google_search', 'fetch', 'ask', 'remember'], tasks: ['get_tasks', 'set_task_done', 'add_task_cluster'] };
+const MORE_TOOL = { type: 'function', function: { name: 'more_tools', description: 'Load all light tools (shell, files, web, ask, remember) when your current tools are not enough.', parameters: { type: 'object', properties: {} } } };
 const WEB_NAMES = ['google_search', 'fetch'];
 const WEB_BUDGET = 3;
 const RESULT_CAP = 1500;
@@ -55,12 +57,19 @@ async function runLite(routed, sessionId, onStep, system) {
   const messages = [{ role: 'user', content: context + routed.query }];
   let webCalls = 0;
   let budgetNoted = false;
+  let expanded = (routed.tools || 'all') === 'all';
+  const pickLite = () => {
+    const names = expanded ? LITE_GROUPS.all : (LITE_GROUPS[routed.tools] || LITE_GROUPS.all);
+    let tools = LITE_TOOLS.filter((t) => names.includes(t.function.name));
+    if (!expanded) tools = [...tools, MORE_TOOL];
+    return webCalls >= WEB_BUDGET ? tools.filter((t) => !WEB_NAMES.includes(t.function.name)) : tools;
+  };
   for (let step = 0; step < 8; step++) {
     if (webCalls >= WEB_BUDGET && !budgetNoted) {
         messages.push({ role: 'user', content: '(web budget used up. answer now with what you found and say plainly what you could not confirm. do not guess.)' });
         budgetNoted = true;
       }
-      const { text, toolCalls, message, usage } = await chatWithTools(messages, { system, tools: webCalls >= WEB_BUDGET ? LITE_TOOLS.filter((t) => !WEB_NAMES.includes(t.function.name)) : LITE_TOOLS });
+      const { text, toolCalls, message, usage } = await chatWithTools(messages, { system, tools: pickLite() });
     if (sessionId) recordUsage(sessionId, usage);
     if (!toolCalls.length) {
       const out = (text || '').trim();
@@ -77,7 +86,7 @@ async function runLite(routed, sessionId, onStep, system) {
     for (const call of toolCalls) {
       onStep?.('tool_call', call);
       const ok = LITE_NAMES.includes(call.name);
-      let result = ok ? await runTool(call.name, call.args) : 'Error: tool not available here';
+      let result = call.name === 'more_tools' ? (expanded = true, 'All light tools are now available.') : ok ? await runTool(call.name, call.args) : 'Error: tool not available here';
       if (WEB_NAMES.includes(call.name)) webCalls++;
       result = String(result);
       if (result.length > RESULT_CAP) result = result.slice(0, RESULT_CAP) + '\n...[truncated]';
@@ -232,7 +241,7 @@ if (lastAgent) {
       const result = call.name === 'think'
         ? await think(call.args, { projectName, sessionId })
         : await runToolGuarded(call, webState);
-      const lc = call.name.match(/^list_(\w+)_commands$/);
+      const lc = call.name === 'list_tools' ? [null, String(call.args?.category || '').toLowerCase()] : call.name.match(/^list_(\w+)_commands$/);
       if (lc) for (const n of CATEGORIES[lc[1] === 'task' ? 'tasks' : lc[1]] || []) unlocked.add(n);
       onStep?.('tool_result', { call, result });
       messages.push({ role: 'tool', tool_call_id: call.id, content: String(result) });
