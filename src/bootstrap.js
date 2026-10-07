@@ -59,6 +59,10 @@ export function runBootstrap({ onProgress = null, quiet = false } = {}) {
         fetch: {
           command: "npx",
           args: ["-y", "@modelcontextprotocol/server-fetch"]
+        },
+        github: {
+          url: "https://api.githubcopilot.com/mcp/",
+          headers: {}
         }
       }
     }, null, 2),

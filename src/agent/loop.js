@@ -33,9 +33,9 @@ function buildSystem() {
 
 // messages = [{ role: 'user'|'assistant', content: string }]
 // onStep(kind, data) — optional progress callback: 'tool_call' | 'tool_result' | 'done' | 'thought'
-const LITE_NAMES = ['bash', 'read_file', 'write_file', 'edit_file', 'google_search', 'fetch', 'ask', 'remember', 'get_tasks', 'set_task_done', 'add_task_cluster'];
+const LITE_NAMES = ['bash', 'read_file', 'write_file', 'edit_file', 'google_search', 'fetch', 'ask', 'remember', 'get_tasks', 'set_task_done', 'add_task_cluster', 'mcp_search', 'mcp_list'];
 const LITE_TOOLS = toolDefs.filter((t) => LITE_NAMES.includes(t.function.name));
-const LITE_GROUPS = { none: [], memory: ['remember'], web: ['google_search', 'fetch'], shell: ['bash', 'read_file', 'write_file', 'edit_file', 'ask'], all: ['bash', 'read_file', 'write_file', 'edit_file', 'google_search', 'fetch', 'ask', 'remember'], tasks: ['get_tasks', 'set_task_done', 'add_task_cluster'] };
+const LITE_GROUPS = { none: [], memory: ['remember'], web: ['google_search', 'fetch'], shell: ['bash', 'read_file', 'write_file', 'edit_file', 'ask'], all: ['bash', 'read_file', 'write_file', 'edit_file', 'google_search', 'fetch', 'ask', 'remember'], tasks: ['get_tasks', 'set_task_done', 'add_task_cluster'], mcp: ['mcp_search', 'mcp_list', 'bash', 'read_file', 'write_file', 'edit_file', 'ask'] };
 const MORE_TOOL = { type: 'function', function: { name: 'more_tools', description: 'Load all light tools (shell, files, web, ask, remember) when your current tools are not enough.', parameters: { type: 'object', properties: {} } } };
 const WEB_NAMES = ['google_search', 'fetch'];
 const WEB_BUDGET = 3;
@@ -62,15 +62,22 @@ async function runToolGuarded(call, state) {
 
 // shared by chat (conversation) and light modes: small prompt, small tool set, no agent prompt
 async function runLite(routed, sessionId, onStep, system) {
-  const context = buildContext({ userName: currentUserName(), insight: routed.insight, recent: routed.recentMessages, exchange: routed.exchange, memory: readMemoryDigest({ prefsOnly: true }) });
+  const mcpNames = routed.mcp ? getMcpNames() : undefined;
+  const mcpHint = typeof routed.mcp === 'string' ? `use MCP server "${routed.mcp}" — call mcp_search("${routed.mcp}") to load its tools` : undefined;
+  const context = buildContext({ userName: currentUserName(), insight: routed.insight, hint: mcpHint, recent: routed.recentMessages, exchange: routed.exchange, memory: readMemoryDigest({ prefsOnly: true }), mcpServers: mcpNames });
   const messages = [{ role: 'user', content: context + routed.query }];
   let webCalls = 0;
   let budgetNoted = false;
   let liteTokens = 0;
   let expanded = (routed.tools || 'all') === 'all';
+  if (routed.mcp && !mcpMod) mcpMod = await import('../mcp.js');
+  if (mcpMod) mcpMod.resetLoadedMcp();
+  const mcpToolNames = routed.mcp ? ['mcp_search', 'mcp_list'] : [];
   const pickLite = () => {
-    const names = expanded ? LITE_GROUPS.all : (LITE_GROUPS[routed.tools] || LITE_GROUPS.all);
+    let names = expanded ? LITE_GROUPS.all : (LITE_GROUPS[routed.tools] || LITE_GROUPS.all);
+    if (routed.mcp && !expanded) names = [...new Set([...names, ...mcpToolNames])];
     let tools = LITE_TOOLS.filter((t) => names.includes(t.function.name));
+    if (mcpMod) tools = [...tools, ...mcpMod.getLoadedMcpDefs()];
     if (!expanded) tools = [...tools, MORE_TOOL];
     return webCalls >= WEB_BUDGET ? tools.filter((t) => !WEB_NAMES.includes(t.function.name)) : tools;
   };
@@ -101,7 +108,7 @@ async function runLite(routed, sessionId, onStep, system) {
     }
     for (const call of toolCalls) {
       onStep?.('tool_call', call);
-      const ok = LITE_NAMES.includes(call.name);
+      const ok = LITE_NAMES.includes(call.name) || (mcpMod && mcpMod.isMcpTool(call.name));
       let result = call.name === 'more_tools' ? (expanded = true, 'All light tools are now available.') : ok ? await runTool(call.name, call.args) : 'Error: tool not available here';
       if (WEB_NAMES.includes(call.name)) webCalls++;
       result = String(result);
@@ -131,6 +138,13 @@ function hasCustomMcp() {
   } catch {
     return false;
   }
+}
+
+function getMcpNames() {
+  try {
+    const c = JSON.parse(fs.readFileSync(path.join(os.homedir(), '.levi', 'mcp.json'), 'utf-8'));
+    return Object.entries(c.mcpServers || {}).filter(([, v]) => !v.disabled && !v._disabled).map(([k]) => k);
+  } catch { return []; }
 }
 
 export async function runAgent(userMessage, { onStep, maxSteps, forceAgent } = {}) {
@@ -186,7 +200,7 @@ export async function runAgent(userMessage, { onStep, maxSteps, forceAgent } = {
   if (customMcp && !mcpMod) mcpMod = await import('../mcp.js');
   if (mcpMod) mcpMod.resetLoadedMcp();
   const pickTools = () => {
-    const all = [...BASE_TOOLS, ...toolDefs.filter((t) => unlocked.has(t.function.name) && !BASE_TOOLS.includes(t)), ...(customMcp ? toolDefs.filter((t) => t.function.name === 'mcp_search') : []), ...(mcpMod ? mcpMod.getLoadedMcpDefs() : [])];
+    const all = [...BASE_TOOLS, ...toolDefs.filter((t) => unlocked.has(t.function.name) && !BASE_TOOLS.includes(t)), ...(customMcp ? toolDefs.filter((t) => t.function.name === 'mcp_search' || t.function.name === 'mcp_list') : []), ...(mcpMod ? mcpMod.getLoadedMcpDefs() : [])];
     return isSoloOnly() ? all.filter((t) => !SUB.includes(t.function?.name || t.name)) : all;
   };
   // give the tool-calling loop real conversation history, not just a hint via
@@ -200,7 +214,9 @@ export async function runAgent(userMessage, { onStep, maxSteps, forceAgent } = {
     else history.push({ role, content: m.text });
   }
   while (history.length && history[0].role === 'assistant') history.shift();
-  const context = buildContext({ userName: currentUserName(), insight: routed.insight, dataContent: project.dataContent, taskSummary: project.taskSummary, hint: customMcp ? 'custom MCP tools exist: call mcp_search(query) to find and load them' : '', memory: readMemoryDigest() });
+  const mcpNames = customMcp ? getMcpNames() : undefined;
+  const mcpHint = typeof routed.mcp === 'string' ? `use MCP server "${routed.mcp}" — call mcp_search("${routed.mcp}") to load its tools` : undefined;
+  const context = buildContext({ userName: currentUserName(), insight: routed.insight, dataContent: project.dataContent, taskSummary: project.taskSummary, hint: mcpHint, memory: readMemoryDigest(), mcpServers: mcpNames });
   const messages = [...history];
   const cur = context + userMessage;
   if (messages.length && messages[messages.length - 1].role === 'user') messages[messages.length - 1] = { role: 'user', content: messages[messages.length - 1].content + '\n\n' + cur };

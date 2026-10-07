@@ -422,7 +422,8 @@ defineCommand({
     const connected = connectedServers();
     const lines = Object.entries(cfg.mcpServers||{}).map(([k,v])=>{
       const st = v._disabled? '❌ disabled' : connected.includes(k)? '🟢 connected' : '⚪ idle';
-      return `${st} ${k} -> ${v.command} ${v.args.join(' ')}`;
+      const target = v.url ? v.url : `${v.command || 'npx'} ${(v.args||[]).join(' ')}`;
+      return `${st} ${k} -> ${target}`;
     });
     ctx.print(lines.join('\n') || 'No MCP servers');
   }

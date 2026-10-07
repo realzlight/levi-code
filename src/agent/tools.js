@@ -19,8 +19,9 @@ export const CATEGORIES = {
   web: ['google_search','fetch'],
   tasks: ['add_task_cluster','get_tasks','set_task_done','edit_task','delete_task','delete_cluster','add_task_to_cluster'],
   memory: ['set_project','search_sessions','read_session'],
-  meta: ['list_commands','list_fs_commands','list_web_commands','list_task_commands','list_memory_commands','list_meta_commands','list_subagent_commands','ask'],
-  subagent: ['spawn_subagent','list_subagents','message_subagent']
+  meta: ['list_commands','list_fs_commands','list_web_commands','list_task_commands','list_memory_commands','list_meta_commands','list_subagent_commands','list_mcp_commands','ask'],
+  subagent: ['spawn_subagent','list_subagents','message_subagent'],
+  mcp: ['mcp_search','mcp_list']
 };
 
 function buildUsage(fn) {
@@ -87,7 +88,7 @@ export const toolDefs = [
     }
   },
 
-  { type: 'function', function: { name: 'list_tools', description: 'Load a tool category and see its usage: fs, web, tasks, memory, meta, or subagent.', parameters: { type: 'object', properties: { category: { type: 'string', enum: ['fs', 'web', 'tasks', 'memory', 'meta', 'subagent'] } }, required: ['category'] } } },
+  { type: 'function', function: { name: 'list_tools', description: 'Load a tool category and see its usage: fs, web, tasks, memory, meta, subagent, or mcp.', parameters: { type: 'object', properties: { category: { type: 'string', enum: ['fs', 'web', 'tasks', 'memory', 'meta', 'subagent', 'mcp'] } }, required: ['category'] } } },
 
   {
     type: 'function',
@@ -339,7 +340,8 @@ export const toolDefs = [
       }
     }
   },
-  { type: 'function', function: { name: 'mcp_search', description: 'Search custom MCP tools by keyword and load the matches so you can call them.', parameters: { type: 'object', properties: { query: { type: 'string' } }, required: ['query'] } } }
+  { type: 'function', function: { name: 'mcp_search', description: 'Search custom MCP tools by keyword and load the matches so you can call them.', parameters: { type: 'object', properties: { query: { type: 'string' } }, required: ['query'] } } },
+  { type: 'function', function: { name: 'mcp_list', description: 'List all configured MCP servers and their connection status. No tools are loaded — use mcp_search to load tools.', parameters: { type: 'object', properties: {} } } }
 ];
 
 export async function runTool(name, args) {
@@ -376,15 +378,23 @@ if (name === 'mcp_search') {
       return await searchMcp(args?.query);
     }
 
+    if (name === 'mcp_list') {
+      const { getMcpServerNames, connectedServers } = await import('../mcp.js');
+      const names = getMcpServerNames();
+      const connected = connectedServers();
+      if (!names.length) return 'No MCP servers configured. Add with /mcp:add <name> <command> [args]';
+      return names.map(n => `${connected.includes(n) ? '🟢' : '⚪'} ${n}`).join('\n');
+    }
+
     if (name === 'list_tools') {
       const cat = String(args?.category || '').toLowerCase().replace(/^task$/, 'tasks');
-      const alias = { fs: 'list_fs_commands', web: 'list_web_commands', tasks: 'list_task_commands', memory: 'list_memory_commands', meta: 'list_meta_commands', subagent: 'list_subagent_commands' }[cat];
-      if (!alias) return 'Error: category must be fs, web, tasks, memory, meta, or subagent';
+      const alias = { fs: 'list_fs_commands', web: 'list_web_commands', tasks: 'list_task_commands', memory: 'list_memory_commands', meta: 'list_meta_commands', subagent: 'list_subagent_commands', mcp: 'list_mcp_commands' }[cat];
+      if (!alias) return 'Error: category must be fs, web, tasks, memory, meta, subagent, or mcp';
       const out = await runTool(alias, {});
       return RULES[cat] && !out.startsWith('[SOLO') ? out + '\n\n' + RULES[cat] : out;
     }
 
-    if (name === 'list_commands' || name === 'list_fs_commands' || name === 'list_web_commands' || name === 'list_task_commands' || name === 'list_memory_commands' || name === 'list_meta_commands' || name === 'list_subagent_commands') {
+    if (name === 'list_commands' || name === 'list_fs_commands' || name === 'list_web_commands' || name === 'list_task_commands' || name === 'list_memory_commands' || name === 'list_meta_commands' || name === 'list_subagent_commands' || name === 'list_mcp_commands') {
 
   // category filtering
   let filtered = toolDefs;
@@ -649,8 +659,9 @@ export function getAllCategoriesSummary() {
       web: "use list_web_commands -> 2 tools",
       tasks: "use list_task_commands -> 7 tools",
       memory: "use list_memory_commands -> 3 tools",
-      meta: "use list_meta_commands -> 8 tools",
+      meta: "use list_meta_commands -> 9 tools",
       subagent: solo? "HIDDEN (solo ON) - /solo off to enable" : "use list_subagent_commands -> 3 tools",
+      mcp: "use list_mcp_commands -> 2 tools (mcp_search, mcp_list)",
       user: "use list_commands -> slash commands"
     }
   };

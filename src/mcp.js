@@ -33,6 +33,20 @@ export function getSearchApiKey() {
 }
 
 /**
+ * Read the GitHub token from ~/.levi/config.json auth (obtained during login).
+ * Returns the token string or null.
+ */
+export function getGithubToken() {
+  try {
+    if (!fs.existsSync(CONFIG_PATH)) return process.env.GITHUB_TOKEN || null;
+    const cfg = JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf-8'));
+    return cfg.auth?.token || process.env.GITHUB_TOKEN || null;
+  } catch {
+    return process.env.GITHUB_TOKEN || null;
+  }
+}
+
+/**
  * Store a Serper API key into ~/.levi/config.json.
  * Never creates config.json or ~/.levi — returns an error string if missing.
  */
@@ -138,7 +152,7 @@ export async function initMcp({ verbose = false } = {}) {
   const serperKey = getSearchApiKey();
 
   for (const [serverName, serverCfg] of Object.entries(servers)) {
-    if (serverCfg.disabled) continue;
+    if (serverCfg.disabled || serverCfg._disabled) continue;
     if (clients.has(serverName)) continue;
 
     // Skip serper if no API key is configured
@@ -151,25 +165,48 @@ export async function initMcp({ verbose = false } = {}) {
       serverCfg.env = { ...serverCfg.env, SERPER_API_KEY: envKey };
     }
 
+    // Inject GitHub auth token from config.json into headers
+    if (serverName === 'github' && serverCfg.url) {
+      const ghToken = serverCfg.headers?.Authorization ? null : getGithubToken();
+      if (ghToken) {
+        serverCfg.headers = { ...serverCfg.headers, Authorization: `Bearer ${ghToken}` };
+      } else if (!serverCfg.headers?.Authorization) {
+        if (verbose) console.log(`[mcp] Skipping ${serverName} — no GitHub token. Login first.`);
+        continue;
+      }
+    }
+
     try {
-      const resolved = resolveServerCommand(serverName, serverCfg);
-      if (verbose) {
-        console.log(`[mcp] Connecting to ${serverName} (${resolved.command} ${resolved.args.join(' ').slice(0, 60)})...`);
+      let transport, client;
+
+      if (serverCfg.url) {
+        // --- REMOTE (Streamable HTTP / SSE fallback) ---
+        if (verbose) console.log(`[mcp] Connecting to ${serverName} (${serverCfg.url})...`);
+        const { StreamableHTTPClientTransport } = await import('@modelcontextprotocol/sdk/client/streamableHttp.js').catch(async () => {
+          const mod = await import('@modelcontextprotocol/sdk/client/sse.js');
+          return { StreamableHTTPClientTransport: mod.SSEClientTransport };
+        });
+        const headers = { ...(serverCfg.headers || {}) };
+        transport = new StreamableHTTPClientTransport(new URL(serverCfg.url), {
+          requestInit: { headers }
+        });
+        client = new Client({ name: `levi-${serverName}-client`, version: '1.0.0' }, { capabilities: {} });
+        await client.connect(transport);
+      } else {
+        // --- STDIO ---
+        const resolved = resolveServerCommand(serverName, serverCfg);
+        if (verbose) {
+          console.log(`[mcp] Connecting to ${serverName} (${resolved.command} ${resolved.args.join(' ').slice(0, 60)})...`);
+        }
+        const transportOpts = { command: resolved.command, args: resolved.args };
+        if (resolved.env || serverCfg.env) {
+          transportOpts.env = { ...process.env, ...(resolved.env || serverCfg.env) };
+        }
+        transport = new StdioClientTransport(transportOpts);
+        client = new Client({ name: `levi-${serverName}-client`, version: '1.0.0' }, { capabilities: {} });
+        await client.connect(transport);
       }
 
-      const transportOpts = { command: resolved.command, args: resolved.args };
-      // Pass env vars to child process
-      if (resolved.env || serverCfg.env) {
-        transportOpts.env = { ...process.env, ...(resolved.env || serverCfg.env) };
-      }
-
-      const transport = new StdioClientTransport(transportOpts);
-      const client = new Client(
-        { name: `levi-${serverName}-client`, version: '1.0.0' },
-        { capabilities: {} }
-      );
-
-      await client.connect(transport);
       clients.set(serverName, client);
 
       const listRes = await client.listTools();
@@ -229,7 +266,7 @@ export function isMcpTool(name) {
  */
 const INDEX_PATH = path.join(path.dirname(MCP_CONFIG_PATH), 'mcp-index.json');
 const STATIC_SERVER = { google_search: 'serper', serper_search: 'serper', fetch: 'fetch' };
-const STATIC_NAMES = ['serper', 'fetch', 'playwright'];
+const STATIC_NAMES = ['serper', 'fetch'];
 const connecting = new Map();
 const loadedMcp = new Set();
 
@@ -248,6 +285,16 @@ export function connectedServers() {
   return [...clients.keys()];
 }
 
+/** Returns just the names of enabled MCP servers from config, without connecting. */
+export function getMcpServerNames() {
+  try {
+    const config = loadMcpConfig();
+    return Object.entries(config.mcpServers || {})
+      .filter(([, v]) => !v.disabled && !v._disabled)
+      .map(([k]) => k);
+  } catch { return []; }
+}
+
 // connect exactly one configured server on demand
 async function ensureServer(serverName) {
   if (clients.has(serverName)) return true;
@@ -255,20 +302,47 @@ async function ensureServer(serverName) {
   const p = (async () => {
     const config = loadMcpConfig();
     const base = (config.mcpServers || {})[serverName];
-    if (!base || base.disabled) return false;
+    if (!base || base.disabled || base._disabled) return false;
     const serverCfg = { ...base };
     if (serverName === 'serper' || (serverCfg.args || []).join(' ').includes('serper')) {
       const envKey = serverCfg.env?.SERPER_API_KEY || getSearchApiKey();
       if (!envKey) return false;
       serverCfg.env = { ...serverCfg.env, SERPER_API_KEY: envKey };
     }
+    // Inject GitHub auth token from config.json into headers
+    if (serverName === 'github' && serverCfg.url) {
+      const ghToken = serverCfg.headers?.Authorization ? null : getGithubToken();
+      if (ghToken) {
+        serverCfg.headers = { ...serverCfg.headers, Authorization: `Bearer ${ghToken}` };
+      } else if (!serverCfg.headers?.Authorization) {
+        return false;
+      }
+    }
     try {
-      const resolved = resolveServerCommand(serverName, serverCfg);
-      const transportOpts = { command: resolved.command, args: resolved.args };
-      if (resolved.env || serverCfg.env) transportOpts.env = { ...process.env, ...(resolved.env || serverCfg.env) };
-      const transport = new StdioClientTransport(transportOpts);
-      const client = new Client({ name: `levi-${serverName}-client`, version: '1.0.0' }, { capabilities: {} });
-      await client.connect(transport);
+      let transport, client;
+
+      if (serverCfg.url) {
+        // --- REMOTE (Streamable HTTP / SSE fallback) ---
+        const { StreamableHTTPClientTransport } = await import('@modelcontextprotocol/sdk/client/streamableHttp.js').catch(async () => {
+          const mod = await import('@modelcontextprotocol/sdk/client/sse.js');
+          return { StreamableHTTPClientTransport: mod.SSEClientTransport };
+        });
+        const headers = { ...(serverCfg.headers || {}) };
+        transport = new StreamableHTTPClientTransport(new URL(serverCfg.url), {
+          requestInit: { headers }
+        });
+        client = new Client({ name: `levi-${serverName}-client`, version: '1.0.0' }, { capabilities: {} });
+        await client.connect(transport);
+      } else {
+        // --- STDIO ---
+        const resolved = resolveServerCommand(serverName, serverCfg);
+        const transportOpts = { command: resolved.command, args: resolved.args };
+        if (resolved.env || serverCfg.env) transportOpts.env = { ...process.env, ...(resolved.env || serverCfg.env) };
+        transport = new StdioClientTransport(transportOpts);
+        client = new Client({ name: `levi-${serverName}-client`, version: '1.0.0' }, { capabilities: {} });
+        await client.connect(transport);
+      }
+
       clients.set(serverName, client);
       const tools = (await client.listTools())?.tools || [];
       for (const tool of tools) mcpToolMap.set(tool.name, { client, serverName, originalName: tool.name, schema: tool });
@@ -311,7 +385,7 @@ export function getLoadedMcpDefs() {
 // keyword search over the custom MCP tool index; connects and loads only the matches
 export async function searchMcp(query) {
   const config = loadMcpConfig();
-  const names = Object.entries(config.mcpServers || {}).filter(([k, v]) => !v.disabled && !STATIC_NAMES.includes(k)).map(([k]) => k);
+  const names = Object.entries(config.mcpServers || {}).filter(([k, v]) => !v.disabled && !v._disabled && !STATIC_NAMES.includes(k)).map(([k]) => k);
   if (!names.length) return 'No custom MCP servers configured. Add servers in ~/.levi/mcp.json.';
   let idx = readIndex();
   for (const s of names) if (!idx[s]) await ensureServer(s);

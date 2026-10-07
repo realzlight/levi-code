@@ -1,509 +1,146 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
-import { fileURLToPath } from 'node:url';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-const LEVI_HOME = path.join(os.homedir(), '.levi');
-const MCP_CONFIG_PATH = path.join(LEVI_HOME, 'mcp.json');
-const CONFIG_PATH = path.join(LEVI_HOME, 'config.json');
+const MCP_FILE = path.join(os.homedir(), '.levi', 'mcp.json');
+export const MCP_INDEX_PATH = path.join(os.homedir(), '.levi', 'mcp-index.json');
 
-// Registry of connected clients and tools
-const clients = new Map(); // serverName -> Client
-const mcpToolMap = new Map(); // toolName -> { client, serverName, originalName, schema }
-let initialized = false;
+const clients = new Map(); // name -> { client, transport, defs }
+let mcpIndex = null;
 
-// --- Search API key helpers ---------------------------------------------------
-
-/**
- * Read the Serper API key from ~/.levi/config.json or environment.
- * Returns the key string or null. Never creates files.
- */
-export function getSearchApiKey() {
-  try {
-    if (!fs.existsSync(CONFIG_PATH)) return process.env.SERPER_API_KEY || null;
-    const cfg = JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf-8'));
-    return cfg.search?.api_key || cfg.search?.api || process.env.SERPER_API_KEY || null;
-  } catch {
-    return process.env.SERPER_API_KEY || null;
-  }
+function loadCfg() {
+  if (!fs.existsSync(MCP_FILE)) return { mcpServers: {} };
+  return JSON.parse(fs.readFileSync(MCP_FILE, 'utf-8'));
 }
 
-/**
- * Store a Serper API key into ~/.levi/config.json.
- * Never creates config.json or ~/.levi — returns an error string if missing.
- */
-export function setSearchApiKey(apiKey) {
-  if (!fs.existsSync(LEVI_HOME)) return 'Error: ~/.levi directory not found. Run levi first to bootstrap.';
-  if (!fs.existsSync(CONFIG_PATH)) return 'Error: ~/.levi/config.json not found. Run levi first to bootstrap.';
+export function connectedServers() { return [...clients.keys()]; }
 
-  try {
-    const cfg = JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf-8'));
-    cfg.search = {
-      provider: 'serper',
-      api_key: apiKey.trim()
-    };
-    fs.writeFileSync(CONFIG_PATH, JSON.stringify(cfg, null, 2));
-    initialized = false;
-    return null; // success
-  } catch (e) {
-    return `Error: ${e.message}`;
+function getTransport(serverCfg) {
+  // REMOTE MCP - new part
+  if (serverCfg.url) {
+    // dynamic import so you don't need to install if not used
+    return { type: 'remote', url: serverCfg.url, headers: serverCfg.headers || {} };
   }
-}
-
-// --- MCP config ---------------------------------------------------------------
-
-export function loadMcpConfig() {
-  if (fs.existsSync(MCP_CONFIG_PATH)) {
-    try {
-      return JSON.parse(fs.readFileSync(MCP_CONFIG_PATH, 'utf-8'));
-    } catch (e) {
-      console.error(`[mcp] Error reading ${MCP_CONFIG_PATH}: ${e.message}`);
-    }
-  }
-
+  // STDIO MCP - old
   return {
-    mcpServers: {
-      serper: {
-        command: "npx",
-        args: ["-y", "mcp-server-serper"],
-        env: { SERPER_API_KEY: "" }
-      },
-      fetch: {
-        command: "npx",
-        args: ["-y", "@modelcontextprotocol/server-fetch"]
-      }
-    }
+    type: 'stdio',
+    command: serverCfg.command,
+    args: serverCfg.args || [],
+    env: {...process.env,...(serverCfg.env || {}) }
   };
 }
 
-/**
- * Resolves transport params adapting for local Termux and node modules.
- */
-function resolveServerCommand(serverName, serverCfg) {
-  const rootDir = path.resolve(__dirname, '..');
-  const fetchPath = path.join(__dirname, 'fetch-server.js');
-  const everythingPath = path.join(rootDir, 'node_modules', '@modelcontextprotocol', 'server-everything', 'dist', 'index.js');
-  const everythingPath2 = path.join(rootDir, 'node_modules', '@modelcontextprotocol', 'server-everything', 'dist', 'everything.js');
-  const serperPath = path.join(rootDir, 'node_modules', 'mcp-server-serper', 'build', 'index.js');
+export async function ensureServer(name) {
+  if (clients.has(name)) return clients.get(name);
+  const cfg = loadCfg();
+  const serverCfg = cfg.mcpServers?.[name];
+  if (!serverCfg) throw new Error(`MCP server ${name} not found`);
+  if (serverCfg._disabled) throw new Error(`${name} disabled`);
 
-  const argsStr = (serverCfg.args || []).join(' ');
+  let transport, client;
 
-  // Serper MCP Server
-  if (serverName === 'serper' || argsStr.includes('serper')) {
-    if (fs.existsSync(serperPath)) {
-      return { command: 'node', args: [serperPath], env: serverCfg.env };
-    }
-  }
-
-  // Fetch MCP Server
-  if (serverName === 'fetch' || argsStr.includes('server-fetch')) {
-    if (fs.existsSync(fetchPath)) {
-      return { command: 'node', args: [fetchPath] };
-    }
-  }
-
-  // Everything MCP Server - bypass npx
-  if (serverName === 'everything' || argsStr.includes('server-everything')) {
-    if (fs.existsSync(everythingPath)) {
-      return { command: 'node', args: [everythingPath], env: serverCfg.env };
-    }
-    if (fs.existsSync(everythingPath2)) {
-      return { command: 'node', args: [everythingPath2], env: serverCfg.env };
-    }
-    const dir = path.join(rootDir, 'node_modules', '@modelcontextprotocol', 'server-everything', 'dist');
-    if (fs.existsSync(dir)) {
-      const file = fs.readdirSync(dir).find(f => f.endsWith('.js'));
-      if (file) return { command: 'node', args: [path.join(dir, file)], env: serverCfg.env };
-    }
-  }
-
-  return { command: serverCfg.command || 'npx', args: serverCfg.args || [] };
-}
-
-/**
- * Connect to all configured MCP servers and discover their tools.
- */
-export async function initMcp({ verbose = false } = {}) {
-  if (initialized) return getMcpTools();
-
-  const config = loadMcpConfig();
-  const servers = { ...(config.mcpServers || {}) };
-  delete servers.playwright;
-
-  // Inject Serper API key from config.json into environment
-  const serperKey = getSearchApiKey();
-
-  for (const [serverName, serverCfg] of Object.entries(servers)) {
-    if (serverCfg.disabled) continue;
-    if (clients.has(serverName)) continue;
-
-    // Skip serper if no API key is configured
-    if (serverName === 'serper' || (serverCfg.args || []).join(' ').includes('serper')) {
-      const envKey = serverCfg.env?.SERPER_API_KEY || serperKey;
-      if (!envKey) {
-        if (verbose) console.log(`[mcp] Skipping ${serverName} — no SERPER_API_KEY. Set it with /search:api <key>`);
-        continue;
-      }
-      serverCfg.env = { ...serverCfg.env, SERPER_API_KEY: envKey };
-    }
-
-    try {
-      const resolved = resolveServerCommand(serverName, serverCfg);
-      if (verbose) {
-        console.log(`[mcp] Connecting to ${serverName} (${resolved.command} ${resolved.args.join(' ').slice(0, 60)})...`);
-      }
-
-      const transportOpts = { command: resolved.command, args: resolved.args };
-      // Pass env vars to child process
-      if (resolved.env || serverCfg.env) {
-        transportOpts.env = { ...process.env, ...(resolved.env || serverCfg.env) };
-      }
-
-      const transport = new StdioClientTransport(transportOpts);
-      const client = new Client(
-        { name: `levi-${serverName}-client`, version: '1.0.0' },
-        { capabilities: {} }
-      );
-
-      await client.connect(transport);
-      clients.set(serverName, client);
-
-      const listRes = await client.listTools();
-      const tools = listRes?.tools || [];
-
-      for (const tool of tools) {
-        mcpToolMap.set(tool.name, {
-          client,
-          serverName,
-          originalName: tool.name,
-          schema: tool
-        });
-      }
-
-      if (verbose) {
-        console.log(`[mcp] Connected ${serverName} — ${tools.length} tool(s): ${tools.map(t => t.name).join(', ')}`);
-      }
-    } catch (err) {
-      if (verbose) {
-        console.error(`[mcp] Failed to connect to "${serverName}": ${err.message}`);
-      }
-    }
-  }
-
-  initialized = true;
-  return getMcpTools();
-}
-
-/**
- * Returns all MCP tools converted to OpenAI tool format.
- */
-export function getMcpTools() {
-  const tools = [];
-  for (const [toolName, info] of mcpToolMap.entries()) {
-    tools.push({
-      type: 'function',
-      function: {
-        name: toolName,
-        description: info.schema.description || `Tool from ${info.serverName} MCP server`,
-        parameters: info.schema.inputSchema || { type: 'object', properties: {} }
-      }
+  if (serverCfg.url) {
+    // --- REMOTE ---
+    const { StreamableHTTPClientTransport } = await import('@modelcontextprotocol/sdk/client/streamableHttp.js').catch(async () => {
+      // fallback for older sdk = SSE
+      const mod = await import('@modelcontextprotocol/sdk/client/sse.js');
+      return { StreamableHTTPClientTransport: mod.SSEClientTransport };
     });
+    transport = new StreamableHTTPClientTransport(new URL(serverCfg.url), {
+      requestInit: { headers: serverCfg.headers || {} }
+    });
+    client = new Client({ name: 'levi', version: '0.1.0' }, { capabilities: {} });
+    await client.connect(transport);
+  } else {
+    // --- STDIO ---
+    transport = new StdioClientTransport({
+      command: serverCfg.command,
+      args: serverCfg.args || [],
+      env: {...process.env,...(serverCfg.env || {}) }
+    });
+    client = new Client({ name: 'levi', version: '0.1.0' }, { capabilities: {} });
+    await client.connect(transport);
   }
-  return tools;
-}
 
-/**
- * Check if a tool name belongs to an MCP server.
- */
-export function isMcpTool(name) {
-  if (name === 'serper_search' && mcpToolMap.has('google_search')) return true;
-  return mcpToolMap.has(name);
-}
-
-/**
- * Call an MCP tool by name with arguments.
- */
-const INDEX_PATH = path.join(path.dirname(MCP_CONFIG_PATH), 'mcp-index.json');
-const STATIC_SERVER = { google_search: 'serper', serper_search: 'serper', fetch: 'fetch' };
-const STATIC_NAMES = ['serper', 'fetch', 'playwright'];
-const connecting = new Map();
-const loadedMcp = new Set();
-
-function readIndex() {
-  try { return JSON.parse(fs.readFileSync(INDEX_PATH, 'utf-8')); } catch { return {}; }
-}
-
-function saveIndexFor(server, tools) {
-  if (STATIC_NAMES.includes(server)) return;
-  const idx = readIndex();
-  idx[server] = tools.map((t) => ({ n: t.name, d: String(t.description || '').replace(/\s+/g, ' ').slice(0, 140) }));
-  try { fs.writeFileSync(INDEX_PATH, JSON.stringify(idx, null, 1)); } catch {}
-}
-
-export function connectedServers() {
-  return [...clients.keys()];
-}
-
-// connect exactly one configured server on demand
-async function ensureServer(serverName) {
-  if (clients.has(serverName)) return true;
-  if (connecting.has(serverName)) return connecting.get(serverName);
-  const p = (async () => {
-    const config = loadMcpConfig();
-    const base = (config.mcpServers || {})[serverName];
-    if (!base || base.disabled) return false;
-    const serverCfg = { ...base };
-    if (serverName === 'serper' || (serverCfg.args || []).join(' ').includes('serper')) {
-      const envKey = serverCfg.env?.SERPER_API_KEY || getSearchApiKey();
-      if (!envKey) return false;
-      serverCfg.env = { ...serverCfg.env, SERPER_API_KEY: envKey };
+  // load tools
+  const { tools } = await client.listTools().catch(() => ({ tools: [] }));
+  const defs = (tools || []).map(t => ({
+    name: `${name}__${t.name}`,
+    originalName: t.name,
+    server: name,
+    description: t.description || '',
+    function: {
+      name: `${name}__${t.name}`,
+      description: t.description,
+      parameters: t.inputSchema
     }
-    try {
-      const resolved = resolveServerCommand(serverName, serverCfg);
-      const transportOpts = { command: resolved.command, args: resolved.args };
-      if (resolved.env || serverCfg.env) transportOpts.env = { ...process.env, ...(resolved.env || serverCfg.env) };
-      const transport = new StdioClientTransport(transportOpts);
-      const client = new Client({ name: `levi-${serverName}-client`, version: '1.0.0' }, { capabilities: {} });
-      await client.connect(transport);
-      clients.set(serverName, client);
-      const tools = (await client.listTools())?.tools || [];
-      for (const tool of tools) mcpToolMap.set(tool.name, { client, serverName, originalName: tool.name, schema: tool });
-      saveIndexFor(serverName, tools);
-      return true;
-    } catch {
-      return false;
-    } finally {
-      connecting.delete(serverName);
-    }
-  })();
-  connecting.set(serverName, p);
-  return p;
+  }));
+
+  const entry = { client, transport, defs, serverCfg };
+  clients.set(name, entry);
+  await saveIndex();
+  return entry;
 }
 
-// make sure the server that owns this tool is connected, without starting the others
-async function ensureForTool(name) {
-  if (mcpToolMap.has(name) || (name === 'serper_search' && mcpToolMap.has('google_search'))) return;
-  const server = STATIC_SERVER[name];
-  if (server) {
-    await ensureServer(server);
-    if (mcpToolMap.has(name) || mcpToolMap.has('google_search')) return;
-  }
-  const hit = Object.entries(readIndex()).find(([, tools]) => tools.some((t) => t.n === name));
-  if (hit) {
-    await ensureServer(hit[0]);
-    if (mcpToolMap.has(name)) return;
-  }
-  if (!initialized) await initMcp();
+async function saveIndex() {
+  const allDefs = [];
+  for (const [, v] of clients) allDefs.push(...v.defs);
+  fs.writeFileSync(MCP_INDEX_PATH, JSON.stringify(allDefs, null, 2));
 }
 
-export function resetLoadedMcp() {
-  loadedMcp.clear();
+export async function reloadMcpServers() {
+  for (const [name, { client, transport }] of clients) {
+    try { await client.close(); } catch {}
+    try { await transport.close?.(); } catch {}
+  }
+  clients.clear();
+  mcpIndex = null;
+  if (fs.existsSync(MCP_INDEX_PATH)) fs.unlinkSync(MCP_INDEX_PATH);
+
+  const cfg = loadCfg();
+  for (const name of Object.keys(cfg.mcpServers || {})) {
+    const s = cfg.mcpServers[name];
+    if (s._disabled) continue;
+    try { await ensureServer(name); } catch (e) { console.error(`Failed ${name}:`, e.message); }
+  }
 }
 
 export function getLoadedMcpDefs() {
-  return getMcpTools().filter((t) => loadedMcp.has(t.function.name));
+  if (!fs.existsSync(MCP_INDEX_PATH)) return [];
+  try { return JSON.parse(fs.readFileSync(MCP_INDEX_PATH, 'utf-8')); } catch { return []; }
 }
 
-// keyword search over the custom MCP tool index; connects and loads only the matches
-export async function searchMcp(query) {
-  const config = loadMcpConfig();
-  const names = Object.entries(config.mcpServers || {}).filter(([k, v]) => !v.disabled && !STATIC_NAMES.includes(k)).map(([k]) => k);
-  if (!names.length) return 'No custom MCP servers configured. Add servers in ~/.levi/mcp.json.';
-  let idx = readIndex();
-  for (const s of names) if (!idx[s]) await ensureServer(s);
-  idx = readIndex();
-  const words = String(query || '').toLowerCase().split(/[^a-z0-9]+/).filter((w) => w.length > 1);
-  const scored = [];
-  for (const s of names) {
-    for (const t of idx[s] || []) {
-      const hay = (s + ' ' + t.n + ' ' + t.d).toLowerCase();
-      const score = words.reduce((a, w) => a + (hay.includes(w) ? 1 : 0), 0);
-      if (score > 0 || !words.length) scored.push({ s, t, score });
-    }
+export async function searchMcp(query = '') {
+  if (!fs.existsSync(MCP_INDEX_PATH)) {
+    // lazy load first time
+    await reloadMcpServers();
   }
-  scored.sort((a, b) => b.score - a.score);
-  const top = scored.slice(0, 6);
-  if (!top.length) return 'No matching MCP tools. Custom servers: ' + names.join(', ');
-  for (const s of new Set(top.map((x) => x.s))) await ensureServer(s);
-  for (const x of top) loadedMcp.add(x.t.n);
-  return 'Loaded, call them now:\n' + top.map((x) => x.t.n + ' (' + x.s + '): ' + x.t.d).join('\n');
+  const defs = getLoadedMcpDefs();
+  const q = query.toLowerCase();
+  if (!q) return defs;
+  return defs.filter(d => d.name.toLowerCase().includes(q) || d.description.toLowerCase().includes(q));
 }
 
-export async function runMcpTool(name, args = {}) {
-  await ensureForTool(name);
-
-  // Handle serper / google_search aliases and query normalization
-  let targetTool = name;
-  let callArgs = { ...args };
-
-  if (name === 'serper_search' || name === 'google_search') {
-    targetTool = mcpToolMap.has('google_search') ? 'google_search' : name;
-    if (callArgs.query && !callArgs.q) {
-      callArgs.q = callArgs.query;
-      delete callArgs.query;
-    }
-  }
-
-  const toolInfo = mcpToolMap.get(targetTool);
-  if (!toolInfo) {
-    throw new Error(`MCP tool not found: ${name}`);
-  }
-
-  const { client, originalName } = toolInfo;
-  try {
-    const result = await client.callTool({
-      name: originalName,
-      arguments: callArgs
-    });
-
-    if (result.isError) {
-      const errMsg = result.content?.map(c => c.text || JSON.stringify(c)).join('\n') || 'MCP tool error';
-      return `Error: ${errMsg}`;
-    }
-
-    let outputText = '';
-    if (Array.isArray(result.content)) {
-      outputText = result.content
-        .map(c => (typeof c.text === 'string' ? c.text : JSON.stringify(c, null, 2)))
-        .join('\n');
-    } else {
-      outputText = typeof result === 'string' ? result : JSON.stringify(result, null, 2);
-    }
-
-    // Summarize search results, fetched pages, and web activities using active model from config.json
-    return await summarizeWebOutput(outputText, { toolName: name, args });
-  } catch (err) {
-    return `Error: ${err.message}`;
-  }
+export async function callMcpTool(fullName, args) {
+  const [serverName,...toolParts] = fullName.split('__');
+  const toolName = toolParts.join('__');
+  const entry = clients.get(serverName) || await ensureServer(serverName);
+  return await entry.client.callTool({ name: toolName, arguments: args });
 }
 
-/**
- * Summarizes web search, fetch, and browsing results before returning them to the agent.
- * Uses the active model selected in ~/.levi/config.json with a concise prompt.
- */
-async function summarizeWebOutput(content, { toolName, args = {} } = {}) {
-  if (!content || typeof content !== 'string') return content;
-  if (content.startsWith('Error:') || content.trim().length < 1500) return content;
-
-  // Tools that should have their output summarized
-  const isSearch = toolName === 'google_search' || toolName === 'serper_search' || toolName === 'brave_web_search';
-  const isFetch = toolName === 'fetch' || toolName === 'scrape';
-  const isWebActivity = toolName.startsWith('playwright_') || isSearch || isFetch;
-
-  if (!isWebActivity) return content;
-
-  let context = '';
-  if (isSearch) {
-    const q = args.q || args.query || '';
-    context = q ? `Web Search Query: "${q}"` : 'Web Search';
-  } else if (isFetch) {
-    const url = args.url || '';
-    context = url ? `Fetched URL: ${url}` : 'Web Page Content';
-  } else {
-    context = `Browser Activity: ${toolName}`;
-  }
-
-  // Cap content length to prevent model context limits
-  const maxChars = 8000;
-  const truncated = content.length > maxChars
-    ? content.slice(0, maxChars) + '\n\n[... Remaining content truncated for summary]'
-    : content;
-
-  const system = `You are an expert, concise web content summarizer for an AI assistant.
-Summarize the key information, factual answers, data, and relevant URLs from the provided raw web content.
-Rules:
-- Be dense, direct, and factual.
-- Retain important specifics (names, code snippets, numbers, versions, URLs).
-- Do NOT include unnecessary filler, conversational intro, or boilerplate.`;
-
-  const prompt = `Context: ${context}
-
-Raw Content:
-${truncated}
-
-Provide a concise, high-signal summary of the above content focusing on the key information. Max 150 words.`;
-
-  try {
-    const { chat } = await import('./agent/client.js');
-    const res = await chat([{ role: 'user', content: prompt }], {
-      system,
-      maxTokens: 450
-    });
-    try {
-      const { currentSessionId } = await import('./agent/session.js');
-      const { recordUsage } = await import('./agent/usage.js');
-      const sid = currentSessionId();
-      if (sid && res && res.usage) recordUsage(sid, res.usage);
-    } catch {}
-    if (res?.text && res.text.trim()) {
-      return res.text.trim();
-    }
-  } catch (err) {
-    // If summarization fails (e.g. offline, rate limit), return raw output gracefully
-    return content;
-  }
-
-  return content;
+export function disconnectServer(name) {
+  const e = clients.get(name);
+  if (!e) return;
+  e.client.close().catch(()=>{});
+  e.transport.close?.().catch(()=>{});
+  clients.delete(name);
 }
 
-/**
- * Disconnect from all MCP servers.
- */
-export async function closeMcp() {
-  for (const [serverName, client] of clients.entries()) {
-    try {
-      await client.close();
-    } catch {}
-  }
-  clients.clear();
-  mcpToolMap.clear();
-  initialized = false;
-}
-
-process.on('exit', () => {
-  closeMcp();
-});
-
-// Standalone execution: node src/mcp.js
-if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
-  console.log('=== Levi MCP Integration Tester ===');
-  console.log(`Config: ${MCP_CONFIG_PATH}`);
-  console.log(`Serper API key: ${getSearchApiKey() ? '*** (set)' : '(not set — use /search:api <key>)'}\n`);
-
-  try {
-    const tools = await initMcp({ verbose: true });
-    console.log(`\nTotal MCP tools loaded: ${tools.length}`);
-
-    console.log('\nConverted OpenAI Tool Definitions:');
-    for (const t of tools) {
-      console.log(`- ${t.function.name}: ${t.function.description.slice(0, 70)}...`);
-    }
-
-    // Test search with Serper
-    if (isMcpTool('google_search') || isMcpTool('serper_search')) {
-      console.log('\n--- Testing google_search("Anthropic MCP") ---');
-      const searchRes = await runMcpTool('google_search', { q: 'Anthropic Model Context Protocol' });
-      console.log('Search Output (sample):');
-      console.log(searchRes.slice(0, 300) + '...\n');
-    }
-
-    // Test fetching with Fetch
-    if (isMcpTool('fetch')) {
-      console.log('--- Testing fetch("https://example.com") ---');
-      const fetchRes = await runMcpTool('fetch', { url: 'https://example.com', max_length: 200 });
-      console.log('Fetch Output:');
-      console.log(fetchRes + '\n');
-    }
-
-    console.log('✓ All MCP tests passed successfully.');
-  } catch (err) {
-    console.error('MCP test error:', err);
-  } finally {
-    await closeMcp();
-    process.exit(0);
-  }
+export function setSearchApiKey(key) {
+  const file = path.join(os.homedir(), '.levi', 'config.json');
+  const c = JSON.parse(fs.readFileSync(file, 'utf-8'));
+  c.serper_api_key = key;
+  fs.writeFileSync(file, JSON.stringify(c, null, 2));
 }

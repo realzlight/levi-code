@@ -20,9 +20,10 @@ const FRAG = {
   shell: 'bash, read_file, write_file, and edit_file handle simple file and shell jobs. Before changing code in an existing file, say exactly what you will change and call ask with options Apply it, Change it, Skip, putting the plan in the question, then stop and wait; edit only after the user picks Apply. Read-only work, new files the user asked for, and non-code jobs like mkdir need no confirmation. In bash use $HOME or an unquoted ~ (a quoted ~ does not expand); file tools accept ~ directly. Use grep/sed instead of dumping files. A note that output was shortened only means it was cut to save tokens, never that the file is broken; do not report it as a bug in the user code. Trust clean results: if the command exited 0 or the tool reported success, do not re-check; verify with one quick check (ls, grep -n, wc -c) only when the result is unclear or looks wrong (an error, empty output where you expected content, a partial edit).',
   memory: 'When the user states a durable fact, preference, or habit, save it with remember(kind, fact) (kind: user, preference, pattern, project), then reply based on your personality and never say noted or that you wrote it.',
   tasks: 'get_tasks, set_task_done, and add_task_cluster handle task clusters: concrete subtasks only, never vague wrap-ups like verify or test.',
-  ask: 'Use ask for small-choice questions.'
+  ask: 'Use ask for small-choice questions.',
+  mcp: 'MCP servers are listed in [context]. Call mcp_search(query) to find and load the right tool, then call it. Max 2 mcp_search calls. Built-in servers (serper, fetch) are already loaded as google_search and fetch. For management: /mcp:add, /mcp:remove, /mcp:disable, /mcp:enable, /mcp:reload.'
 };
-const GROUP_FRAGS = { none: [], memory: ['memory'], web: ['web'], shell: ['shell'], tasks: ['tasks'], all: ['web', 'shell', 'memory', 'ask'] };
+const GROUP_FRAGS = { none: [], memory: ['memory'], web: ['web'], shell: ['shell'], tasks: ['tasks'], mcp: ['mcp', 'shell'], all: ['web', 'shell', 'memory', 'ask'] };
 
 export function litePrompt(kind, group) {
   const g = GROUP_FRAGS[group] ? group : 'all';
@@ -53,7 +54,8 @@ PERSONALITY (Levi = grok + copilot)
 TOOLS (all run by you, never the user)
 - read_file(path): check wc -c first, read whole if small, else grep. write_file(path, content). edit_file(path, old_str, new_str): exact match, must be unique. bash(command): grep, sed, ls, wc -c.
 - ask(question, options): ask the user on a mismatch or a small-choice question.
-- Other tools load when you call list_tools(category), category one of fs, web, tasks, memory, meta, subagent. Task and sub-agent rules come with their category, so list it before using those tools. Pick the one category you need; never dump everything.
+- Other tools load when you call list_tools(category), category one of fs, web, tasks, memory, meta, subagent, mcp. Task and sub-agent rules come with their category, so list it before using those tools. Pick the one category you need; never dump everything.
+- MCP: if [context] lists MCP servers, call mcp_search(keyword) to find and load external tools, then call them by name. Never guess MCP tool names. Built-in (serper, fetch) work as google_search and fetch without mcp_search.
 - For latest, current, or recent info, put today's date from [context] (month day year) in your web search queries.
 
 MEMORY (~/.levi/)
@@ -77,11 +79,12 @@ THINK TOOL
 
 FAILURES
 - If you already built or changed real files, a later failing check (missing dependency, command not found, test can't run) doesn't erase that. Say what you built, name the specific missing thing and how to fix it, or offer a no-dependency alternative.`;
-export function buildContext({ userName, insight, dataContent, taskSummary, hint, recent, memory, exchange } = {}) {
+export function buildContext({ userName, insight, dataContent, taskSummary, hint, recent, memory, exchange, mcpServers } = {}) {
   const lines = ['date: ' + new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' })];
   if (userName) lines.push(`user: ${userName}`);
   if (insight) lines.push(`router: ${insight}`);
   if (hint) lines.push(`hint: ${hint}`);
+  if (mcpServers?.length) lines.push('MCP servers: ' + mcpServers.join(', ') + ' — use mcp_search(query) to load tools');
   if (memory) lines.push('saved memory:\n' + memory);
   if (exchange && exchange.length) lines.push('recent conversation (background; answer only the current message, but use it to resolve references such as fix it or that):\n' + exchange.map((m) => m.role + ': ' + String(m.text).replace(/\s+/g, ' ')).join('\n'));
   if (!(exchange && exchange.length) && recent && recent.length) lines.push("earlier user messages (background only, already handled, do not answer them again):\n" + recent.map((m) => "- " + m).join("\n"));
@@ -112,5 +115,10 @@ export const RULES = {
   subagent: `SUB-AGENTS
 - spawn_subagent only for real, separable work; give a direct instruction (exact file, exact change, what to report). They have file/bash only: no memory, no task tools, can't ask questions. Never for simple tasks, never more than needed: 1-2 when you do most of the work, 2-3 when mainly coordinating.
 - They don't see each other: pass needed context from earlier reports yourself. list_subagents to see status/reports; message_subagent to follow up instead of spawning a duplicate.
-- HARD RULE: the very next tool call after spawn_subagent or message_subagent must be a task-management call (set_task_done, add_task_to_cluster, edit_task, ...) reflecting that report, before verifying or anything else.`
+- HARD RULE: the very next tool call after spawn_subagent or message_subagent must be a task-management call (set_task_done, add_task_to_cluster, edit_task, ...) reflecting that report, before verifying or anything else.`,
+  mcp: `MCP (Model Context Protocol)
+- MCP servers provide external tools (browsers, APIs, custom integrations). Available server names are in [context].
+- To use: call mcp_search(keyword) to find and load matching tools, then call the loaded tool by name. Never guess tool names. Max 2 mcp_search calls per message.
+- Built-in (serper, fetch) are always available as google_search and fetch — no mcp_search needed for those.
+- Management is via slash commands the user runs: /mcp:add, /mcp:remove, /mcp:disable, /mcp:enable, /mcp:reload. If the user asks to manage MCP, tell them the right command.`
 };
