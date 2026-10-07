@@ -338,7 +338,8 @@ export const toolDefs = [
         required: ['kind', 'fact']
       }
     }
-  }
+  },
+  { type: 'function', function: { name: 'mcp_search', description: 'Search custom MCP tools by keyword and load the matches so you can call them.', parameters: { type: 'object', properties: { query: { type: 'string' } }, required: ['query'] } } }
 ];
 
 export async function runTool(name, args) {
@@ -370,7 +371,12 @@ export async function runTool(name, args) {
       return `Edited ${p}`;
     }
 
-if (name === 'list_tools') {
+if (name === 'mcp_search') {
+      const { searchMcp } = await import('../mcp.js');
+      return await searchMcp(args?.query);
+    }
+
+    if (name === 'list_tools') {
       const cat = String(args?.category || '').toLowerCase().replace(/^task$/, 'tasks');
       const alias = { fs: 'list_fs_commands', web: 'list_web_commands', tasks: 'list_task_commands', memory: 'list_memory_commands', meta: 'list_meta_commands', subagent: 'list_subagent_commands' }[cat];
       if (!alias) return 'Error: category must be fs, web, tasks, memory, meta, or subagent';

@@ -6,7 +6,7 @@ import path from 'path';
 import { DEFAULT_BASE_URLS } from '../commands/models.js';
 
 const h = React.createElement;
-const CYAN = '#22d3ee';
+const CYAN = '#afd7ff';
 const SOFT = '#c4c4c4';
 const GRAY = '#666666';
 const SDKS = ['openai', 'anthropic'];

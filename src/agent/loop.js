@@ -9,13 +9,13 @@ import { getTasks } from './tasks.js';
 import { startTurn, recordUsage } from './usage.js';
 import { route } from './router.js';
 import { readMemoryDigest } from './memory.js';
-import { CONVO_PROMPT, LIGHT_PROMPT, agentPrompt, buildContext } from './prompts.js';
+import { CONVO_PROMPT, LIGHT_PROMPT, agentPrompt, buildContext, litePrompt } from './prompts.js';
 
 const LIST_COMMANDS = ['list_commands','list_fs_commands','list_web_commands','list_task_commands','list_memory_commands','list_meta_commands','list_subagent_commands'];
 const TRIVIAL = new Set(['bash','read_file','write_file','edit_file',...LIST_COMMANDS]);
 
 
-const BASE_TOOLS = [...toolDefs.filter((t) => TRIVIAL.has(t.function.name) || ['ask', 'remember', 'list_tools'].includes(t.function.name)), thinkToolDef(toolDefs[0])];
+const BASE_TOOLS = [...toolDefs.filter((t) => TRIVIAL.has(t.function.name) || ['ask', 'remember', 'list_tools', 'set_project'].includes(t.function.name)), thinkToolDef(toolDefs[0])];
 
 function currentUserName() {
   try {
@@ -35,11 +35,12 @@ function buildSystem() {
 // onStep(kind, data) — optional progress callback: 'tool_call' | 'tool_result' | 'done' | 'thought'
 const LITE_NAMES = ['bash', 'read_file', 'write_file', 'edit_file', 'google_search', 'fetch', 'ask', 'remember', 'get_tasks', 'set_task_done', 'add_task_cluster'];
 const LITE_TOOLS = toolDefs.filter((t) => LITE_NAMES.includes(t.function.name));
-const LITE_GROUPS = { none: [], memory: ['remember'], web: ['google_search', 'fetch'], shell: ['bash', 'read_file', 'write_file', 'edit_file'], all: ['bash', 'read_file', 'write_file', 'edit_file', 'google_search', 'fetch', 'ask', 'remember'], tasks: ['get_tasks', 'set_task_done', 'add_task_cluster'] };
+const LITE_GROUPS = { none: [], memory: ['remember'], web: ['google_search', 'fetch'], shell: ['bash', 'read_file', 'write_file', 'edit_file', 'ask'], all: ['bash', 'read_file', 'write_file', 'edit_file', 'google_search', 'fetch', 'ask', 'remember'], tasks: ['get_tasks', 'set_task_done', 'add_task_cluster'] };
 const MORE_TOOL = { type: 'function', function: { name: 'more_tools', description: 'Load all light tools (shell, files, web, ask, remember) when your current tools are not enough.', parameters: { type: 'object', properties: {} } } };
 const WEB_NAMES = ['google_search', 'fetch'];
 const WEB_BUDGET = 3;
 const RESULT_CAP = 1500;
+const LITE_TOKEN_BUDGET = 30000;
 const AGENT_WEB_BUDGET = 6;
 const AGENT_WEB_CAP = 3000;
 const AGENT_OUTPUT_CAP = 8000;
@@ -49,7 +50,7 @@ async function runToolGuarded(call, state) {
   if (!WEB_NAMES.includes(call.name)) {
     const out = await runTool(call.name, call.args);
     const s = typeof out === 'string' ? out : String(out);
-    if (OUTPUT_TOOLS.includes(call.name) && s.length > AGENT_OUTPUT_CAP) return s.slice(0, AGENT_OUTPUT_CAP) + '\n...[truncated ' + (s.length - AGENT_OUTPUT_CAP) + ' chars. use grep, sed -n or wc to read narrower parts]';
+    if (OUTPUT_TOOLS.includes(call.name) && s.length > AGENT_OUTPUT_CAP) return s.slice(0, AGENT_OUTPUT_CAP) + '\n...[truncated ' + (s.length - AGENT_OUTPUT_CAP) + ' chars shortened to save tokens; the file is intact. use grep -n, sed -n or wc to read other parts]';
     return out;
   }
   if (state.web >= AGENT_WEB_BUDGET) return 'Error: web budget used up for this message. Answer with what you have and say plainly what you could not confirm.';
@@ -61,10 +62,11 @@ async function runToolGuarded(call, state) {
 
 // shared by chat (conversation) and light modes: small prompt, small tool set, no agent prompt
 async function runLite(routed, sessionId, onStep, system) {
-  const context = buildContext({ userName: currentUserName(), insight: routed.insight, recent: routed.recentMessages, memory: readMemoryDigest({ prefsOnly: true }) });
+  const context = buildContext({ userName: currentUserName(), insight: routed.insight, recent: routed.recentMessages, exchange: routed.exchange, memory: readMemoryDigest({ prefsOnly: true }) });
   const messages = [{ role: 'user', content: context + routed.query }];
   let webCalls = 0;
   let budgetNoted = false;
+  let liteTokens = 0;
   let expanded = (routed.tools || 'all') === 'all';
   const pickLite = () => {
     const names = expanded ? LITE_GROUPS.all : (LITE_GROUPS[routed.tools] || LITE_GROUPS.all);
@@ -72,12 +74,18 @@ async function runLite(routed, sessionId, onStep, system) {
     if (!expanded) tools = [...tools, MORE_TOOL];
     return webCalls >= WEB_BUDGET ? tools.filter((t) => !WEB_NAMES.includes(t.function.name)) : tools;
   };
-  for (let step = 0; step < 8; step++) {
+  for (let step = 0; step < 12; step++) {
+    if (liteTokens > LITE_TOKEN_BUDGET) return 'Stopped: light-mode token budget (' + LITE_TOKEN_BUDGET + ') reached for this message. Send another message to continue from here.';
+    const liteResults = messages.map((m, i) => (m.role === 'tool' ? i : -1)).filter((i) => i >= 0);
+    for (const i of liteResults.slice(0, -4)) {
+      if (String(messages[i].content).length > 300) messages[i] = { ...messages[i], content: String(messages[i].content).slice(0, 300) + '\n...[older result trimmed]' };
+    }
     if (webCalls >= WEB_BUDGET && !budgetNoted) {
         messages.push({ role: 'user', content: '(web budget used up. answer now with what you found and say plainly what you could not confirm. do not guess.)' });
         budgetNoted = true;
       }
-      const { text, toolCalls, message, usage } = await chatWithTools(messages, { system, tools: pickLite() });
+      const { text, toolCalls, message, usage } = await chatWithTools(messages, { system: litePrompt(system, expanded ? 'all' : routed.tools), tools: pickLite() });
+    liteTokens += (usage && usage.inputTokens) || 0;
     if (sessionId) recordUsage(sessionId, usage);
     if (!toolCalls.length) {
       const out = (text || '').trim();
@@ -97,12 +105,32 @@ async function runLite(routed, sessionId, onStep, system) {
       let result = call.name === 'more_tools' ? (expanded = true, 'All light tools are now available.') : ok ? await runTool(call.name, call.args) : 'Error: tool not available here';
       if (WEB_NAMES.includes(call.name)) webCalls++;
       result = String(result);
-      if (result.length > RESULT_CAP) result = result.slice(0, RESULT_CAP) + '\n...[truncated, use grep or sed -n for the rest]';
+      const cap = ['read_file', 'bash'].includes(call.name) ? 6000 : RESULT_CAP;
+      if (result.length > cap) result = result.slice(0, cap) + '\n...[output shortened to save tokens; the file is intact. use grep -n or sed -n to read other parts]';
       onStep?.('tool_result', { call, result });
       messages.push({ role: 'tool', tool_call_id: call.id, content: String(result) });
     }
   }
   return null;
+}
+
+function buildExchange(stored) {
+  const idx = stored.map((m, i) => ({ m, i })).filter((x) => x.m && x.m.text && x.m.text !== '...');
+  const us = idx.filter((x) => x.m.role === 'user').slice(-3);
+  const as = idx.filter((x) => x.m.role === 'agent').slice(-3);
+  return [...us, ...as]
+    .sort((p, q) => p.i - q.i)
+    .map((x) => ({ role: x.m.role, text: String(x.m.text).slice(0, x === as[as.length - 1] ? 900 : 350) }));
+}
+
+let mcpMod = null;
+function hasCustomMcp() {
+  try {
+    const c = JSON.parse(fs.readFileSync(path.join(os.homedir(), '.levi', 'mcp.json'), 'utf-8'));
+    return Object.entries(c.mcpServers || {}).some(([k, v]) => !v.disabled && !['serper', 'fetch', 'playwright'].includes(k));
+  } catch {
+    return false;
+  }
 }
 
 export async function runAgent(userMessage, { onStep, maxSteps, forceAgent } = {}) {
@@ -118,10 +146,13 @@ export async function runAgent(userMessage, { onStep, maxSteps, forceAgent } = {
     sessionId
   });
   onStep?.('route', routed);
+  try { fs.appendFileSync(path.join(os.homedir(), '.levi', 'ROUTE.log'), JSON.stringify({ t: new Date().toISOString(), route: routed.route, tools: routed.tools, insight: routed.insight, q: String(userMessage).slice(0, 50) }) + '\n'); } catch {}
+  const exchange = buildExchange(stored);
+  routed.exchange = exchange;
 
   // conversation mode: tiny prompt, no tools, no thought step
   if (routed.route === 'light') {
-    const reply = await runLite(routed, sessionId, onStep, LIGHT_PROMPT);
+    const reply = await runLite(routed, sessionId, onStep, 'light');
     if (reply) {
       onStep?.('done', reply);
       return reply;
@@ -130,7 +161,7 @@ export async function runAgent(userMessage, { onStep, maxSteps, forceAgent } = {
   }
 
   if (routed.route === 'conversation') {
-    const reply = await runLite(routed, sessionId, onStep, CONVO_PROMPT);
+    const reply = await runLite(routed, sessionId, onStep, 'convo');
     if (reply) {
       onStep?.('done', reply);
       return reply;
@@ -147,29 +178,33 @@ export async function runAgent(userMessage, { onStep, maxSteps, forceAgent } = {
   }
   // a cap, not spend: agent mode is real work, so keep a high ceiling
   const effectiveMaxSteps = maxSteps || Math.max(pendingTasks * 4 + 10, 30);
-  const tokenBudget = 40000 + pendingTasks * 10000;
+  let tokenBudget = 50000 + pendingTasks * 10000;
   const system = buildSystem();
   const SUB = ['spawn_subagent', 'list_subagents', 'message_subagent'];
   const unlocked = new Set();
+  const customMcp = hasCustomMcp();
+  if (customMcp && !mcpMod) mcpMod = await import('../mcp.js');
+  if (mcpMod) mcpMod.resetLoadedMcp();
   const pickTools = () => {
-    const all = [...BASE_TOOLS, ...toolDefs.filter((t) => unlocked.has(t.function.name) && !BASE_TOOLS.includes(t))];
+    const all = [...BASE_TOOLS, ...toolDefs.filter((t) => unlocked.has(t.function.name) && !BASE_TOOLS.includes(t)), ...(customMcp ? toolDefs.filter((t) => t.function.name === 'mcp_search') : []), ...(mcpMod ? mcpMod.getLoadedMcpDefs() : [])];
     return isSoloOnly() ? all.filter((t) => !SUB.includes(t.function?.name || t.name)) : all;
   };
   // give the tool-calling loop real conversation history, not just a hint via
   // the system prompt — this is what lets it resolve "it"/"that"/pronouns
   // directly instead of guessing and going searching for something it already knows
-  const history = recentMessages
-  .filter(m => m.role === 'user')
-  .slice(-4)
-  .map(m => ({ role: 'user', content: m.text }));
-
-// add only last assistant summary, not full dumps
-const lastAgent = [...recentMessages].reverse().find(m => m.role === 'agent');
-if (lastAgent) {
-  history.push({ role: 'assistant', content: lastAgent.text.slice(0, 500) + "..." });
-}
-  const context = buildContext({ userName: currentUserName(), insight: routed.insight, dataContent: project.dataContent, taskSummary: project.taskSummary, memory: readMemoryDigest() });
-  const messages = [...history, { role: 'user', content: context + userMessage }];
+  const history = [];
+  for (const m of exchange) {
+    const role = m.role === 'agent' ? 'assistant' : 'user';
+    const prev = history[history.length - 1];
+    if (prev && prev.role === role) prev.content += '\n\n' + m.text;
+    else history.push({ role, content: m.text });
+  }
+  while (history.length && history[0].role === 'assistant') history.shift();
+  const context = buildContext({ userName: currentUserName(), insight: routed.insight, dataContent: project.dataContent, taskSummary: project.taskSummary, hint: customMcp ? 'custom MCP tools exist: call mcp_search(query) to find and load them' : '', memory: readMemoryDigest() });
+  const messages = [...history];
+  const cur = context + userMessage;
+  if (messages.length && messages[messages.length - 1].role === 'user') messages[messages.length - 1] = { role: 'user', content: messages[messages.length - 1].content + '\n\n' + cur };
+  else messages.push({ role: 'user', content: cur });
 
   const MAX_BLANK_RETRIES = 3; // independent of effectiveMaxSteps — don't silently burn the whole step budget on invisible retries
   let blankRetries = 0;
@@ -177,6 +212,13 @@ if (lastAgent) {
   const webState = { web: 0, tokens: 0, over: false, noted: false, overSteps: 0 };
 
   for (let step = 0; step < effectiveMaxSteps; step++) {
+    if (sessionId) {
+      try {
+        const pendingNow = getTasks(sessionId).reduce((a, c) => a + (c.status === 'completed' ? 0 : c.tasks.filter((t) => !t.done).length), 0);
+        tokenBudget = Math.max(tokenBudget, 50000 + pendingNow * 10000);
+      } catch {}
+    }
+    webState.over = webState.tokens >= tokenBudget;
     if (webState.over) {
       webState.overSteps++;
       if (webState.overSteps > 4) return 'Stopped: token budget (' + tokenBudget + ') reached for this message. Send another message to continue from here.';

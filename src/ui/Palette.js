@@ -4,7 +4,7 @@ import { usage } from './args.js';
 
 const h = React.createElement;
 
-const CYAN = '#22d3ee';
+const CYAN = '#afd7ff';
 const SOFT = '#c4c4c4';
 const GRAY = '#666666';
 export const MAX_ROWS = 6;

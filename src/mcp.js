@@ -122,6 +122,7 @@ export async function initMcp({ verbose = false } = {}) {
 
   for (const [serverName, serverCfg] of Object.entries(servers)) {
     if (serverCfg.disabled) continue;
+    if (clients.has(serverName)) continue;
 
     // Skip serper if no API key is configured
     if (serverName === 'serper' || (serverCfg.args || []).join(' ').includes('serper')) {
@@ -209,10 +210,114 @@ export function isMcpTool(name) {
 /**
  * Call an MCP tool by name with arguments.
  */
-export async function runMcpTool(name, args = {}) {
-  if (!initialized) {
-    await initMcp();
+const INDEX_PATH = path.join(path.dirname(MCP_CONFIG_PATH), 'mcp-index.json');
+const STATIC_SERVER = { google_search: 'serper', serper_search: 'serper', fetch: 'fetch' };
+const STATIC_NAMES = ['serper', 'fetch', 'playwright'];
+const connecting = new Map();
+const loadedMcp = new Set();
+
+function readIndex() {
+  try { return JSON.parse(fs.readFileSync(INDEX_PATH, 'utf-8')); } catch { return {}; }
+}
+
+function saveIndexFor(server, tools) {
+  if (STATIC_NAMES.includes(server)) return;
+  const idx = readIndex();
+  idx[server] = tools.map((t) => ({ n: t.name, d: String(t.description || '').replace(/\s+/g, ' ').slice(0, 140) }));
+  try { fs.writeFileSync(INDEX_PATH, JSON.stringify(idx, null, 1)); } catch {}
+}
+
+export function connectedServers() {
+  return [...clients.keys()];
+}
+
+// connect exactly one configured server on demand
+async function ensureServer(serverName) {
+  if (clients.has(serverName)) return true;
+  if (connecting.has(serverName)) return connecting.get(serverName);
+  const p = (async () => {
+    const config = loadMcpConfig();
+    const base = (config.mcpServers || {})[serverName];
+    if (!base || base.disabled) return false;
+    const serverCfg = { ...base };
+    if (serverName === 'serper' || (serverCfg.args || []).join(' ').includes('serper')) {
+      const envKey = serverCfg.env?.SERPER_API_KEY || getSearchApiKey();
+      if (!envKey) return false;
+      serverCfg.env = { ...serverCfg.env, SERPER_API_KEY: envKey };
+    }
+    try {
+      const resolved = resolveServerCommand(serverName, serverCfg);
+      const transportOpts = { command: resolved.command, args: resolved.args };
+      if (resolved.env || serverCfg.env) transportOpts.env = { ...process.env, ...(resolved.env || serverCfg.env) };
+      const transport = new StdioClientTransport(transportOpts);
+      const client = new Client({ name: `levi-${serverName}-client`, version: '1.0.0' }, { capabilities: {} });
+      await client.connect(transport);
+      clients.set(serverName, client);
+      const tools = (await client.listTools())?.tools || [];
+      for (const tool of tools) mcpToolMap.set(tool.name, { client, serverName, originalName: tool.name, schema: tool });
+      saveIndexFor(serverName, tools);
+      return true;
+    } catch {
+      return false;
+    } finally {
+      connecting.delete(serverName);
+    }
+  })();
+  connecting.set(serverName, p);
+  return p;
+}
+
+// make sure the server that owns this tool is connected, without starting the others
+async function ensureForTool(name) {
+  if (mcpToolMap.has(name) || (name === 'serper_search' && mcpToolMap.has('google_search'))) return;
+  const server = STATIC_SERVER[name];
+  if (server) {
+    await ensureServer(server);
+    if (mcpToolMap.has(name) || mcpToolMap.has('google_search')) return;
   }
+  const hit = Object.entries(readIndex()).find(([, tools]) => tools.some((t) => t.n === name));
+  if (hit) {
+    await ensureServer(hit[0]);
+    if (mcpToolMap.has(name)) return;
+  }
+  if (!initialized) await initMcp();
+}
+
+export function resetLoadedMcp() {
+  loadedMcp.clear();
+}
+
+export function getLoadedMcpDefs() {
+  return getMcpTools().filter((t) => loadedMcp.has(t.function.name));
+}
+
+// keyword search over the custom MCP tool index; connects and loads only the matches
+export async function searchMcp(query) {
+  const config = loadMcpConfig();
+  const names = Object.entries(config.mcpServers || {}).filter(([k, v]) => !v.disabled && !STATIC_NAMES.includes(k)).map(([k]) => k);
+  if (!names.length) return 'No custom MCP servers configured. Add servers in ~/.levi/mcp.json.';
+  let idx = readIndex();
+  for (const s of names) if (!idx[s]) await ensureServer(s);
+  idx = readIndex();
+  const words = String(query || '').toLowerCase().split(/[^a-z0-9]+/).filter((w) => w.length > 1);
+  const scored = [];
+  for (const s of names) {
+    for (const t of idx[s] || []) {
+      const hay = (s + ' ' + t.n + ' ' + t.d).toLowerCase();
+      const score = words.reduce((a, w) => a + (hay.includes(w) ? 1 : 0), 0);
+      if (score > 0 || !words.length) scored.push({ s, t, score });
+    }
+  }
+  scored.sort((a, b) => b.score - a.score);
+  const top = scored.slice(0, 6);
+  if (!top.length) return 'No matching MCP tools. Custom servers: ' + names.join(', ');
+  for (const s of new Set(top.map((x) => x.s))) await ensureServer(s);
+  for (const x of top) loadedMcp.add(x.t.n);
+  return 'Loaded, call them now:\n' + top.map((x) => x.t.n + ' (' + x.s + '): ' + x.t.d).join('\n');
+}
+
+export async function runMcpTool(name, args = {}) {
+  await ensureForTool(name);
 
   // Handle serper / google_search aliases and query normalization
   let targetTool = name;
@@ -265,7 +370,7 @@ export async function runMcpTool(name, args = {}) {
  */
 async function summarizeWebOutput(content, { toolName, args = {} } = {}) {
   if (!content || typeof content !== 'string') return content;
-  if (content.startsWith('Error:') || content.trim().length < 180) return content;
+  if (content.startsWith('Error:') || content.trim().length < 1500) return content;
 
   // Tools that should have their output summarized
   const isSearch = toolName === 'google_search' || toolName === 'serper_search' || toolName === 'brave_web_search';
@@ -286,7 +391,7 @@ async function summarizeWebOutput(content, { toolName, args = {} } = {}) {
   }
 
   // Cap content length to prevent model context limits
-  const maxChars = 20000;
+  const maxChars = 8000;
   const truncated = content.length > maxChars
     ? content.slice(0, maxChars) + '\n\n[... Remaining content truncated for summary]'
     : content;
@@ -303,14 +408,20 @@ Rules:
 Raw Content:
 ${truncated}
 
-Provide a concise, high-signal summary of the above content focusing on the key information.`;
+Provide a concise, high-signal summary of the above content focusing on the key information. Max 150 words.`;
 
   try {
     const { chat } = await import('./agent/client.js');
     const res = await chat([{ role: 'user', content: prompt }], {
       system,
-      maxTokens: 1024
+      maxTokens: 450
     });
+    try {
+      const { currentSessionId } = await import('./agent/session.js');
+      const { recordUsage } = await import('./agent/usage.js');
+      const sid = currentSessionId();
+      if (sid && res && res.usage) recordUsage(sid, res.usage);
+    } catch {}
     if (res?.text && res.text.trim()) {
       return res.text.trim();
     }
