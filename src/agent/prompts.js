@@ -21,7 +21,7 @@ const FRAG = {
   memory: 'When the user states a durable fact, preference, or habit, save it with remember(kind, fact) (kind: user, preference, pattern, project), then reply based on your personality and never say noted or that you wrote it.',
   tasks: 'get_tasks, set_task_done, and add_task_cluster handle task clusters: concrete subtasks only, never vague wrap-ups like verify or test.',
   ask: 'Use ask for small-choice questions.',
-  mcp: 'MCP servers are listed in [context]. Call mcp_search(query) to find and load the right tool, then call it. Max 2 mcp_search calls. Built-in servers (serper, fetch) are already loaded as google_search and fetch. For management: /mcp:add, /mcp:remove, /mcp:disable, /mcp:enable, /mcp:reload.'
+  mcp: 'Relevant MCP tools are automatically pre-loaded when needed — call them directly! To find or switch tools: call mcp_search("<action keyword>") (e.g. "repos", "prs", "issues", "commits"). Call mcp_list(server: "<name>") to inspect all available tools on a server without loading schemas. Built-in servers (serper, fetch) are always available as google_search and fetch.'
 };
 const GROUP_FRAGS = { none: [], memory: ['memory'], web: ['web'], shell: ['shell'], tasks: ['tasks'], mcp: ['mcp', 'shell'], all: ['web', 'shell', 'memory', 'ask'] };
 
@@ -117,8 +117,9 @@ export const RULES = {
 - They don't see each other: pass needed context from earlier reports yourself. list_subagents to see status/reports; message_subagent to follow up instead of spawning a duplicate.
 - HARD RULE: the very next tool call after spawn_subagent or message_subagent must be a task-management call (set_task_done, add_task_to_cluster, edit_task, ...) reflecting that report, before verifying or anything else.`,
   mcp: `MCP (Model Context Protocol)
-- MCP servers provide external tools (browsers, APIs, custom integrations). Available server names are in [context].
-- To use: call mcp_search(keyword) to find and load matching tools, then call the loaded tool by name. Never guess tool names. Max 2 mcp_search calls per message.
+- Relevant MCP tools for your current task are pre-loaded into your active tools automatically. Call them directly!
+- If you need a different tool from an MCP server: call mcp_search("<action keyword>") (e.g. mcp_search("repos"), mcp_search("pull requests"), mcp_search("issues")).
+- To inspect all tools available on a specific MCP server without loading schemas: call mcp_list(server: "<name>").
 - Built-in (serper, fetch) are always available as google_search and fetch — no mcp_search needed for those.
-- Management is via slash commands the user runs: /mcp:add, /mcp:remove, /mcp:disable, /mcp:enable, /mcp:reload. If the user asks to manage MCP, tell them the right command.`
+- Management is via slash commands the user runs: /mcp:add, /mcp:remove, /mcp:disable, /mcp:enable, /mcp:reload.`
 };

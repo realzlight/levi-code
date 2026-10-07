@@ -382,23 +382,125 @@ export function getLoadedMcpDefs() {
   return getMcpTools().filter((t) => loadedMcp.has(t.function.name));
 }
 
+export function getServerTools(serverName) {
+  const idx = readIndex();
+  return idx[serverName] || [];
+}
+
+const MCP_SYNONYMS = {
+  repo: ['repository', 'repositories', 'repos'],
+  repos: ['repository', 'repositories', 'repo'],
+  repository: ['repositories', 'repo', 'repos'],
+  repositories: ['repository', 'repo', 'repos'],
+  pr: ['pull', 'pull_request', 'pull_requests', 'prs'],
+  prs: ['pull', 'pull_request', 'pull_requests', 'pr'],
+  pull: ['pull_request', 'pull_requests', 'pr'],
+  issue: ['issues'],
+  issues: ['issue'],
+  commit: ['commits'],
+  commits: ['commit'],
+  branch: ['branches'],
+  branches: ['branch'],
+  tag: ['tags'],
+  tags: ['tag'],
+  release: ['releases'],
+  releases: ['release'],
+  code: ['search_code', 'file'],
+  file: ['files', 'get_file_contents', 'create_or_update_file'],
+  files: ['file', 'get_file_contents'],
+  show: ['list', 'search', 'get', 'find', 'view', 'read'],
+  list: ['show', 'search', 'get', 'find'],
+  get: ['show', 'list', 'search', 'read', 'find'],
+  search: ['find', 'list', 'show', 'query'],
+  find: ['search', 'list', 'show'],
+  create: ['add', 'new', 'write', 'make'],
+  add: ['create', 'new', 'write'],
+  delete: ['remove', 'drop'],
+  remove: ['delete'],
+  update: ['edit', 'change', 'modify', 'write'],
+  me: ['user', 'profile', 'whoami', 'account', 'my', 'mine'],
+  my: ['me', 'user', 'profile', 'own', 'mine'],
+  mine: ['me', 'my', 'user']
+};
+
+const MCP_STOP_WORDS = new Set(['the', 'a', 'an', 'in', 'on', 'at', 'to', 'for', 'of', 'and', 'or', 'with', 'by', 'from', 'is', 'it', 'all', 'can', 'you', 'please', 'i', 'want', 'tool', 'tools', 'mcp']);
+
+const MCP_COMMON_TOOLS = {
+  github: ['search_repositories', 'get_me', 'list_issues', 'list_pull_requests', 'search_code', 'list_commits'],
+  youtube: ['search-videos', 'get-trending-videos', 'get-channel-stats', 'enhanced-transcript']
+};
+
 // keyword search over the custom MCP tool index; connects and loads only the matches
-export async function searchMcp(query) {
+export async function searchMcp(query, serverFilter = null) {
   const config = loadMcpConfig();
   const names = Object.entries(config.mcpServers || {}).filter(([k, v]) => !v.disabled && !v._disabled && !STATIC_NAMES.includes(k)).map(([k]) => k);
   if (!names.length) return 'No custom MCP servers configured. Add servers in ~/.levi/mcp.json.';
   let idx = readIndex();
   for (const s of names) if (!idx[s]) await ensureServer(s);
   idx = readIndex();
-  const words = String(query || '').toLowerCase().split(/[^a-z0-9]+/).filter((w) => w.length > 1);
+
+  const rawWords = String(query || '').toLowerCase().split(/[^a-z0-9_-]+/).filter((w) => w.length > 1 && !MCP_STOP_WORDS.has(w));
+  let detectedServer = serverFilter;
+  const filteredWords = [];
+  for (const w of rawWords) {
+    if (names.includes(w)) detectedServer = w;
+    else filteredWords.push(w);
+  }
+
+  const targetServers = detectedServer && names.includes(detectedServer) ? [detectedServer] : names;
+
+  // Generic server query (e.g. mcp_search("github")) -> load primary entrypoint tools
+  if (!filteredWords.length) {
+    const list = [];
+    for (const s of targetServers) {
+      const comm = MCP_COMMON_TOOLS[s] || [];
+      const sTools = idx[s] || [];
+      for (const cn of comm) {
+        const found = sTools.find((t) => t.n === cn);
+        if (found) list.push({ s, t: found, score: 50 });
+      }
+      for (const t of sTools) {
+        if (!comm.includes(t.n)) list.push({ s, t, score: 10 });
+      }
+    }
+    const top = list.slice(0, 6);
+    if (!top.length) return 'No tools found for server: ' + targetServers.join(', ');
+    for (const s of new Set(top.map((x) => x.s))) await ensureServer(s);
+    for (const x of top) loadedMcp.add(x.t.n);
+    return 'Loaded, call them now:\n' + top.map((x) => x.t.n + ' (' + x.s + '): ' + x.t.d).join('\n');
+  }
+
+  // Expand with synonyms
+  const queryTerms = new Set();
+  for (const w of filteredWords) {
+    queryTerms.add(w);
+    for (const syn of (MCP_SYNONYMS[w] || [])) queryTerms.add(syn);
+  }
+
   const scored = [];
-  for (const s of names) {
+  for (const s of targetServers) {
     for (const t of idx[s] || []) {
-      const hay = (s + ' ' + t.n + ' ' + t.d).toLowerCase();
-      const score = words.reduce((a, w) => a + (hay.includes(w) ? 1 : 0), 0);
-      if (score > 0 || !words.length) scored.push({ s, t, score });
+      const nameParts = t.n.toLowerCase().split(/[_-]+/);
+      const desc = (t.d || '').toLowerCase();
+      let score = 0;
+
+      for (const term of queryTerms) {
+        if (nameParts.includes(term)) {
+          score += 25; // exact token match in tool name
+        } else if (t.n.toLowerCase().includes(term)) {
+          score += 15; // substring match in tool name
+        }
+        if (desc.includes(term)) {
+          score += 3; // description match
+        }
+      }
+
+      if ((MCP_COMMON_TOOLS[s] || []).includes(t.n)) score += 5;
+
+      if (score > 0) scored.push({ s, t, score });
     }
   }
+
   scored.sort((a, b) => b.score - a.score);
   const top = scored.slice(0, 6);
   if (!top.length) return 'No matching MCP tools. Custom servers: ' + names.join(', ');
@@ -536,6 +638,11 @@ export async function closeMcp() {
   clients.clear();
   mcpToolMap.clear();
   initialized = false;
+}
+
+export async function reloadMcpServers() {
+  await closeMcp();
+  return await initMcp();
 }
 
 process.on('exit', () => {

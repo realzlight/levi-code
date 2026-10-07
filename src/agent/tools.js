@@ -340,8 +340,8 @@ export const toolDefs = [
       }
     }
   },
-  { type: 'function', function: { name: 'mcp_search', description: 'Search custom MCP tools by keyword and load the matches so you can call them.', parameters: { type: 'object', properties: { query: { type: 'string' } }, required: ['query'] } } },
-  { type: 'function', function: { name: 'mcp_list', description: 'List all configured MCP servers and their connection status. No tools are loaded — use mcp_search to load tools.', parameters: { type: 'object', properties: {} } } }
+  { type: 'function', function: { name: 'mcp_search', description: 'Search custom MCP tools by keyword and load the matches so you can call them.', parameters: { type: 'object', properties: { query: { type: 'string', description: 'Action or tool keyword, e.g. "repos", "pull requests", "issues", "commits"' } }, required: ['query'] } } },
+  { type: 'function', function: { name: 'mcp_list', description: 'List configured MCP servers. If server name is provided, lists all tools available on that server.', parameters: { type: 'object', properties: { server: { type: 'string', description: 'Optional MCP server name (e.g. "github", "youtube") to view its full tool catalog' } } } } }
 ];
 
 export async function runTool(name, args) {
@@ -379,11 +379,21 @@ if (name === 'mcp_search') {
     }
 
     if (name === 'mcp_list') {
-      const { getMcpServerNames, connectedServers } = await import('../mcp.js');
+      const { getMcpServerNames, connectedServers, getServerTools } = await import('../mcp.js');
       const names = getMcpServerNames();
       const connected = connectedServers();
       if (!names.length) return 'No MCP servers configured. Add with /mcp:add <name> <command> [args]';
-      return names.map(n => `${connected.includes(n) ? '🟢' : '⚪'} ${n}`).join('\n');
+      if (args?.server) {
+        const s = String(args.server).toLowerCase().trim();
+        if (!names.includes(s)) return `MCP server "${s}" not found. Configured servers: ${names.join(', ')}`;
+        const tools = getServerTools(s);
+        if (!tools.length) return `No tools indexed for server "${s}". Run mcp_search("${s}") to connect and discover.`;
+        return `Tools on MCP server "${s}" (${tools.length} available):\n` +
+          tools.map(t => `- ${t.n}: ${(t.d || '').slice(0, 100)}`).join('\n') +
+          '\n\nUse mcp_search("<tool_name>") to load any of these tools into active context.';
+      }
+      return names.map(n => `${connected.includes(n) ? '🟢' : '⚪'} ${n}`).join('\n') +
+        '\n\nTip: call mcp_list(server: "<name>") to see all tools available on a specific server.';
     }
 
     if (name === 'list_tools') {

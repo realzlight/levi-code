@@ -100,6 +100,18 @@ defineCommand({ name: 'models:delete', description: 'Delete a model', args: [{ n
 defineCommand({ name: 'whoami', description: 'Show current user' });
 
 defineCommand({
+  name: 'login',
+  description: 'Re-authenticate with GitHub (refreshes scopes for GitHub MCP)',
+  screen: true,
+  run: async (_, ctx) => {
+    const { login } = await import('../commands/auth.js');
+    await login();
+    const { reloadMcpServers } = await import('../mcp.js');
+    if (reloadMcpServers) await reloadMcpServers();
+  }
+});
+
+defineCommand({
   name: 'logout',
   description: 'Sign out and quit',
   run: async (_, ctx) => {

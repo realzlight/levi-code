@@ -63,15 +63,26 @@ async function runToolGuarded(call, state) {
 // shared by chat (conversation) and light modes: small prompt, small tool set, no agent prompt
 async function runLite(routed, sessionId, onStep, system) {
   const mcpNames = routed.mcp ? getMcpNames() : undefined;
-  const mcpHint = typeof routed.mcp === 'string' ? `use MCP server "${routed.mcp}" — call mcp_search("${routed.mcp}") to load its tools` : undefined;
+  if (routed.mcp) {
+    if (!mcpMod) mcpMod = await import('../mcp.js');
+    mcpMod.resetLoadedMcp();
+    const query = typeof routed.mcp === 'string' ? `${routed.mcp} ${routed.query}` : routed.query;
+    await mcpMod.searchMcp(query);
+  }
+  const preloaded = mcpMod ? mcpMod.getLoadedMcpDefs() : [];
+  const preloadedNames = preloaded.map((t) => t.function.name);
+  let mcpHint = undefined;
+  if (preloadedNames.length) {
+    mcpHint = `MCP server "${routed.mcp}" active. Relevant tools already loaded: ${preloadedNames.join(', ')}. Call them directly, or call mcp_search("<action>") if you need different tools.`;
+  } else if (typeof routed.mcp === 'string') {
+    mcpHint = `Use MCP server "${routed.mcp}" — call mcp_search("<action>") to load tools.`;
+  }
   const context = buildContext({ userName: currentUserName(), insight: routed.insight, hint: mcpHint, recent: routed.recentMessages, exchange: routed.exchange, memory: readMemoryDigest({ prefsOnly: true }), mcpServers: mcpNames });
   const messages = [{ role: 'user', content: context + routed.query }];
   let webCalls = 0;
   let budgetNoted = false;
   let liteTokens = 0;
   let expanded = (routed.tools || 'all') === 'all';
-  if (routed.mcp && !mcpMod) mcpMod = await import('../mcp.js');
-  if (mcpMod) mcpMod.resetLoadedMcp();
   const mcpToolNames = routed.mcp ? ['mcp_search', 'mcp_list'] : [];
   const pickLite = () => {
     let names = expanded ? LITE_GROUPS.all : (LITE_GROUPS[routed.tools] || LITE_GROUPS.all);
@@ -198,7 +209,13 @@ export async function runAgent(userMessage, { onStep, maxSteps, forceAgent } = {
   const unlocked = new Set();
   const customMcp = hasCustomMcp();
   if (customMcp && !mcpMod) mcpMod = await import('../mcp.js');
-  if (mcpMod) mcpMod.resetLoadedMcp();
+  if (mcpMod) {
+    mcpMod.resetLoadedMcp();
+    if (routed.mcp) {
+      const mcpQuery = typeof routed.mcp === 'string' ? `${routed.mcp} ${userMessage}` : userMessage;
+      await mcpMod.searchMcp(mcpQuery);
+    }
+  }
   const pickTools = () => {
     const all = [...BASE_TOOLS, ...toolDefs.filter((t) => unlocked.has(t.function.name) && !BASE_TOOLS.includes(t)), ...(customMcp ? toolDefs.filter((t) => t.function.name === 'mcp_search' || t.function.name === 'mcp_list') : []), ...(mcpMod ? mcpMod.getLoadedMcpDefs() : [])];
     return isSoloOnly() ? all.filter((t) => !SUB.includes(t.function?.name || t.name)) : all;
@@ -215,7 +232,14 @@ export async function runAgent(userMessage, { onStep, maxSteps, forceAgent } = {
   }
   while (history.length && history[0].role === 'assistant') history.shift();
   const mcpNames = customMcp ? getMcpNames() : undefined;
-  const mcpHint = typeof routed.mcp === 'string' ? `use MCP server "${routed.mcp}" — call mcp_search("${routed.mcp}") to load its tools` : undefined;
+  const preloaded = mcpMod ? mcpMod.getLoadedMcpDefs() : [];
+  const preloadedNames = preloaded.map((t) => t.function.name);
+  let mcpHint = undefined;
+  if (preloadedNames.length) {
+    mcpHint = `MCP server "${routed.mcp}" active. Relevant tools already loaded: ${preloadedNames.join(', ')}. Call them directly, or call mcp_search("<action>") if you need different tools.`;
+  } else if (typeof routed.mcp === 'string') {
+    mcpHint = `Use MCP server "${routed.mcp}" — call mcp_search("<action>") to load tools.`;
+  }
   const context = buildContext({ userName: currentUserName(), insight: routed.insight, dataContent: project.dataContent, taskSummary: project.taskSummary, hint: mcpHint, memory: readMemoryDigest(), mcpServers: mcpNames });
   const messages = [...history];
   const cur = context + userMessage;
