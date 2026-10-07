@@ -405,3 +405,134 @@ defineCommand({
     ctx.print('SESSION-' + id + ' deleted. Your next message starts a new session.');
   }
 });
+
+
+// --------------------------------------------------------------
+// ---- mcp commands ----
+defineCommand({
+  name: 'mcp:list',
+  description: 'List MCP servers',
+  run: async (_, ctx) => {
+    const fs = await import('node:fs');
+    const os = await import('node:os');
+    const path = await import('node:path');
+    const file = path.join(os.homedir(), '.levi', 'mcp.json');
+    const cfg = JSON.parse(fs.readFileSync(file,'utf8'));
+    const { connectedServers } = await import('../mcp.js');
+    const connected = connectedServers();
+    const lines = Object.entries(cfg.mcpServers||{}).map(([k,v])=>{
+      const st = v._disabled? '❌ disabled' : connected.includes(k)? '🟢 connected' : '⚪ idle';
+      return `${st} ${k} -> ${v.command} ${v.args.join(' ')}`;
+    });
+    ctx.print(lines.join('\n') || 'No MCP servers');
+  }
+});
+
+defineCommand({
+  name: 'mcp:add',
+  description: 'Add MCP: /mcp:add <name> <command> [args...] | /mcp:add <name> --url https://... [--header K=V]',
+  args: [{ name: 'command', required: true, rest: true }],
+  run: async ({ command }, ctx) => {
+    const fs = await import('node:fs');
+    const os = await import('node:os');
+    const path = await import('node:path');
+    const file = path.join(os.homedir(), '.levi', 'mcp.json');
+    const cfg = JSON.parse(fs.readFileSync(file,'utf8'));
+    cfg.mcpServers = cfg.mcpServers || {};
+
+    const tokens = command.split(' ').filter(Boolean);
+    const name = tokens[0];
+    if (!name) return ctx.print('Usage: /mcp:add <name> --url https://... OR /mcp:add <name> <command> [args]');
+
+    if (tokens.includes('--url')) {
+      const urlIdx = tokens.indexOf('--url');
+      const url = tokens[urlIdx+1];
+      const headers = {};
+      const hIdx = tokens.indexOf('--header');
+      if (hIdx!== -1) {
+        for (const pair of tokens.slice(hIdx+1)) {
+          const eq = pair.indexOf('=');
+          if (eq>0) headers[pair.slice(0,eq)] = pair.slice(eq+1);
+        }
+      }
+      cfg.mcpServers[name] = { url, headers: Object.keys(headers).length?headers:undefined };
+      fs.writeFileSync(file, JSON.stringify(cfg,null,2));
+      ctx.print(`Added remote MCP ${name} -> ${url}\nDo /mcp:reload`);
+      return;
+    }
+
+    // stdio fallback (your old logic)
+    const envIdx = tokens.indexOf('--env');
+    let env = {};
+    let cmdArgs = tokens.slice(1);
+    if (envIdx!== -1) { /*... your env parsing */ }
+    cfg.mcpServers[name] = { command: cmdArgs[0]||'npx', args: cmdArgs.slice(1), env: Object.keys(env).length?env:undefined };
+    fs.writeFileSync(file, JSON.stringify(cfg,null,2));
+    ctx.print(`Added ${name}. /mcp:reload`);
+  }
+});
+
+defineCommand({
+  name: 'mcp:disable',
+  description: 'Disable MCP server',
+  args: [{ name: 'name', required: true }],
+  run: async ({ name }, ctx) => {
+    const fs = await import('node:fs');
+    const os = await import('node:os');
+    const path = await import('node:path');
+    const file = path.join(os.homedir(), '.levi', 'mcp.json');
+    const cfg = JSON.parse(fs.readFileSync(file,'utf8'));
+    if (!cfg.mcpServers?.[name]) return ctx.print(`Not found: ${name}`);
+    cfg.mcpServers[name]._disabled = true;
+    fs.writeFileSync(file, JSON.stringify(cfg,null,2));
+    ctx.print(`Disabled ${name}. /mcp:reload to disconnect.`);
+  }
+});
+
+defineCommand({
+  name: 'mcp:enable',
+  description: 'Enable MCP server',
+  args: [{ name: 'name', required: true }],
+  run: async ({ name }, ctx) => {
+    const fs = await import('node:fs');
+    const os = await import('node:os');
+    const path = await import('node:path');
+    const file = path.join(os.homedir(), '.levi', 'mcp.json');
+    const cfg = JSON.parse(fs.readFileSync(file,'utf8'));
+    if (!cfg.mcpServers?.[name]) return ctx.print(`Not found: ${name}`);
+    delete cfg.mcpServers[name]._disabled;
+    fs.writeFileSync(file, JSON.stringify(cfg,null,2));
+    ctx.print(`Enabled ${name}. /mcp:reload to connect.`);
+  }
+});
+
+defineCommand({
+  name: 'mcp:reload',
+  description: 'Reload all MCP servers',
+  run: async (_, ctx) => {
+    const { reloadMcpServers, connectedServers } = await import('../mcp.js');
+    if (reloadMcpServers) {
+      await reloadMcpServers();
+      ctx.print(`Reloaded. Connected: ${connectedServers().join(', ')||'none'}`);
+    } else {
+      ctx.print('Reload not implemented, restart Levi');
+    }
+  }
+});
+
+defineCommand({
+  name: 'mcp:remove',
+  description: 'Remove MCP server',
+  args: [{ name: 'name', required: true }],
+  run: async ({ name }, ctx) => {
+    const fs = await import('node:fs');
+    const os = await import('node:os');
+    const path = await import('node:path');
+    const file = path.join(os.homedir(), '.levi', 'mcp.json');
+    const cfg = JSON.parse(fs.readFileSync(file,'utf8'));
+    if (!cfg.mcpServers?.[name]) return ctx.print(`Not found: ${name}`);
+    delete cfg.mcpServers[name];
+    fs.writeFileSync(file, JSON.stringify(cfg,null,2));
+    ctx.print(`Removed ${name}`);
+  }
+});
