@@ -2,9 +2,8 @@ import React, { useState, useEffect } from 'react';
 import { Box, Text } from 'ink';
 
 const h = React.createElement;
+const CARD_COLOR = '#afd7ff';
 const GRAY = '#888888';
-const BORDER = '#555555';
-const CYAN = '#22d3ee';
 const GREEN = '#4ade80';
 const GOLD = '#ffd700';
 
@@ -26,7 +25,7 @@ export default function CommandBar({ output }) {
   const spark = SPARKS[frame % SPARKS.length];
 
   if (output.kind === 'text') {
-    return h(Box, { flexDirection: 'column', borderStyle: 'round', borderColor: BORDER, paddingX: 1 },
+    return h(Box, { flexDirection: 'column', borderStyle: 'round', borderColor: CARD_COLOR, paddingX: 1 },
       output.text.split('\n').map((line, i) => h(Text, { key: i, color: 'white' }, line)),
       h(Text, { color: GRAY }, 'Esc to close')
     );
@@ -39,24 +38,24 @@ export default function CommandBar({ output }) {
     const fillCount = Math.min(barLength, Math.max(3, Math.floor(((frame % 30) + 1) * 2.5)));
     const pct = Math.min(100, Math.floor((fillCount / barLength) * 100));
 
-    return h(Box, { flexDirection: 'column', borderStyle: 'round', borderColor: CYAN, paddingX: 1 },
+    return h(Box, { flexDirection: 'column', borderStyle: 'round', borderColor: CARD_COLOR, paddingX: 1 },
       h(Box, { justifyContent: 'space-between', marginBottom: 1 },
-        h(Text, { color: 'white', bold: true },
-          h(Text, { color: CYAN }, `${spark} `),
+        h(Text, { color: CARD_COLOR, bold: true },
+          `${spark} `,
           output.title || 'LEVI Workspace Initialized'
         ),
         h(Text, { color: GREEN, bold: true }, '[✓ Ready]')
       ),
       h(Box, { marginBottom: 1 },
-        h(Text, { color: CYAN }, '  Progress: '),
+        h(Text, { color: CARD_COLOR }, '  Progress: '),
         h(Text, { color: GREEN }, '█'.repeat(fillCount)),
         h(Text, { color: '#333333' }, '░'.repeat(Math.max(0, barLength - fillCount))),
         h(Text, { color: pct === 100 ? GREEN : GOLD }, ` ${pct}%`)
       ),
       (output.fields || []).map((f, i) =>
         h(Box, { key: i },
-          h(Text, { color: CYAN }, '  ▸ '),
-          h(Text, { color: GRAY }, (f.label + ': ').padEnd(15, ' ')),
+          h(Text, { color: CARD_COLOR }, '  ▸ '),
+          h(Text, { color: CARD_COLOR }, (f.label + ': ').padEnd(16, ' ')),
           h(Text, { color: f.color || 'white' }, f.value)
         )
       ),
@@ -67,17 +66,24 @@ export default function CommandBar({ output }) {
   }
 
   // Standard panel
-  return h(Box, { flexDirection: 'column', borderStyle: 'round', borderColor: output.borderColor || BORDER, paddingX: 1 },
-    h(Box, { justifyContent: 'space-between' },
-      h(Text, { color: 'white', bold: true }, output.title),
-      output.status ? h(Text, { color: GREEN }, `[${output.status}]`) : null
+  return h(Box, { flexDirection: 'column', borderStyle: 'round', borderColor: CARD_COLOR, paddingX: 1 },
+    h(Box, { justifyContent: 'space-between', marginBottom: 1 },
+      h(Text, { color: CARD_COLOR, bold: true }, `✦ ${output.title || 'LEVI'}`),
+      output.status
+        ? h(Text, { color: GREEN, bold: true }, `[${output.status}]`)
+        : h(Text, { color: GRAY }, '[Esc to close]')
     ),
     (output.fields || []).map((f, i) =>
       h(Box, { key: i },
-        h(Text, { color: GRAY }, f.label + ': '),
+        h(Text, { color: CARD_COLOR }, '▸ '),
+        h(Text, { color: CARD_COLOR }, f.label + ': '),
         h(Text, { color: f.color || 'white' }, f.value)
       )
     ),
-    h(Text, { color: GRAY }, 'Esc to close')
+    output.status
+      ? h(Box, { marginTop: 1 },
+          h(Text, { color: GRAY }, 'Esc to close')
+        )
+      : null
   );
 }

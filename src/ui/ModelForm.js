@@ -93,22 +93,24 @@ export default function ModelForm({ mode, name, onDone }) {
 
   return h(
     Box,
-    { flexDirection: 'column' },
-    h(Text, null,
-      h(Text, { color: CYAN, bold: true }, edit ? `Edit ${name}` : 'New model'),
-      h(Text, { color: GRAY }, `  ${step + 1}/${fields.length}`)
+    { flexDirection: 'column', borderStyle: 'round', borderColor: CYAN, paddingX: 1 },
+    h(Box, { justifyContent: 'space-between', marginBottom: 1 },
+      h(Text, { color: CYAN, bold: true }, edit ? `✦ EDIT MODEL: ${name}` : '✦ NEW MODEL'),
+      h(Text, { color: CYAN }, `[${step + 1}/${fields.length}]`)
     ),
     h(Box, null,
-      h(Text, { color: CYAN }, '❯ '),
-      h(Text, { color: SOFT }, `${f.label}: `),
+      h(Text, { color: CYAN, bold: true }, '❯ '),
+      h(Text, { color: CYAN }, `${f.label}: `),
       f.select
         ? h(Text, { color: CYAN }, SDKS.map((s, i) => `${i === sel ? '●' : '○'} ${s}`).join('   '))
         : h(Text, { color: 'white' }, shown),
       f.select ? null : h(Text, { inverse: true }, ' '),
       !f.select && !text && f.hint ? h(Text, { color: GRAY }, ` ${f.hint}`) : null
     ),
-    error
-      ? h(Text, { color: 'red' }, error)
-      : h(Text, { color: GRAY }, `${f.select ? '←→ choose · ' : ''}enter ${last ? 'save' : 'next'} · esc cancel${keep}`)
+    h(Box, { marginTop: 1 },
+      error
+        ? h(Text, { color: 'red' }, `✗ ${error}`)
+        : h(Text, { color: GRAY }, `${f.select ? '←→ choose · ' : ''}enter ${last ? 'save' : 'next'} · esc cancel${keep}`)
+    )
   );
 }

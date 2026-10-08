@@ -39,6 +39,9 @@ export function runBootstrap({ onProgress = null, quiet = false } = {}) {
     'config.json': JSON.stringify({
       version: "1.0.0",
       createdAt: new Date().toISOString(),
+      compaction_threshold: {
+	"threshold": 6000
+      },
       auth: {
         token: null,
         user: null,

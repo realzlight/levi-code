@@ -5,7 +5,7 @@ import { usage } from './args.js';
 
 const h = React.createElement;
 
-const CYAN = '#22d3ee';
+const CYAN = '#afd7ff';
 const SOFT = '#c4c4c4';
 const GRAY = '#666666';
 const MAX_ROWS = 6;
@@ -69,7 +69,7 @@ export default function Prompt({ onChat }) {
   const palette = paletteOn
     ? h(
         Box,
-        { flexDirection: 'column', borderStyle: 'round', borderColor: GRAY, paddingX: 1 },
+        { flexDirection: 'column', borderStyle: 'round', borderColor: CYAN, paddingX: 1 },
         matches.length
           ? visible.map((c, i) => {
               const isSel = start + i === active;
@@ -98,7 +98,7 @@ export default function Prompt({ onChat }) {
       : null,
     h(
       Box,
-      { borderStyle: 'round', borderColor: paletteOn ? CYAN : GRAY, paddingX: 1 },
+      { borderStyle: 'round', borderColor: CYAN, paddingX: 1 },
       h(Text, { color: CYAN }, '❯ '),
       h(Text, null, value),
       h(Text, { inverse: true }, ' ')

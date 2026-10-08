@@ -13,6 +13,7 @@ const HINTS = [
   ['/', 'commands'],
   ['alt+enter', 'send'],
   ['↑↓', 'scroll'],
+  ['ctrl+o', 'tools'],
   ['/help', 'all commands']
 ];
 

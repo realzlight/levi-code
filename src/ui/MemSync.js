@@ -75,11 +75,16 @@ export default function MemSync({ mode, onDone }) {
     return () => { cancelled = true; };
   }, [mode]);
 
-  return h(Box, { flexDirection: 'column' },
-    h(Text, { color: 'white', bold: true }, mode === 'push' ? 'Syncing to GitHub' : 'Syncing from GitHub'),
-    h(Box, { flexDirection: 'column', marginTop: 1 },
+  const CARD_COLOR = '#afd7ff';
+
+  return h(Box, { flexDirection: 'column', borderStyle: 'round', borderColor: CARD_COLOR, paddingX: 1 },
+    h(Box, { justifyContent: 'space-between', marginBottom: 1 },
+      h(Text, { color: CARD_COLOR, bold: true }, mode === 'push' ? '✦ SYNC TO GITHUB' : '✦ SYNC FROM GITHUB'),
+      h(Text, { color: finished ? GREEN : CARD_COLOR }, finished ? '[✓ complete]' : '[syncing]')
+    ),
+    h(Box, { flexDirection: 'column' },
       steps.map((step) => h(StepLine, { key: step.id, step, state: states[step.id], frame }))
     ),
-    finished ? h(Box, { marginTop: 1 }, h(Text, { color: GRAY }, 'Done.')) : null
+    finished ? h(Box, { marginTop: 1 }, h(Text, { color: GRAY }, 'Operation completed.')) : null
   );
 }

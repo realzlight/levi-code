@@ -6,13 +6,29 @@ import { chat } from './client.js';
 const LEVI_HOME = path.join(os.homedir(), '.levi');
 const BUFFER_ROOT = path.join(LEVI_HOME, 'ACTIVE-BUFFER');
 const MEMORY_ROOT = path.join(LEVI_HOME, 'MEMORY');
-const THRESHOLD = 6000; // chars, past the summary line, triggers buffer compaction
-const KEEP_RECENT = 6; // messages kept raw after compaction
-const USER_SUMMARY_THRESHOLD = 2000; // chars of facts, triggers a 3-line summary refresh on USER.md/DATA.md
+
+const configRaw = fs.readFileSync(path.join(LEVI_HOME,'config.json'),'utf8');
+const config = JSON.parse(configRaw);
+
+let USER_PROVIDED_THRESHOLD = config.compaction_threshold?.threshold || 6000;
+
+// clamp - don't use let inside if
+if (USER_PROVIDED_THRESHOLD < 2000){
+  USER_PROVIDED_THRESHOLD = 2000;
+}
+
+if (USER_PROVIDED_THRESHOLD > 10000){
+  USER_PROVIDED_THRESHOLD = 10000; // was 6000 - bug, should be max
+}
+
+const THRESHOLD = USER_PROVIDED_THRESHOLD; 
+const KEEP_RECENT = 6;
+const USER_SUMMARY_THRESHOLD = 2000;
 
 function bufferPath(id) {
   return path.join(BUFFER_ROOT, `SESSION-${id}`, 'BUFFER.MD');
 }
+
 
 function parse(raw) {
   const summaryMatch = raw.match(/^summary:(.*)\n\n?/);

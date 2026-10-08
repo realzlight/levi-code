@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { Box, Text, useInput } from 'ink';
 
 const h = React.createElement;
+const CARD_COLOR = '#afd7ff';
 const GRAY = '#888888';
 
 export default function AskPrompt({ question, options, allowCustom = true, onPick }) {
@@ -32,21 +33,30 @@ export default function AskPrompt({ question, options, allowCustom = true, onPic
     }
   });
 
-  return h(Box, { flexDirection: 'column' },
+  return h(Box, { flexDirection: 'column', borderStyle: 'round', borderColor: CARD_COLOR, paddingX: 1 },
+    h(Box, { justifyContent: 'space-between', marginBottom: 1 },
+      h(Text, { color: CARD_COLOR, bold: true }, '✦ INPUT REQUIRED'),
+      h(Text, { color: GRAY }, customMode ? '[type custom]' : `[1 of ${allOptions.length}]`)
+    ),
     h(Text, { color: 'white', bold: true }, question),
     customMode
       ? h(Box, { marginTop: 1 },
-          h(Text, { color: 'white' }, '\u276F ' + customText + '\u2588')
+          h(Text, { color: CARD_COLOR, bold: true }, '❯ '),
+          h(Text, { color: 'white' }, customText + '█')
         )
       : h(Box, { flexDirection: 'column', marginTop: 1 },
-          allOptions.map((opt, i) =>
-            h(Text, {
-              key: i,
-              color: i === sel ? 'black' : 'white',
-              backgroundColor: i === sel ? '#ffffff' : undefined
-            }, (i === sel ? '\u203A ' : '  ') + opt)
-          ),
-          h(Text, { color: GRAY }, '\u2191\u2193 select \u2022 Enter to pick')
+          allOptions.map((opt, i) => {
+            const isSel = i === sel;
+            return h(
+              Box,
+              { key: i },
+              h(Text, { color: CARD_COLOR }, isSel ? '› ' : '  '),
+              h(Text, { color: isSel ? CARD_COLOR : '#999999', bold: isSel }, opt)
+            );
+          }),
+          h(Box, { marginTop: 1 },
+            h(Text, { color: GRAY }, '↑↓ select · Enter to pick · Esc to cancel')
+          )
         )
   );
 }

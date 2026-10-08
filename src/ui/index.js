@@ -16,6 +16,7 @@ import CompactProgress from './CompactProgress.js';
 import CommandBar from './CommandBar.js';
 import { filterCommands, runCapture } from './commands.js';
 import { currentSessionId, createSession, getTitle, setTitle, appendMessage, loadMessages, resumeSession, getSummary, getProject } from '../agent/session.js';
+import { getLastTurnUsage } from '../agent/usage.js';
 import { generateTitle } from '../agent/title.js';
 import { runAgent } from '../agent/loop.js';
 import { maybeCompact } from '../agent/compact.js';
@@ -147,7 +148,6 @@ const CP_EFFORTS = {
   xhigh:  { glyph: '◉', label: 'xhigh · /effort' },
   max:    { glyph: '◈', label: 'max · /effort' },
 };
-
 function ClaudePrompt({ value, width }) {
   const display = value + '\u2588';
   const lines = display.split('\n');
@@ -197,43 +197,44 @@ const CT_DIM = '#7d7d7d';
 const CT_DOTS = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
 
 function ClaudeThinking({ running = true, verbs = CT_VERBS, showTokens = true }) {
-  const [glyph, setGlyph] = useState(0);
-  const [verbIdx, setVerbIdx] = useState(0);
+  const [frame, setFrame] = useState(0);
   const [secs, setSecs] = useState(0);
-  const [dot, setDot] = useState(0);
 
   useEffect(() => {
     if (!running) return;
-    const id = setInterval(() => setGlyph((g) => (g + 1) % CT_GLYPHS.length), 110);
-    return () => clearInterval(id);
+    const animId = setInterval(() => setFrame((f) => f + 1), 100);
+    const secId = setInterval(() => setSecs((s) => s + 1), 1000);
+    return () => {
+      clearInterval(animId);
+      clearInterval(secId);
+    };
   }, [running]);
-
-  useEffect(() => {
-    if (!running) return;
-    const id = setInterval(() => setDot((d) => (d + 1) % CT_DOTS.length), 80);
-    return () => clearInterval(id);
-  }, [running]);
-
-  useEffect(() => {
-    if (!running) return;
-    const id = setInterval(() => setSecs((s) => s + 1), 1000);
-    return () => clearInterval(id);
-  }, [running]);
-
-  useEffect(() => {
-    if (!running) return;
-    const id = setInterval(() => setVerbIdx((v) => (v + 1) % verbs.length), 1000); // <-- 1s now
-    return () => clearInterval(id);
-  }, [running, verbs.length]);
 
   if (!running) return null;
 
+  const dot = CT_DOTS[frame % CT_DOTS.length];
+  const glyph = CT_GLYPHS[frame % CT_GLYPHS.length];
+  // 3 second switching for verbs
+  const verbIdx = Math.floor(secs / 3);
   const verb = verbs[verbIdx % verbs.length];
-  const tokens = showTokens? ` \u00b7 \u2191 ${Math.max(0, secs * 137)} tokens` : '';
+
+  let tokens = '';
+  if (showTokens) {
+    const id = currentSessionId();
+    if (id) {
+      const u = getLastTurnUsage(id);
+      const inTok = u.inputTokens || 0;
+      const outTok = u.outputTokens || 0;
+      const total = inTok + outTok;
+      if (total > 0) {
+        tokens = ` · ↑ ${inTok} in · ↓ ${outTok} out`;
+      }
+    }
+  }
 
   return h(Box, { gap: 1 },
-    h(Text, { color: CLAUDE_COLOR }, CT_DOTS[dot]),
-    h(Text, { color: CLAUDE_COLOR }, CT_GLYPHS[glyph]),
+    h(Text, { color: CLAUDE_COLOR }, dot),
+    h(Text, { color: CLAUDE_COLOR }, glyph),
     h(Text, { color: CLAUDE_COLOR, bold: true }, `${verb}\u2026`),
     h(Text, { color: CT_DIM }, `(${secs}s${tokens} \u00b7 esc to interrupt)`)
   );
@@ -247,7 +248,196 @@ function ClaudeThinking({ running = true, verbs = CT_VERBS, showTokens = true })
 
 const CM_USER_BG = '#3a3a3a';   // dark background for user rows
 const CM_CARET = '#4e4e4e';     // subdued ❯ caret
-const CM_AGENT_TEXT = '#c0caf5'; // light blue/lavender for assistant text
+const CM_AGENT_TEXT = '#ffffff'; // white for main assistant text
+
+function parseLineToNodes(line, safeWidth = 70) {
+  const trimmed = line.trim();
+  // 1. Horizontal divider
+  if (trimmed === '[hr]' || trimmed === '---') {
+    return [h(Text, { key: 'hr', color: '#555555' }, '\u2500'.repeat(Math.min(safeWidth, 42)))];
+  }
+
+  // 2. Pure bar graph line
+  const fullBarMatch = trimmed.match(/^\[bar:(\d+)(?:%|)?(?::([^\]]+))?\]$/);
+  if (fullBarMatch) {
+    const pct = Math.min(100, Math.max(0, parseInt(fullBarMatch[1], 10)));
+    const label = fullBarMatch[2] ? fullBarMatch[2].trim() + ' ' : '';
+    const barLen = 14;
+    const filled = Math.round((pct / 100) * barLen);
+    const empty = barLen - filled;
+    return [
+      label ? h(Text, { key: 'lbl', color: '#afd7ff' }, label) : null,
+      h(Text, { key: 'fill', color: '#afd7ff' }, '█'.repeat(filled)),
+      h(Text, { key: 'empty', color: '#333333' }, '░'.repeat(empty)),
+      h(Text, { key: 'pct', color: '#ffd700', bold: true }, ` ${pct}%`)
+    ].filter(Boolean);
+  }
+
+  // 3. Tokenize inline tags and bar graphs
+  const tokens = [];
+  const regex = /\[(\/?)(c|b|chip|code|dim|g|r|gold|badge|h|i|em)\]|\[bar:(\d+)(?:%|)?(?::([^\]]+))?\]|`([^`]+)`|\*\*([^*]+)\*\*|\*([^*\n]+)\*/g;
+  let lastIndex = 0;
+  let match;
+  const styleStack = [];
+
+  const getActiveStyle = () => {
+    let s = { color: CM_AGENT_TEXT, bold: false, italic: false };
+    for (const st of styleStack) Object.assign(s, st);
+    return s;
+  };
+
+  while ((match = regex.exec(line)) !== null) {
+    if (match.index > lastIndex) {
+      tokens.push({ text: line.slice(lastIndex, match.index), style: getActiveStyle() });
+    }
+    lastIndex = regex.lastIndex;
+
+    // Inline bar graph
+    if (match[3]) {
+      const pct = Math.min(100, Math.max(0, parseInt(match[3], 10)));
+      const label = match[4] ? match[4].trim() + ' ' : '';
+      const barLen = 10;
+      const filled = Math.round((pct / 100) * barLen);
+      const empty = barLen - filled;
+      tokens.push({
+        isBar: true,
+        label,
+        filled,
+        empty,
+        pct
+      });
+      continue;
+    }
+
+    // Markdown `code`
+    if (match[5] !== undefined) {
+      tokens.push({ text: match[5], style: { ...getActiveStyle(), backgroundColor: '#2a2a2a', color: '#afd7ff' } });
+      continue;
+    }
+
+    // Markdown **bold**
+    if (match[6] !== undefined) {
+      tokens.push({ text: match[6], style: { ...getActiveStyle(), bold: true } });
+      continue;
+    }
+
+    // Markdown *italic*
+    if (match[7] !== undefined) {
+      tokens.push({ text: match[7], style: { ...getActiveStyle(), italic: true } });
+      continue;
+    }
+
+    const isClose = match[1] === '/';
+    const tag = match[2];
+
+    if (!isClose) {
+      if (tag === 'c') styleStack.push({ color: '#afd7ff', bold: true });
+      else if (tag === 'b') styleStack.push({ bold: true });
+      else if (tag === 'i' || tag === 'em') styleStack.push({ italic: true });
+      else if (tag === 'chip' || tag === 'code') styleStack.push({ backgroundColor: '#2a2a2a', color: '#afd7ff' });
+      else if (tag === 'dim') styleStack.push({ color: '#888888' });
+      else if (tag === 'g') styleStack.push({ color: '#4ade80' });
+      else if (tag === 'r') styleStack.push({ color: '#f87171' });
+      else if (tag === 'gold') styleStack.push({ color: '#ffd700' });
+      else if (tag === 'badge') styleStack.push({ color: '#afd7ff', bold: true, isBadge: true });
+      else if (tag === 'h') styleStack.push({ color: '#afd7ff', bold: true, isHeading: true });
+    } else {
+      for (let i = styleStack.length - 1; i >= 0; i--) {
+        const item = styleStack[i];
+        if (
+          (tag === 'c' && item.color === '#afd7ff' && !item.isBadge && !item.isHeading) ||
+          (tag === 'b' && item.bold && !item.color) ||
+          ((tag === 'i' || tag === 'em') && item.italic) ||
+          ((tag === 'chip' || tag === 'code') && item.backgroundColor === '#2a2a2a') ||
+          (tag === 'dim' && item.color === '#888888') ||
+          (tag === 'g' && item.color === '#4ade80') ||
+          (tag === 'r' && item.color === '#f87171') ||
+          (tag === 'gold' && item.color === '#ffd700') ||
+          (tag === 'badge' && item.isBadge) ||
+          (tag === 'h' && item.isHeading)
+        ) {
+          styleStack.splice(i, 1);
+          break;
+        }
+      }
+    }
+  }
+
+  if (lastIndex < line.length) {
+    tokens.push({ text: line.slice(lastIndex), style: getActiveStyle() });
+  }
+
+  const nodes = [];
+  tokens.forEach((tok, i) => {
+    if (tok.isBar) {
+      if (tok.label) nodes.push(h(Text, { key: `bar-lbl-${i}`, color: '#afd7ff' }, tok.label));
+      nodes.push(h(Text, { key: `bar-fill-${i}`, color: '#afd7ff' }, '█'.repeat(tok.filled)));
+      nodes.push(h(Text, { key: `bar-empty-${i}`, color: '#333333' }, '░'.repeat(tok.empty)));
+      nodes.push(h(Text, { key: `bar-pct-${i}`, color: '#ffd700', bold: true }, ` ${tok.pct}%`));
+      return;
+    }
+
+    let content = tok.text;
+    if (tok.style.isBadge) content = `[${content}]`;
+    if (tok.style.isHeading) content = `◆ ${content}`;
+
+    nodes.push(h(Text, {
+      key: `t-${i}`,
+      color: tok.style.color || CM_AGENT_TEXT,
+      bold: tok.style.bold || false,
+      italic: tok.style.italic || false,
+      backgroundColor: tok.style.backgroundColor
+    }, content));
+  });
+
+  return nodes.length ? nodes : [h(Text, { key: 'blank' }, ' ')];
+}
+
+function wrapAgentLines(text, maxW) {
+  if (!text) return [''];
+
+  // Expand [indent]...[/indent] by prefixing each inner line with 2 spaces
+  let processed = text.replace(/\[indent\]([\s\S]*?)\[\/indent\]/gi, (_, inner) => {
+    return inner.split('\n').map((l) => (l.trim().length ? '  ' + l : l)).join('\n');
+  });
+  processed = processed.replace(/\[\/?indent\]/gi, '');
+
+  const max = Math.max(15, maxW);
+  const result = [];
+  const lines = processed.split('\n');
+
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (trimmed === '[hr]' || trimmed === '---' || /^\[bar:[^\]]+\]$/.test(trimmed)) {
+      result.push(line);
+      continue;
+    }
+
+    const clean = line.replace(/\[\/?(c|b|chip|code|dim|g|r|gold|badge|h|i|em)\]/g, '').replace(/`[^`]+`/g, 'XXXX').replace(/\*\*[^*]+\*\*/g, 'XXXX').replace(/\*[^*\n]+\*/g, 'XXXX');
+    if (clean.length <= max) {
+      result.push(line);
+      continue;
+    }
+
+    const words = line.split(' ');
+    let cur = '';
+    let curVis = 0;
+    for (const w of words) {
+      const wVis = w.replace(/\[\/?(c|b|chip|code|dim|g|r|gold|badge|h|i|em)\]/g, '').replace(/`[^`]+`/g, 'XXXX').replace(/\*\*[^*]+\*\*/g, 'XXXX').replace(/\*[^*\n]+\*/g, 'XXXX').length;
+      if (curVis + wVis + 1 > max && cur.length > 0) {
+        result.push(cur);
+        cur = w;
+        curVis = wVis;
+      } else {
+        cur = cur ? cur + ' ' + w : w;
+        curVis += (curVis ? 1 : 0) + wVis;
+      }
+    }
+    if (cur) result.push(cur);
+  }
+
+  return result;
+}
 
 function ClaudeMessage({ role = 'assistant', children, width }) {
   if (role === 'user') {
@@ -271,9 +461,16 @@ function ClaudeMessage({ role = 'assistant', children, width }) {
     );
   }
 
-  return h(Box, { marginBottom: 1 },
-    h(Text, { color: DOT_COLOR }, '\u25CF'),
-    h(Text, { color: CM_AGENT_TEXT }, ` ${children}`)
+  const safeW = Math.max(15, (width || 80) - 3);
+  const wrapped = wrapAgentLines(typeof children === 'string' ? children : '', safeW);
+
+  return h(Box, { marginBottom: 1, flexDirection: 'column' },
+    wrapped.map((line, i) =>
+      h(Box, { key: i },
+        h(Text, { color: i === 0 ? DOT_COLOR : 'transparent' }, i === 0 ? '\u25CF ' : '  '),
+        h(Box, null, ...parseLineToNodes(line, safeW))
+      )
+    )
   );
 }
 
@@ -553,12 +750,28 @@ function wrapText(text, width) {
   return result;
 }
 
-function buildDisplayLines(messages, width) {
+function buildDisplayLines(messages, width, compactTools = false) {
   const lines = [];
   const safeWidth = Math.max(20, width);
 
+  // When compactTools is enabled (via Ctrl+O), only show the latest tool call in any sequence
+  const visibleToolCalls = new Set();
+  if (compactTools) {
+    for (let i = 0; i < messages.length; i++) {
+      if (messages[i].role === 'tool_call') {
+        if (i === messages.length - 1 || messages[i + 1].role !== 'tool_call') {
+          visibleToolCalls.add(i);
+        }
+      }
+    }
+  }
+
   messages.forEach((msg, msgIdx) => {
     if (msg.role === 'tool_call') {
+      if (compactTools && !visibleToolCalls.has(msgIdx)) {
+        return; // Collapse older tool call in single-tool mode
+      }
+
       const statusColor = TC_STATUS_COLOR[msg.status || 'success'] || TC_STATUS_COLOR.success;
       lines.push({
         key: `tc-${msgIdx}-head`,
@@ -625,20 +838,24 @@ function buildDisplayLines(messages, width) {
         }
       }
 
+      // Explicit non-collapsing row spacer
       lines.push({
         key: `msg-${msgIdx}-sep`,
-        node: h(Text, { key: `msg-${msgIdx}-sep` }, ' ')
+        node: h(Box, { key: `msg-${msgIdx}-sep`, height: 1 }, h(Text, null, ' '))
       });
       return;
     }
 
     if (msg.role === 'agent' && msg.text === '...') {
-      lines.push({
-        key: `msg-${msgIdx}-thinking`,
-        node: h(Box, { key: `msg-${msgIdx}-thinking` },
-          h(ClaudeThinking, { running: true })
-        )
-      });
+      // Ensure only the single latest thinking indicator ever renders
+      if (msgIdx === messages.length - 1) {
+        lines.push({
+          key: `msg-${msgIdx}-thinking`,
+          node: h(Box, { key: `msg-${msgIdx}-thinking` },
+            h(ClaudeThinking, { running: true })
+          )
+        });
+      }
       return;
     }
 
@@ -662,9 +879,10 @@ function buildDisplayLines(messages, width) {
         });
       });
 
+      // Explicit non-collapsing row spacer between user message and agent
       lines.push({
         key: `msg-${msgIdx}-sep`,
-        node: h(Text, { key: `msg-${msgIdx}-sep` }, ' ')
+        node: h(Box, { key: `msg-${msgIdx}-sep`, height: 1 }, h(Text, null, ' '))
       });
       return;
     }
@@ -672,7 +890,7 @@ function buildDisplayLines(messages, width) {
     // Agent message
     const text = typeof msg.text === 'string' ? msg.text : '';
     const textWidth = Math.max(10, safeWidth - 3);
-    const wrapped = wrapText(text, textWidth);
+    const wrapped = wrapAgentLines(text, textWidth);
 
     wrapped.forEach((chunk, lineIdx) => {
       const isFirst = lineIdx === 0;
@@ -680,14 +898,15 @@ function buildDisplayLines(messages, width) {
         key: `msg-${msgIdx}-${lineIdx}`,
         node: h(Box, { key: `msg-${msgIdx}-${lineIdx}` },
           h(Text, { color: isFirst ? DOT_COLOR : 'transparent' }, isFirst ? '\u25CF ' : '  '),
-          h(Text, { color: CM_AGENT_TEXT }, chunk)
+          h(Box, null, ...parseLineToNodes(chunk, textWidth))
         )
       });
     });
 
+    // Explicit non-collapsing row spacer after agent message
     lines.push({
       key: `msg-${msgIdx}-sep`,
-      node: h(Text, { key: `msg-${msgIdx}-sep` }, ' ')
+      node: h(Box, { key: `msg-${msgIdx}-sep`, height: 1 }, h(Text, null, ' '))
     });
   });
 
@@ -709,6 +928,7 @@ function App({ mascot }) {
   const [form, setForm] = useState(null);
   const [commandOutput, setCommandOutput] = useState(null);
   const [closed, setClosed] = useState(false);
+  const [compactTools, setCompactTools] = useState(false);
   const { exit } = useApp();
   const { columns: terminalWidth, rows: terminalHeight } = useTerminalSize();
 
@@ -733,7 +953,6 @@ function App({ mascot }) {
   const fill = (cmd) => setInput('/' + cmd.name + ' ');
 
   async function runSlash(text) {
-    setMessages((prev) => [...prev, { role: 'user', text }]);
     const { text: out, panel } = await runCapture(text, {
       clear: () => setMessages([]),
       exit,
@@ -871,7 +1090,7 @@ function App({ mascot }) {
     })();
   }
 
-  const displayLines = React.useMemo(() => buildDisplayLines(messages, terminalWidth), [messages, terminalWidth]);
+  const displayLines = React.useMemo(() => buildDisplayLines(messages, terminalWidth, compactTools), [messages, terminalWidth, compactTools]);
   const totalLines = displayLines.length;
 
   const isCompact = terminalHeight < 22;
@@ -907,33 +1126,29 @@ function App({ mascot }) {
   const hiddenAbove = start > 0;
   const hiddenBelow = end < totalLines;
 
-  const animateTo = React.useCallback((targetVal) => {
-    targetScrollRef.current = Math.max(0, Math.min(targetVal, maxScroll));
-    if (animTimerRef.current) return;
-
-    const tick = () => {
-      setScrollOffset((curr) => {
-        const target = targetScrollRef.current;
-        const diff = target - curr;
-        if (diff === 0) {
-          animTimerRef.current = null;
-          return target;
-        }
-        const step = Math.sign(diff) * Math.max(1, Math.ceil(Math.abs(diff) * 0.18));
-        const next = curr + step;
-        if (next === target) {
-          animTimerRef.current = null;
-          return target;
-        }
-        animTimerRef.current = setTimeout(tick, 12);
-        return next;
-      });
-    };
-    animTimerRef.current = setTimeout(tick, 12);
+  const scrollTo = React.useCallback((targetVal) => {
+    const clamped = Math.max(0, Math.min(targetVal, maxScroll));
+    targetScrollRef.current = clamped;
+    setScrollOffset(clamped);
   }, [maxScroll]);
+
+  // Auto-scroll to show latest message when conversation updates if already near bottom
+  useEffect(() => {
+    if (scrollOffset <= 3) {
+      setScrollOffset(0);
+      targetScrollRef.current = 0;
+    }
+  }, [totalLines]);
 
   useInput((char, key) => {
     if (form) return;
+
+    // Ctrl + O: toggle single tool call mode vs showing full tool call history
+    if ((key.ctrl && (char === 'o' || char === 'O')) || char === '\x0f') {
+      setCompactTools((prev) => !prev);
+      return;
+    }
+
     if (paletteOn && matches.length) {
       if (key.upArrow) { setSel((active - 1 + matches.length) % matches.length); return; }
       if (key.downArrow) { setSel((active + 1) % matches.length); return; }
@@ -947,19 +1162,19 @@ function App({ mascot }) {
     if (key.escape) { setClosed(true); setCommandOutput(null); return; }
 
     if (key.pageUp) {
-      animateTo(targetScrollRef.current + 6);
+      scrollTo(targetScrollRef.current + 6);
       return;
     }
     if (key.pageDown) {
-      animateTo(targetScrollRef.current - 6);
+      scrollTo(targetScrollRef.current - 6);
       return;
     }
     if (key.upArrow) {
-      animateTo(targetScrollRef.current + 1);
+      scrollTo(targetScrollRef.current + 2);
       return;
     }
     if (key.downArrow) {
-      animateTo(targetScrollRef.current - 1);
+      scrollTo(targetScrollRef.current - 2);
       return;
     }
 
@@ -1000,8 +1215,8 @@ function App({ mascot }) {
   });
 
   useEffect(() => {
-    globalScrollUp = () => animateTo(targetScrollRef.current + 1);
-    globalScrollDown = () => animateTo(targetScrollRef.current - 1);
+    globalScrollUp = () => scrollTo(targetScrollRef.current + 2);
+    globalScrollDown = () => scrollTo(targetScrollRef.current - 2);
 
     let tapTimer = null;
     globalTap = () => {
@@ -1019,7 +1234,7 @@ function App({ mascot }) {
       globalTap = null;
       if (tapTimer) clearTimeout(tapTimer);
     };
-  }, [animateTo]);
+  }, [scrollTo]);
 
   return h(
     Box,

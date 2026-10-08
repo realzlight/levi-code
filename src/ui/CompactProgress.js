@@ -5,7 +5,7 @@ const h = React.createElement;
 const GRAY = '#888888';
 const GREEN = '#4ade80';
 const RED = '#f87171';
-const CYAN = '#22d3ee';
+const CYAN = '#afd7ff';
 const LAVENDER = '#c0caf5';
 
 const COMPACT_STEPS = [
@@ -89,9 +89,9 @@ export default function CompactProgress({ sessionId, onDone }) {
   }, [sessionId]);
 
   return h(Box, { flexDirection: 'column', borderStyle: 'round', borderColor: finished ? (result?.ok ? GREEN : RED) : CYAN, paddingX: 1, paddingY: 0 },
-    h(Box, { justifyContent: 'space-between' },
-      h(Text, { color: 'white', bold: true }, `Compacting SESSION-${sessionId || '?'}`),
-      finished ? h(Text, { color: GRAY }, 'Press Enter or Esc to return') : null
+    h(Box, { justifyContent: 'space-between', marginBottom: 1 },
+      h(Text, { color: CYAN, bold: true }, `✦ COMPACTING SESSION-${sessionId || '?'}`),
+      finished ? h(Text, { color: GRAY }, '[press enter/esc]') : null
     ),
     h(Box, { flexDirection: 'column', marginTop: 1, marginBottom: 1 },
       COMPACT_STEPS.map((step) => h(StepLine, { key: step.id, step, state: states[step.id], frame }))
