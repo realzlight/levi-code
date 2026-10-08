@@ -12,7 +12,7 @@ import { readMemoryDigest } from './memory.js';
 import { CONVO_PROMPT, LIGHT_PROMPT, agentPrompt, buildContext, litePrompt } from './prompts.js';
 
 const LIST_COMMANDS = ['list_commands','list_fs_commands','list_web_commands','list_task_commands','list_memory_commands','list_meta_commands','list_subagent_commands'];
-const TRIVIAL = new Set(['bash','read_file','write_file','edit_file',...LIST_COMMANDS]);
+const TRIVIAL = new Set(['bash','read_file','write_file','edit_file','find','list_dir','read_lines','grep_search',...LIST_COMMANDS]);
 
 
 const BASE_TOOLS = [...toolDefs.filter((t) => TRIVIAL.has(t.function.name) || ['ask', 'remember', 'list_tools', 'set_project'].includes(t.function.name)), thinkToolDef(toolDefs[0])];
@@ -33,9 +33,17 @@ function buildSystem() {
 
 // messages = [{ role: 'user'|'assistant', content: string }]
 // onStep(kind, data) — optional progress callback: 'tool_call' | 'tool_result' | 'done' | 'thought'
-const LITE_NAMES = ['bash', 'read_file', 'write_file', 'edit_file', 'google_search', 'fetch', 'ask', 'remember', 'get_tasks', 'set_task_done', 'add_task_cluster', 'mcp_search', 'mcp_list'];
+const LITE_NAMES = ['bash', 'read_file', 'write_file', 'edit_file', 'find', 'list_dir', 'read_lines', 'grep_search', 'google_search', 'fetch', 'ask', 'remember', 'get_tasks', 'set_task_done', 'add_task_cluster', 'mcp_search', 'mcp_list'];
 const LITE_TOOLS = toolDefs.filter((t) => LITE_NAMES.includes(t.function.name));
-const LITE_GROUPS = { none: [], memory: ['remember'], web: ['google_search', 'fetch'], shell: ['bash', 'read_file', 'write_file', 'edit_file', 'ask'], all: ['bash', 'read_file', 'write_file', 'edit_file', 'google_search', 'fetch', 'ask', 'remember'], tasks: ['get_tasks', 'set_task_done', 'add_task_cluster'], mcp: ['mcp_search', 'mcp_list', 'bash', 'read_file', 'write_file', 'edit_file', 'ask'] };
+const LITE_GROUPS = {
+  none: [],
+  memory: ['remember'],
+  web: ['google_search', 'fetch'],
+  shell: ['bash', 'read_file', 'write_file', 'edit_file', 'find', 'list_dir', 'read_lines', 'grep_search', 'ask'],
+  all: ['bash', 'read_file', 'write_file', 'edit_file', 'find', 'list_dir', 'read_lines', 'grep_search', 'google_search', 'fetch', 'ask', 'remember'],
+  tasks: ['get_tasks', 'set_task_done', 'add_task_cluster'],
+  mcp: ['mcp_search', 'mcp_list', 'bash', 'read_file', 'write_file', 'edit_file', 'find', 'list_dir', 'read_lines', 'grep_search', 'ask']
+};
 const MORE_TOOL = { type: 'function', function: { name: 'more_tools', description: 'Load all light tools (shell, files, web, ask, remember) when your current tools are not enough.', parameters: { type: 'object', properties: {} } } };
 const WEB_NAMES = ['google_search', 'fetch'];
 const WEB_BUDGET = 3;
@@ -44,7 +52,7 @@ const LITE_TOKEN_BUDGET = 30000;
 const AGENT_WEB_BUDGET = 6;
 const AGENT_WEB_CAP = 3000;
 const AGENT_OUTPUT_CAP = 8000;
-const OUTPUT_TOOLS = ['read_file', 'bash'];
+const OUTPUT_TOOLS = ['read_file', 'bash', 'find', 'list_dir', 'read_lines', 'grep_search'];
 async function runToolGuarded(call, state) {
   if (state.over) return 'Error: token budget for this message is used up. Answer now with what you have and say what you would check next.';
   if (!WEB_NAMES.includes(call.name)) {

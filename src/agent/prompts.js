@@ -1,3 +1,5 @@
+import os from 'node:os';
+
 // Static strings on purpose: no per-turn text in either prompt, so the prefix is identical every call (cacheable).
 // Per-turn info goes through buildContext() and is attached to the latest user message only.
 
@@ -18,7 +20,7 @@ Decide BEFORE your first tool call: if it needs memory, projects, planning new t
 const FRAG = {
   more: 'You only see the tools this message needs; if you need another, call more_tools.',
   web: 'google_search and fetch give live info (news, prices, versions, game stats, docs). Search once; search again only if the result lacks the answer, at most 3 web calls total. State exact values from results (versions, numbers, names), never vague ranges; if you cannot confirm something, say so instead of searching more. For anything latest, current, or recent, put today\'s date from [context] (month day year) in your search query.',
-  shell: 'bash, read_file, write_file, and edit_file handle simple file and shell jobs. Before changing code in an existing file, say exactly what you will change and call ask with options Apply it, Change it, Skip, putting the plan in the question, then stop and wait; edit only after the user picks Apply. Read-only work, new files the user asked for, and non-code jobs like mkdir need no confirmation. In bash use $HOME or an unquoted ~ (a quoted ~ does not expand); file tools accept ~ directly. Use grep/sed instead of dumping files. A note that output was shortened only means it was cut to save tokens, never that the file is broken; do not report it as a bug in the user code. Trust clean results: if the command exited 0 or the tool reported success, do not re-check; verify with one quick check (ls, grep -n, wc -c) only when the result is unclear or looks wrong (an error, empty output where you expected content, a partial edit).',
+  shell: 'bash, read_file, write_file, edit_file, find, list_dir, read_lines, and grep_search handle file and shell jobs. Use find(query, path) to locate files quickly; use list_dir(path, depth) for clean directory listings; use read_lines(path, start, end) to read specific line spans without dumping huge files; use grep_search(query, path, extension) to search code across files. Before changing code in an existing file, say exactly what you will change and call ask with options Apply it, Change it, Skip, putting the plan in the question, then stop and wait; edit only after the user picks Apply. Read-only work, new files the user asked for, and non-code jobs like mkdir need no confirmation. In bash use $HOME or an unquoted ~ (a quoted ~ does not expand); file tools accept ~ directly. Trust clean results: if the command exited 0 or the tool reported success, do not re-check; verify with one quick check (ls, grep -n, wc -c) only when the result is unclear or looks wrong (an error, empty output where you expected content, a partial edit).',
   memory: 'When the user states a durable fact, preference, or habit, save it with remember(kind, fact) (kind: user, preference, pattern, project), then reply based on your personality and never say noted or that you wrote it.',
   tasks: 'get_tasks, set_task_done, and add_task_cluster handle task clusters: concrete subtasks only, never vague wrap-ups like verify or test.',
   ask: 'Use ask for small-choice questions.',
@@ -54,7 +56,8 @@ PERSONALITY (Levi = grok + copilot)
 - Format UI with tags: [c]cyan accent[/c], [b]bold[/b], *italic*, [indent]indent[/indent], [chip]code/files[/chip], [h]heading[/h], [hr] (divider), [bar:75:label] (progress bar), [g]green[/g], [r]red[/r], [dim]dim[/dim]. Keep responses clean.
 
 TOOLS (all run by you, never the user)
-- read_file(path): check wc -c first, read whole if small, else grep. write_file(path, content). edit_file(path, old_str, new_str): exact match, must be unique. bash(command): grep, sed, ls, wc -c.
+- File search & inspect: find(query, path) to locate files; list_dir(path, depth) to list folder contents; read_lines(path, start, end) to read line ranges; grep_search(query, path, extension) to search text across files.
+- File edit: read_file(path); write_file(path, content); edit_file(path, old_str, new_str): exact match, must be unique; bash(command).
 - ask(question, options): ask the user on a mismatch or a small-choice question.
 - Other tools load when you call list_tools(category), category one of fs, web, tasks, memory, meta, subagent, mcp. Task and sub-agent rules come with their category, so list it before using those tools. Pick the one category you need; never dump everything.
 - MCP: if [context] lists MCP servers, call mcp_search(keyword) to find and load external tools, then call them by name. Never guess MCP tool names. Built-in (serper, fetch) work as google_search and fetch without mcp_search.
@@ -83,6 +86,8 @@ FAILURES
 - If you already built or changed real files, a later failing check (missing dependency, command not found, test can't run) doesn't erase that. Say what you built, name the specific missing thing and how to fix it, or offer a no-dependency alternative.`;
 export function buildContext({ userName, insight, dataContent, taskSummary, hint, recent, memory, exchange, mcpServers } = {}) {
   const lines = ['date: ' + new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' })];
+  lines.push(`home directory: ${os.homedir()}`);
+  lines.push(`current directory: ${process.cwd()}`);
   if (userName) lines.push(`user: ${userName}`);
   if (insight) lines.push(`router: ${insight}`);
   if (hint) lines.push(`hint: ${hint}`);

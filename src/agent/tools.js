@@ -15,7 +15,7 @@ function resolve(p) {
   return p;
 }
 export const CATEGORIES = {
-  fs: ['read_file','write_file','edit_file','bash'],
+  fs: ['read_file','write_file','edit_file','bash','find','list_dir','read_lines','grep_search'],
   web: ['google_search','fetch'],
   tasks: ['add_task_cluster','get_tasks','set_task_done','edit_task','delete_task','delete_cluster','add_task_to_cluster'],
   memory: ['set_project','search_sessions','read_session'],
@@ -84,6 +84,67 @@ export const toolDefs = [
         type: 'object',
         properties: { command: { type: 'string' } },
         required: ['command']
+      }
+    }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'find',
+      description: 'Find files and directories by name or substring. Fast, ignores node_modules/.git. Caps at 50 results.',
+      parameters: {
+        type: 'object',
+        properties: {
+          query: { type: 'string', description: 'File name, extension, or substring to search for (e.g. "agent.py", ".json", "prompts")' },
+          path: { type: 'string', description: 'Directory to search within (optional, defaults to current directory; ~ supported)' }
+        },
+        required: ['query']
+      }
+    }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'list_dir',
+      description: 'List contents of a directory with file types, sizes, and item counts. Fast, ignores node_modules/.git.',
+      parameters: {
+        type: 'object',
+        properties: {
+          path: { type: 'string', description: 'Directory path to list (optional, defaults to current directory; ~ supported)' },
+          depth: { type: 'number', description: 'Recursion depth (optional, 1 for shallow listing, max 3; default 1)' }
+        }
+      }
+    }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'read_lines',
+      description: 'Read a specific line range from a text file (1-indexed, inclusive). Saves tokens on large files.',
+      parameters: {
+        type: 'object',
+        properties: {
+          path: { type: 'string', description: 'File path (~ supported)' },
+          start: { type: 'number', description: '1-indexed starting line number' },
+          end: { type: 'number', description: '1-indexed ending line number (inclusive)' }
+        },
+        required: ['path', 'start', 'end']
+      }
+    }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'grep_search',
+      description: 'Search for text or regex pattern across files. Fast, ignores node_modules/.git. Caps at 25 matches.',
+      parameters: {
+        type: 'object',
+        properties: {
+          query: { type: 'string', description: 'Text or regular expression pattern to search for' },
+          path: { type: 'string', description: 'Directory or file to search within (optional, defaults to current directory; ~ supported)' },
+          extension: { type: 'string', description: 'Optional file extension filter, e.g. "js", "ts", "json", "py"' }
+        },
+        required: ['query']
       }
     }
   },
@@ -455,6 +516,232 @@ if (name === 'mcp_search') {
       return r.all || `(exit ${r.exitCode}, no output)`;
     }
 
+    if (name === 'find') {
+      const q = String(args?.query || '').trim();
+      if (!q) return 'Error: query required';
+      const root = resolve(args?.path || '.');
+      if (!fs.existsSync(root)) return `Error: path does not exist: ${root}`;
+      const stat = fs.statSync(root);
+      if (!stat.isDirectory()) return `Error: ${root} is not a directory`;
+
+      const qLower = q.toLowerCase();
+      const results = [];
+      const IGNORE_DIRS = new Set(['.git', 'node_modules', '.cache', '.npm', '.cargo', '.vscode', '.idea', 'dist', 'build', '.next', '.levi']);
+
+      function walk(currentDir, depth) {
+        if (depth > 12 || results.length >= 50) return;
+        let entries;
+        try {
+          entries = fs.readdirSync(currentDir, { withFileTypes: true });
+        } catch {
+          return;
+        }
+        for (const entry of entries) {
+          if (results.length >= 50) break;
+          const fullPath = path.join(currentDir, entry.name);
+          const relPath = path.relative(root, fullPath) || entry.name;
+          const nameLower = entry.name.toLowerCase();
+          const relLower = relPath.toLowerCase();
+
+          if (nameLower.includes(qLower) || relLower.includes(qLower)) {
+            results.push(entry.isDirectory() ? relPath + '/' : relPath);
+          }
+
+          if (entry.isDirectory()) {
+            if (!IGNORE_DIRS.has(entry.name)) {
+              walk(fullPath, depth + 1);
+            }
+          }
+        }
+      }
+
+      walk(root, 0);
+
+      if (!results.length) return `No files or directories matching "${q}" found in ${root}`;
+      const header = results.length >= 50
+        ? `Found 50+ matches for "${q}" in ${root} (capped at 50):`
+        : `Found ${results.length} match(es) for "${q}" in ${root}:`;
+      return header + '\n' + results.join('\n');
+    }
+
+    if (name === 'list_dir') {
+      const root = resolve(args?.path || '.');
+      if (!fs.existsSync(root)) return `Error: path does not exist: ${root}`;
+      const stat = fs.statSync(root);
+      if (!stat.isDirectory()) return `Error: ${root} is not a directory`;
+
+      const maxDepth = Math.min(Math.max(1, parseInt(args?.depth) || 1), 3);
+      const IGNORE_DIRS = new Set(['.git', 'node_modules', '.cache']);
+
+      function formatSize(bytes) {
+        if (bytes < 1024) return `${bytes} B`;
+        if (bytes < 1048576) return `${(bytes / 1024).toFixed(1)} KB`;
+        return `${(bytes / 1048576).toFixed(1)} MB`;
+      }
+
+      const lines = [];
+
+      function listLevel(dir, currentDepth, indent) {
+        if (currentDepth > maxDepth) return;
+        let entries;
+        try {
+          entries = fs.readdirSync(dir, { withFileTypes: true });
+        } catch (e) {
+          lines.push(`${indent}[error reading directory: ${e.message}]`);
+          return;
+        }
+
+        entries.sort((a, b) => {
+          if (a.isDirectory() && !b.isDirectory()) return -1;
+          if (!a.isDirectory() && b.isDirectory()) return 1;
+          return a.name.localeCompare(b.name);
+        });
+
+        for (const entry of entries) {
+          const fullPath = path.join(dir, entry.name);
+          if (entry.isDirectory()) {
+            let countText = '';
+            try {
+              const children = fs.readdirSync(fullPath);
+              countText = ` (${children.length} items)`;
+            } catch {}
+            lines.push(`${indent}📁 ${entry.name}/${countText}`);
+            if (currentDepth < maxDepth && !IGNORE_DIRS.has(entry.name)) {
+              listLevel(fullPath, currentDepth + 1, indent + '  ');
+            }
+          } else {
+            let sizeText = '';
+            try {
+              const st = fs.statSync(fullPath);
+              sizeText = ` (${formatSize(st.size)})`;
+            } catch {}
+            lines.push(`${indent}📄 ${entry.name}${sizeText}`);
+          }
+        }
+      }
+
+      listLevel(root, 1, '');
+      if (!lines.length) return `Directory ${root} is empty.`;
+      return `Contents of ${root}:\n` + lines.join('\n');
+    }
+
+    if (name === 'read_lines') {
+      if (!args?.path) return 'Error: path required';
+      const p = resolve(args.path);
+      if (!fs.existsSync(p)) return `Error: file not found: ${p}`;
+      if (fs.statSync(p).isDirectory()) return `Error: ${p} is a directory, not a file`;
+
+      const content = fs.readFileSync(p, 'utf-8');
+      const allLines = content.split(/\r?\n/);
+      const total = allLines.length;
+
+      let start = parseInt(args?.start);
+      let end = parseInt(args?.end);
+      if (isNaN(start)) start = 1;
+      if (isNaN(end)) end = total;
+
+      if (start < 1) start = 1;
+      if (end > total) end = total;
+      if (start > end) return `Error: start line (${start}) cannot be greater than end line (${end}) (file has ${total} lines)`;
+
+      const slice = allLines.slice(start - 1, end);
+      const pad = String(end).length;
+      const formatted = slice.map((line, idx) => {
+        const lineNum = String(start + idx).padStart(pad, ' ');
+        return `${lineNum} | ${line}`;
+      }).join('\n');
+
+      return `[${p} lines ${start}-${end} of ${total}]\n${formatted}`;
+    }
+
+    if (name === 'grep_search') {
+      const q = String(args?.query || '').trim();
+      if (!q) return 'Error: query required';
+      const root = resolve(args?.path || '.');
+      if (!fs.existsSync(root)) return `Error: path does not exist: ${root}`;
+
+      const extFilter = args?.extension ? args.extension.replace(/^\./, '').toLowerCase() : null;
+      const BINARY_EXTS = new Set(['png', 'jpg', 'jpeg', 'gif', 'ico', 'webp', 'svg', 'zip', 'tar', 'gz', 'mp3', 'mp4', 'pdf', 'exe', 'so', 'dylib', 'woff', 'woff2', 'ttf', 'bin', 'lock']);
+      const IGNORE_DIRS = new Set(['.git', 'node_modules', '.cache', '.npm', '.cargo', '.vscode', '.idea', 'dist', 'build', '.next', '.levi']);
+
+      let regex = null;
+      try {
+        regex = new RegExp(q, 'i');
+      } catch {
+        regex = null;
+      }
+
+      const matches = [];
+      const MAX_MATCHES = 25;
+
+      function searchFile(filePath) {
+        if (matches.length >= MAX_MATCHES) return;
+        const ext = path.extname(filePath).slice(1).toLowerCase();
+        if (BINARY_EXTS.has(ext)) return;
+        if (extFilter && ext !== extFilter) return;
+
+        let stat;
+        try {
+          stat = fs.statSync(filePath);
+          if (stat.size > 2 * 1024 * 1024) return;
+        } catch {
+          return;
+        }
+
+        let content;
+        try {
+          content = fs.readFileSync(filePath, 'utf-8');
+        } catch {
+          return;
+        }
+
+        const lines = content.split(/\r?\n/);
+        const relPath = path.relative(process.cwd(), filePath) || filePath;
+
+        for (let i = 0; i < lines.length; i++) {
+          if (matches.length >= MAX_MATCHES) break;
+          const line = lines[i];
+          const matched = regex ? regex.test(line) : line.toLowerCase().includes(q.toLowerCase());
+          if (matched) {
+            matches.push(`${relPath}:${i + 1}: ${line.trim()}`);
+          }
+        }
+      }
+
+      const stat = fs.statSync(root);
+      if (stat.isDirectory()) {
+        function walk(dir, depth) {
+          if (depth > 12 || matches.length >= MAX_MATCHES) return;
+          let entries;
+          try {
+            entries = fs.readdirSync(dir, { withFileTypes: true });
+          } catch {
+            return;
+          }
+          for (const entry of entries) {
+            if (matches.length >= MAX_MATCHES) break;
+            const full = path.join(dir, entry.name);
+            if (entry.isDirectory()) {
+              if (!IGNORE_DIRS.has(entry.name)) {
+                walk(full, depth + 1);
+              }
+            } else if (entry.isFile()) {
+              searchFile(full);
+            }
+          }
+        }
+        walk(root, 0);
+      } else {
+        searchFile(root);
+      }
+
+      if (!matches.length) return `No matches found for "${q}" in ${root}`;
+      const header = matches.length >= MAX_MATCHES
+        ? `Found 25+ matches for "${q}" (capped at 25):`
+        : `Found ${matches.length} match(es) for "${q}":`;
+      return header + '\n' + matches.join('\n');
+    }
+
     if (name === 'set_project') {
       const projectName = (args.name || '').trim().toLowerCase().replace(/\s+/g, '-');
       if (!projectName) return 'Error: project name required';
@@ -665,7 +952,7 @@ export function getAllCategoriesSummary() {
     solo_mode: solo? "ON" : "OFF",
     usage: "Run list_<category>_commands to see tools with params, /commands for user commands",
     categories: {
-      fs: "use list_fs_commands -> 4 tools",
+      fs: "use list_fs_commands -> 8 tools",
       web: "use list_web_commands -> 2 tools",
       tasks: "use list_task_commands -> 7 tools",
       memory: "use list_memory_commands -> 3 tools",
