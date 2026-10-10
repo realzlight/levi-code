@@ -11,7 +11,7 @@ import { route } from './router.js';
 import { readMemoryDigest } from './memory.js';
 import { CONVO_PROMPT, LIGHT_PROMPT, agentPrompt, buildContext, litePrompt } from './prompts.js';
 
-const LIST_COMMANDS = ['list_commands','list_fs_commands','list_web_commands','list_task_commands','list_memory_commands','list_meta_commands','list_subagent_commands'];
+const LIST_COMMANDS = ['list_commands','list_fs_commands','list_web_commands','list_desktop_commands','list_task_commands','list_memory_commands','list_meta_commands','list_subagent_commands','list_mcp_commands'];
 const TRIVIAL = new Set(['bash','read_file','write_file','edit_file','find','list_dir','read_lines','grep_search',...LIST_COMMANDS]);
 
 
@@ -38,20 +38,27 @@ const PLAYWRIGHT_WEB_TOOLS = [
   'web_screenshot', 'web_get_text', 'web_get_url', 'web_wait'
 ];
 
+const DESKTOP_TOOLS = [
+  'desktop_click', 'desktop_type', 'desktop_press',
+  'desktop_scroll', 'desktop_drag', 'desktop_screenshot',
+  'desktop_get_window_state', 'desktop_list_apps', 'desktop_launch_app'
+];
+
 // messages = [{ role: 'user'|'assistant', content: string }]
 // onStep(kind, data) — optional progress callback: 'tool_call' | 'tool_result' | 'done' | 'thought'
-const LITE_NAMES = ['bash', 'read_file', 'write_file', 'edit_file', 'find', 'list_dir', 'read_lines', 'grep_search', 'google_search', 'fetch', ...PLAYWRIGHT_WEB_TOOLS, 'ask', 'remember', 'get_tasks', 'set_task_done', 'add_task_cluster', 'mcp_search', 'mcp_list'];
+const LITE_NAMES = ['bash', 'read_file', 'write_file', 'edit_file', 'find', 'list_dir', 'read_lines', 'grep_search', 'google_search', 'fetch', ...PLAYWRIGHT_WEB_TOOLS, ...DESKTOP_TOOLS, 'ask', 'remember', 'get_tasks', 'set_task_done', 'add_task_cluster', 'mcp_search', 'mcp_list'];
 const LITE_TOOLS = toolDefs.filter((t) => LITE_NAMES.includes(t.function.name));
 const LITE_GROUPS = {
   none: [],
   memory: ['remember'],
   web: ['google_search', 'fetch', ...PLAYWRIGHT_WEB_TOOLS],
+  desktop: [...DESKTOP_TOOLS],
   shell: ['bash', 'read_file', 'write_file', 'edit_file', 'find', 'list_dir', 'read_lines', 'grep_search', 'ask'],
-  all: ['bash', 'read_file', 'write_file', 'edit_file', 'find', 'list_dir', 'read_lines', 'grep_search', 'google_search', 'fetch', ...PLAYWRIGHT_WEB_TOOLS, 'ask', 'remember'],
+  all: ['bash', 'read_file', 'write_file', 'edit_file', 'find', 'list_dir', 'read_lines', 'grep_search', 'google_search', 'fetch', ...PLAYWRIGHT_WEB_TOOLS, ...DESKTOP_TOOLS, 'ask', 'remember'],
   tasks: ['get_tasks', 'set_task_done', 'add_task_cluster'],
   mcp: ['mcp_search', 'mcp_list', 'bash', 'read_file', 'write_file', 'edit_file', 'find', 'list_dir', 'read_lines', 'grep_search', 'ask']
 };
-const MORE_TOOL = { type: 'function', function: { name: 'more_tools', description: 'Load all light tools (shell, files, web, ask, remember) when your current tools are not enough.', parameters: { type: 'object', properties: {} } } };
+const MORE_TOOL = { type: 'function', function: { name: 'more_tools', description: 'Load all light tools (shell, files, web, desktop, ask, remember) when your current tools are not enough.', parameters: { type: 'object', properties: {} } } };
 const WEB_NAMES = ['google_search', 'fetch'];
 const WEB_BUDGET = 3;
 const RESULT_CAP = 1500;
@@ -59,7 +66,7 @@ const LITE_TOKEN_BUDGET = 30000;
 const AGENT_WEB_BUDGET = 6;
 const AGENT_WEB_CAP = 3000;
 const AGENT_OUTPUT_CAP = 8000;
-const OUTPUT_TOOLS = ['read_file', 'bash', 'find', 'list_dir', 'read_lines', 'grep_search', 'web_get_text', 'web_screenshot', 'web_get_url'];
+const OUTPUT_TOOLS = ['read_file', 'bash', 'find', 'list_dir', 'read_lines', 'grep_search', 'web_get_text', 'web_screenshot', 'web_get_url', 'desktop_screenshot', 'desktop_get_window_state', 'desktop_list_apps'];
 async function runToolGuarded(call, state) {
   if (state.over) return 'Error: token budget for this message is used up. Answer now with what you have and say what you would check next.';
   if (!WEB_NAMES.includes(call.name)) {
@@ -230,7 +237,10 @@ export async function runAgent(userMessage, { onStep, maxSteps, forceAgent } = {
   let tokenBudget = 50000 + pendingTasks * 10000;
   const system = buildSystem();
   const SUB = ['spawn_subagent', 'list_subagents', 'message_subagent'];
-  const unlocked = new Set(routed.tools === 'web' || routed.tools === 'all' ? CATEGORIES.web : []);
+  const unlocked = new Set([
+    ...(routed.tools === 'web' || routed.tools === 'all' ? CATEGORIES.web : []),
+    ...(routed.tools === 'desktop' || routed.tools === 'all' ? CATEGORIES.desktop : [])
+  ]);
   const customMcp = hasCustomMcp();
   if (customMcp && !mcpMod) mcpMod = await import('../mcp.js');
   if (mcpMod) {

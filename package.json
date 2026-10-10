@@ -5,6 +5,11 @@
     "levi-code": "./bin/cli.js",
     "levi": "./bin/cli.js"
   },
+  "scripts": {
+    "bootstrap": "node src/bootstrap.js",
+    "init": "node src/bootstrap.js",
+    "start": "node bin/cli.js"
+  },
   "type": "module",
   "files": [
     "bin",
@@ -19,6 +24,7 @@
     "commander": "^15.0.0",
     "execa": "^8.0.1",
     "fs-extra": "^11.2.0",
-    "mcp-server-serper": "^1.0.0"
+    "mcp-server-serper": "^1.0.0",
+    "playwright": "^1.50.0"
   }
 }

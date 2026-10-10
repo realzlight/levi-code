@@ -72,10 +72,11 @@ defineCommand({
       title: 'LEVI Workspace Initialized',
       fields: [
         { label: 'Environment', value: res.home, color: '#22d3ee' },
+        { label: 'Platform', value: res.platform?.label || 'Ready', color: '#38bdf8' },
         { label: 'Directories', value: dirInfo, color: '#4ade80' },
         { label: 'Files', value: fileInfo, color: '#c0caf5' },
-        { label: 'MCP Servers', value: 'Serper · Fetch · Playwright', color: '#a78bfa' },
-        { label: 'Status', value: 'Ready for pair programming', color: '#ffd700' }
+        { label: 'MCP Servers', value: 'Serper · Fetch · GitHub · CUA Driver', color: '#a78bfa' },
+        { label: 'Status', value: res.platform?.skipHeavyDeps ? 'Ready (Termux Companion)' : 'Ready (Full Desktop Suite)', color: '#ffd700' }
       ]
     });
   }

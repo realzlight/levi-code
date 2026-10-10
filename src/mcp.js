@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
+import { execSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
@@ -89,6 +90,14 @@ export function loadMcpConfig() {
       fetch: {
         command: "npx",
         args: ["-y", "@modelcontextprotocol/server-fetch"]
+      },
+      github: {
+        url: "https://api.githubcopilot.com/mcp/",
+        headers: {}
+      },
+      'cua-driver': {
+        command: "cua-driver",
+        args: ["mcp"]
       }
     }
   };
@@ -118,6 +127,20 @@ function resolveServerCommand(serverName, serverCfg) {
     if (fs.existsSync(fetchPath)) {
       return { command: 'node', args: [fetchPath] };
     }
+  }
+
+  // CUA Driver MCP Server (Desktop control)
+  if (serverName === 'cua-driver' || argsStr.includes('cua-driver')) {
+    const checkCmd = process.platform === 'win32' ? 'where' : 'which';
+    let exists = false;
+    try {
+      execSync(`${checkCmd} cua-driver`, { stdio: 'pipe' });
+      exists = true;
+    } catch {}
+    if (exists) {
+      return { command: 'cua-driver', args: ['mcp'], env: serverCfg.env };
+    }
+    return { command: 'npx', args: ['-y', '@openclick/cua-driver', 'mcp'], env: serverCfg.env };
   }
 
   // Everything MCP Server - bypass npx
@@ -318,6 +341,15 @@ async function ensureServer(serverName) {
         return false;
       }
     }
+    // Gracefully skip cua-driver on Termux/Android when no GUI display is available
+    if (serverName === 'cua-driver') {
+      const isTermux = Boolean(process.env.TERMUX_VERSION) ||
+        Boolean(process.env.PREFIX && process.env.PREFIX.includes('com.termux')) ||
+        (process.platform === 'android');
+      if (isTermux && !process.env.DISPLAY && !process.env.WAYLAND_DISPLAY) {
+        return false;
+      }
+    }
     try {
       let transport, client;
 
@@ -420,14 +452,27 @@ const MCP_SYNONYMS = {
   update: ['edit', 'change', 'modify', 'write'],
   me: ['user', 'profile', 'whoami', 'account', 'my', 'mine'],
   my: ['me', 'user', 'profile', 'own', 'mine'],
-  mine: ['me', 'my', 'user']
+  mine: ['me', 'my', 'user'],
+  desktop: ['mouse', 'keyboard', 'screen', 'window', 'click', 'type', 'app', 'display', 'screenshot'],
+  mouse: ['click', 'move', 'cursor', 'desktop_click', 'drag', 'scroll'],
+  keyboard: ['type', 'press', 'key', 'desktop_type', 'desktop_press'],
+  screen: ['screenshot', 'display', 'monitor', 'desktop_screenshot'],
+  screenshot: ['screen', 'capture', 'snapshot', 'desktop_screenshot'],
+  click: ['mouse', 'press', 'desktop_click', 'web_click'],
+  type: ['write', 'input', 'keyboard', 'desktop_type', 'web_fill'],
+  press: ['key', 'keyboard', 'desktop_press', 'web_press'],
+  window: ['windows', 'active_window', 'desktop_get_window_state', 'app', 'focus'],
+  windows: ['window', 'active_window', 'desktop_get_window_state', 'app', 'focus'],
+  app: ['apps', 'application', 'applications', 'desktop_list_apps', 'desktop_launch_app', 'launch'],
+  apps: ['app', 'application', 'applications', 'desktop_list_apps', 'desktop_launch_app']
 };
 
 const MCP_STOP_WORDS = new Set(['the', 'a', 'an', 'in', 'on', 'at', 'to', 'for', 'of', 'and', 'or', 'with', 'by', 'from', 'is', 'it', 'all', 'can', 'you', 'please', 'i', 'want', 'tool', 'tools', 'mcp']);
 
 const MCP_COMMON_TOOLS = {
   github: ['search_repositories', 'get_me', 'list_issues', 'list_pull_requests', 'search_code', 'list_commits'],
-  youtube: ['search-videos', 'get-trending-videos', 'get-channel-stats', 'enhanced-transcript']
+  youtube: ['search-videos', 'get-trending-videos', 'get-channel-stats', 'enhanced-transcript'],
+  'cua-driver': ['desktop_click', 'desktop_type', 'desktop_press', 'desktop_screenshot', 'desktop_get_window_state', 'desktop_list_apps']
 };
 
 // keyword search over the custom MCP tool index; connects and loads only the matches
@@ -463,11 +508,12 @@ export async function searchMcp(query, serverFilter = null) {
         if (!comm.includes(t.n)) list.push({ s, t, score: 10 });
       }
     }
-    const top = list.slice(0, 6);
+    // Cap at top 4 tools with concise summary to avoid blowing context limits
+    const top = list.slice(0, 4);
     if (!top.length) return 'No tools found for server: ' + targetServers.join(', ');
     for (const s of new Set(top.map((x) => x.s))) await ensureServer(s);
     for (const x of top) loadedMcp.add(x.t.n);
-    return 'Loaded, call them now:\n' + top.map((x) => x.t.n + ' (' + x.s + '): ' + x.t.d).join('\n');
+    return 'Loaded ' + top.length + ' tool(s), call them now:\n' + top.map((x) => x.t.n + ' (' + x.s + '): ' + String(x.t.d || '').replace(/\s+/g, ' ').slice(0, 85)).join('\n');
   }
 
   // Expand with synonyms
@@ -502,11 +548,15 @@ export async function searchMcp(query, serverFilter = null) {
   }
 
   scored.sort((a, b) => b.score - a.score);
-  const top = scored.slice(0, 6);
+  // Optimized: cap at top 4 relevant tools with score filtering to avoid dumping tools
+  const top = scored.filter(x => x.score >= 10).slice(0, 4);
+  if (!top.length && scored.length) {
+    top.push(...scored.slice(0, 2));
+  }
   if (!top.length) return 'No matching MCP tools. Custom servers: ' + names.join(', ');
   for (const s of new Set(top.map((x) => x.s))) await ensureServer(s);
   for (const x of top) loadedMcp.add(x.t.n);
-  return 'Loaded, call them now:\n' + top.map((x) => x.t.n + ' (' + x.s + '): ' + x.t.d).join('\n');
+  return 'Loaded ' + top.length + ' tool(s), call them now:\n' + top.map((x) => x.t.n + ' (' + x.s + '): ' + String(x.t.d || '').replace(/\s+/g, ' ').slice(0, 85)).join('\n');
 }
 
 export async function runMcpTool(name, args = {}) {

@@ -23,14 +23,14 @@ function routerSystem() {
   cachedNames = key;
 
   const mcpLine = names.length
-    ? `mcp: the name of the MCP server if the request needs one, or false. Available MCP servers: ${names.join(', ')}. Examples: github = repos/PRs/issues/code search, serper = web search, fetch = read a URL, youtube = video info, playwright = browser automation. Return the server name string when the user wants to use one, false otherwise.`
+    ? `mcp: the name of the MCP server if the request needs one, or false. Available MCP servers: ${names.join(', ')}. Examples: github = repos/PRs/issues/code search, cua-driver = desktop automation (mouse, keyboard, window, apps), serper = web search, fetch = read a URL, youtube = video info, playwright = browser automation. Return the server name string when the user wants to use one, false otherwise.`
     : `mcp: always false (no MCP servers configured).`;
 
-  cachedSystem = `Route a message for a coding assistant. Output ONLY JSON: {"route":"conversation"|"light"|"agent","tools":"none"|"memory"|"web"|"shell"|"tasks"|"all","mcp":"<server>"|false,"insight":"max 12 words"}
+  cachedSystem = `Route a message for a coding assistant. Output ONLY JSON: {"route":"conversation"|"light"|"agent","tools":"none"|"memory"|"web"|"desktop"|"shell"|"tasks"|"all","mcp":"<server>"|false,"insight":"max 12 words"}
 agent = a project or big job: building or scaffolding an app, big fixes or refactors across 3+ files, complex reasoning or debugging, git workflows, deep multi-source research, planning or reorganizing task plans, sub-agents, refers to a past conversation, or continues agent work (e.g. "yes", "the second one" when last_route is agent).
 light = any other job that needs tools, up to about 10 tool calls: code reviews, small fixes and edits (1-2 files), running commands, web lookups, saving facts, task cluster views, using MCP tools. Mixed jobs: tools = all.
 conversation = durable facts, habits or preferences to remember, casual chat, questions, explanations, short follow-ups, a quick web lookup.
-tools (conversation or light): none = plain chat or thanks, memory = user states a fact or preference, web = live info, shell = one file or shell action, tasks = show or tick off task clusters, all = unsure or mixed.
+tools (conversation or light): none = plain chat or thanks, memory = user states a fact or preference, web = live info/browser, desktop = mouse/keyboard/window/app control, shell = one file or shell action, tasks = show or tick off task clusters, all = unsure or mixed.
 ${mcpLine}
 When unsure between light and agent, choose light unless a project, big refactor, or complex reasoning is involved.
 we are in testing period so never router to agent mode for now.`;
@@ -67,7 +67,7 @@ current: ${query.slice(0, 600)}`;
     const data = JSON.parse(res.text.trim().replace(/^```json\s*|```\s*$/g, ''));
     const mcpServer = parseMcp(data.mcp);
     let route = ['conversation', 'light'].includes(data.route) ? data.route : 'agent';
-    let tools = ['none', 'memory', 'web', 'shell', 'tasks', 'all'].includes(data.tools) ? data.tools : 'all';
+    let tools = ['none', 'memory', 'web', 'desktop', 'shell', 'tasks', 'all'].includes(data.tools) ? data.tools : 'all';
     if (mcpServer) {
       if (route === 'conversation') route = 'light';
       if (tools === 'none') tools = 'all';

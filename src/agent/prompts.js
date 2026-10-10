@@ -20,13 +20,14 @@ Decide BEFORE your first tool call: if it needs memory, projects, planning new t
 const FRAG = {
   more: 'You only see the tools this message needs; if you need another, call more_tools.',
   web: 'Browser automation & web tools: web_launch, web_close, web_new_tab, web_goto, web_back, web_reload, web_click, web_dblclick, web_fill, web_press, web_hover, web_drag, web_scroll, web_screenshot, web_get_text, web_get_url, web_wait to control Chrome (YouTube, Twitch, Google, Spotify, web apps). Use web_click(selector) by visible text or css, web_fill(selector, text) to type into inputs, web_press(key) for hotkeys, web_screenshot() to see the page, and web_get_text() to read content. For quick static lookups, google_search and fetch are also available.',
+  desktop: 'Desktop automation & CUA tools: desktop_click(x, y), desktop_type(text), desktop_press(key), desktop_scroll(direction, amount), desktop_drag(from_x, from_y, to_x, to_y), desktop_screenshot(), desktop_get_window_state(), desktop_list_apps(), desktop_launch_app(app_name) to control mouse, keyboard, windows, and apps via cua-driver MCP.',
   shell: 'bash, read_file, write_file, edit_file, find, list_dir, read_lines, and grep_search handle file and shell jobs. Use find(query, path) to locate files quickly; use list_dir(path, depth) for clean directory listings; use read_lines(path, start, end) to read specific line spans without dumping huge files; use grep_search(query, path, extension) to search code across files. Before changing code in an existing file, say exactly what you will change and call ask with options Apply it, Change it, Skip, putting the plan in the question, then stop and wait; edit only after the user picks Apply. Read-only work, new files the user asked for, and non-code jobs like mkdir need no confirmation. In bash use $HOME or an unquoted ~ (a quoted ~ does not expand); file tools accept ~ directly. Trust clean results: if the command exited 0 or the tool reported success, do not re-check; verify with one quick check (ls, grep -n, wc -c) only when the result is unclear or looks wrong (an error, empty output where you expected content, a partial edit).',
   memory: 'When the user states a durable fact, preference, or habit, save it with remember(kind, fact) (kind: user, preference, pattern, project), then reply based on your personality and never say noted or that you wrote it.',
   tasks: 'get_tasks, set_task_done, and add_task_cluster handle task clusters: concrete subtasks only, never vague wrap-ups like verify or test.',
   ask: 'Use ask for small-choice questions.',
   mcp: 'Relevant MCP tools are automatically pre-loaded when needed — call them directly! To find or switch tools: call mcp_search("<action keyword>") (e.g. "repos", "prs", "issues", "commits"). Call mcp_list(server: "<name>") to inspect all available tools on a server without loading schemas. Built-in servers (serper, fetch) are always available as google_search and fetch.'
 };
-const GROUP_FRAGS = { none: [], memory: ['memory'], web: ['web'], shell: ['shell'], tasks: ['tasks'], mcp: ['mcp', 'shell'], all: ['web', 'shell', 'memory', 'ask'] };
+const GROUP_FRAGS = { none: [], memory: ['memory'], web: ['web'], desktop: ['desktop'], shell: ['shell'], tasks: ['tasks'], mcp: ['mcp', 'shell'], all: ['web', 'desktop', 'shell', 'memory', 'ask'] };
 
 export function litePrompt(kind, group) {
   const g = GROUP_FRAGS[group] ? group : 'all';
@@ -59,8 +60,9 @@ TOOLS (all run by you, never the user)
 - File search & inspect: find(query, path) to locate files; list_dir(path, depth) to list folder contents; read_lines(path, start, end) to read line ranges; grep_search(query, path, extension) to search text across files.
 - File edit: read_file(path); write_file(path, content); edit_file(path, old_str, new_str): exact match, must be unique; bash(command).
 - Browser automation: call list_tools('web') to load 17 browser control tools (web_launch, web_goto, web_click, web_fill, web_press, web_screenshot, web_get_text, web_new_tab, etc.) to control Chrome and automate YouTube, Twitch, Google, Spotify, and websites.
+- Desktop automation: call list_tools('desktop') to load 9 desktop control tools (desktop_click, desktop_type, desktop_press, desktop_screenshot, desktop_get_window_state, desktop_list_apps, desktop_launch_app) to automate mouse, keyboard, and applications via cua-driver MCP.
 - ask(question, options): ask the user on a mismatch or a small-choice question.
-- Other tools load when you call list_tools(category), category one of fs, web, tasks, memory, meta, subagent, mcp. Task and sub-agent rules come with their category, so list it before using those tools. Pick the one category you need; never dump everything.
+- Other tools load when you call list_tools(category), category one of fs, web, desktop, tasks, memory, meta, subagent, mcp. Task and sub-agent rules come with their category, so list it before using those tools. Pick the one category you need; never dump everything.
 - MCP: if [context] lists MCP servers, call mcp_search(keyword) to find and load external tools, then call them by name. Never guess MCP tool names. Built-in (serper, fetch) work as google_search and fetch without mcp_search.
 - For latest, current, or recent info, put today's date from [context] (month day year) in your web search queries.
 
@@ -146,5 +148,16 @@ export const RULES = {
 - web_screenshot(): Save screenshot to ~/.levi/screenshots/ to inspect layout and UI state.
 - web_get_text(selector): Read page text, video titles, view counts, comments, or chat.
 - web_get_url(): Read current page URL and title.
-- web_wait(selector, timeout): Wait for dynamic elements or video player to load.`
+- web_wait(selector, timeout): Wait for dynamic elements or video player to load.`,
+  desktop: `DESKTOP AUTOMATION (cua-driver)
+- desktop_click(x, y, button='left'): Click mouse at screen coordinates (supports left, right, middle, double=true).
+- desktop_type(text): Type text into active window or focused input field via keyboard simulation.
+- desktop_press(key): Press keyboard key or hotkey ('Enter', 'Escape', 'Tab', 'Space', 'Super', 'ArrowDown').
+- desktop_scroll(direction, amount): Scroll mouse wheel 'up' or 'down' (default 300px).
+- desktop_drag(from_x, from_y, to_x, to_y): Drag mouse between coordinates.
+- desktop_screenshot(path): Capture full screen to ~/.levi/screenshots/ to inspect desktop state.
+- desktop_get_window_state(): Inspect frontmost active window title and display bounds.
+- desktop_list_apps(): List currently open desktop applications and window titles.
+- desktop_launch_app(app_name): Launch desktop app by name or command (e.g. 'code', 'firefox', 'slack').
+- On Android/Termux without a display, desktop GUI tools are safely skipped.`
 };

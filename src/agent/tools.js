@@ -17,9 +17,10 @@ function resolve(p) {
 export const CATEGORIES = {
   fs: ['read_file','write_file','edit_file','bash','find','list_dir','read_lines','grep_search'],
   web: ['web_launch','web_close','web_new_tab','web_goto','web_back','web_reload','web_click','web_dblclick','web_fill','web_press','web_hover','web_drag','web_scroll','web_screenshot','web_get_text','web_get_url','web_wait'],
+  desktop: ['desktop_click','desktop_type','desktop_press','desktop_scroll','desktop_drag','desktop_screenshot','desktop_get_window_state','desktop_list_apps','desktop_launch_app'],
   tasks: ['add_task_cluster','get_tasks','set_task_done','edit_task','delete_task','delete_cluster','add_task_to_cluster'],
   memory: ['set_project','search_sessions','read_session'],
-  meta: ['list_commands','list_fs_commands','list_web_commands','list_task_commands','list_memory_commands','list_meta_commands','list_subagent_commands','list_mcp_commands','ask'],
+  meta: ['list_commands','list_fs_commands','list_web_commands','list_desktop_commands','list_task_commands','list_memory_commands','list_meta_commands','list_subagent_commands','list_mcp_commands','ask'],
   subagent: ['spawn_subagent','list_subagents','message_subagent'],
   mcp: ['mcp_search','mcp_list']
 };
@@ -149,7 +150,7 @@ export const toolDefs = [
     }
   },
 
-  { type: 'function', function: { name: 'list_tools', description: 'Load a tool category and see its usage: fs, web, tasks, memory, meta, subagent, or mcp.', parameters: { type: 'object', properties: { category: { type: 'string', enum: ['fs', 'web', 'tasks', 'memory', 'meta', 'subagent', 'mcp'] } }, required: ['category'] } } },
+  { type: 'function', function: { name: 'list_tools', description: 'Load a tool category and see its usage: fs, web, desktop, tasks, memory, meta, subagent, or mcp.', parameters: { type: 'object', properties: { category: { type: 'string', enum: ['fs', 'web', 'desktop', 'tasks', 'memory', 'meta', 'subagent', 'mcp'] } }, required: ['category'] } } },
 
   {
     type: 'function',
@@ -601,6 +602,125 @@ export const toolDefs = [
   {
     type: 'function',
     function: {
+      name: 'desktop_click',
+      description: 'Click mouse at desktop screen coordinate (x, y) via cua-driver MCP.',
+      parameters: {
+        type: 'object',
+        properties: {
+          x: { type: 'number', description: 'Screen X coordinate in pixels' },
+          y: { type: 'number', description: 'Screen Y coordinate in pixels' },
+          button: { type: 'string', enum: ['left', 'right', 'middle'], description: 'Mouse button (default "left")' },
+          double: { type: 'boolean', description: 'Double click if true' }
+        },
+        required: ['x', 'y']
+      }
+    }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'desktop_type',
+      description: 'Type text into active desktop window/input via keyboard simulation (cua-driver).',
+      parameters: {
+        type: 'object',
+        properties: {
+          text: { type: 'string', description: 'Text string to type' }
+        },
+        required: ['text']
+      }
+    }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'desktop_press',
+      description: 'Press a keyboard key or hotkey (e.g. "Enter", "Escape", "Tab", "Space", "Super") via cua-driver.',
+      parameters: {
+        type: 'object',
+        properties: {
+          key: { type: 'string', description: 'Key name to press' }
+        },
+        required: ['key']
+      }
+    }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'desktop_scroll',
+      description: 'Scroll mouse wheel up or down by pixel amount (cua-driver).',
+      parameters: {
+        type: 'object',
+        properties: {
+          direction: { type: 'string', enum: ['up', 'down'], description: 'Scroll direction (default "down")' },
+          amount: { type: 'number', description: 'Scroll distance in pixels (default 300)' }
+        }
+      }
+    }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'desktop_drag',
+      description: 'Drag mouse from (from_x, from_y) to (to_x, to_y) coordinates (cua-driver).',
+      parameters: {
+        type: 'object',
+        properties: {
+          from_x: { type: 'number' },
+          from_y: { type: 'number' },
+          to_x: { type: 'number' },
+          to_y: { type: 'number' }
+        },
+        required: ['from_x', 'from_y', 'to_x', 'to_y']
+      }
+    }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'desktop_screenshot',
+      description: 'Capture screenshot of entire desktop display (~/.levi/screenshots/ by default).',
+      parameters: {
+        type: 'object',
+        properties: {
+          path: { type: 'string', description: 'Optional custom output file path' }
+        }
+      }
+    }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'desktop_get_window_state',
+      description: 'Get active focused desktop window name, title, and display geometry (cua-driver).',
+      parameters: { type: 'object', properties: {} }
+    }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'desktop_list_apps',
+      description: 'List active desktop applications and open window titles (cua-driver).',
+      parameters: { type: 'object', properties: {} }
+    }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'desktop_launch_app',
+      description: 'Launch a desktop application by name or executable (e.g. "code", "firefox", "slack").',
+      parameters: {
+        type: 'object',
+        properties: {
+          app_name: { type: 'string', description: 'Application name or command' }
+        },
+        required: ['app_name']
+      }
+    }
+  },
+  {
+    type: 'function',
+    function: {
       name: 'remember',
       description: 'Save one durable fact to memory. Picks the right file (project or global) and skips duplicates.',
       parameters: {
@@ -671,13 +791,13 @@ if (name === 'mcp_search') {
 
     if (name === 'list_tools') {
       const cat = String(args?.category || '').toLowerCase().replace(/^task$/, 'tasks');
-      const alias = { fs: 'list_fs_commands', web: 'list_web_commands', tasks: 'list_task_commands', memory: 'list_memory_commands', meta: 'list_meta_commands', subagent: 'list_subagent_commands', mcp: 'list_mcp_commands' }[cat];
-      if (!alias) return 'Error: category must be fs, web, tasks, memory, meta, subagent, or mcp';
+      const alias = { fs: 'list_fs_commands', web: 'list_web_commands', desktop: 'list_desktop_commands', tasks: 'list_task_commands', memory: 'list_memory_commands', meta: 'list_meta_commands', subagent: 'list_subagent_commands', mcp: 'list_mcp_commands' }[cat];
+      if (!alias) return 'Error: category must be fs, web, desktop, tasks, memory, meta, subagent, or mcp';
       const out = await runTool(alias, {});
       return RULES[cat] && !out.startsWith('[SOLO') ? out + '\n\n' + RULES[cat] : out;
     }
 
-    if (name === 'list_commands' || name === 'list_fs_commands' || name === 'list_web_commands' || name === 'list_task_commands' || name === 'list_memory_commands' || name === 'list_meta_commands' || name === 'list_subagent_commands' || name === 'list_mcp_commands') {
+    if (name === 'list_commands' || name === 'list_fs_commands' || name === 'list_web_commands' || name === 'list_desktop_commands' || name === 'list_task_commands' || name === 'list_memory_commands' || name === 'list_meta_commands' || name === 'list_subagent_commands' || name === 'list_mcp_commands') {
 
   // category filtering
   let filtered = toolDefs;
@@ -959,6 +1079,11 @@ if (name === 'mcp_search') {
       return await runBrowserTool(name, args);
     }
 
+    if (name.startsWith('desktop_')) {
+      const { runDesktopTool } = await import('./desktop.js');
+      return await runDesktopTool(name, args);
+    }
+
     if (name === 'set_project') {
       const projectName = (args.name || '').trim().toLowerCase().replace(/\s+/g, '-');
       if (!projectName) return 'Error: project name required';
@@ -1171,9 +1296,10 @@ export function getAllCategoriesSummary() {
     categories: {
       fs: "use list_fs_commands -> 8 tools",
       web: "use list_web_commands -> 17 tools (browser automation)",
+      desktop: "use list_desktop_commands -> 9 tools (desktop automation & cua-driver)",
       tasks: "use list_task_commands -> 7 tools",
       memory: "use list_memory_commands -> 3 tools",
-      meta: "use list_meta_commands -> 9 tools",
+      meta: "use list_meta_commands -> 10 tools",
       subagent: solo? "HIDDEN (solo ON) - /solo off to enable" : "use list_subagent_commands -> 3 tools",
       mcp: "use list_mcp_commands -> 2 tools (mcp_search, mcp_list)",
       user: "use list_commands -> slash commands"
