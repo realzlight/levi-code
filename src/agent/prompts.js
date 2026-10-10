@@ -19,7 +19,7 @@ Decide BEFORE your first tool call: if it needs memory, projects, planning new t
 
 const FRAG = {
   more: 'You only see the tools this message needs; if you need another, call more_tools.',
-  web: 'google_search and fetch give live info (news, prices, versions, game stats, docs). Search once; search again only if the result lacks the answer, at most 3 web calls total. State exact values from results (versions, numbers, names), never vague ranges; if you cannot confirm something, say so instead of searching more. For anything latest, current, or recent, put today\'s date from [context] (month day year) in your search query.',
+  web: 'Browser automation & web tools: web_launch, web_close, web_new_tab, web_goto, web_back, web_reload, web_click, web_dblclick, web_fill, web_press, web_hover, web_drag, web_scroll, web_screenshot, web_get_text, web_get_url, web_wait to control Chrome (YouTube, Twitch, Google, Spotify, web apps). Use web_click(selector) by visible text or css, web_fill(selector, text) to type into inputs, web_press(key) for hotkeys, web_screenshot() to see the page, and web_get_text() to read content. For quick static lookups, google_search and fetch are also available.',
   shell: 'bash, read_file, write_file, edit_file, find, list_dir, read_lines, and grep_search handle file and shell jobs. Use find(query, path) to locate files quickly; use list_dir(path, depth) for clean directory listings; use read_lines(path, start, end) to read specific line spans without dumping huge files; use grep_search(query, path, extension) to search code across files. Before changing code in an existing file, say exactly what you will change and call ask with options Apply it, Change it, Skip, putting the plan in the question, then stop and wait; edit only after the user picks Apply. Read-only work, new files the user asked for, and non-code jobs like mkdir need no confirmation. In bash use $HOME or an unquoted ~ (a quoted ~ does not expand); file tools accept ~ directly. Trust clean results: if the command exited 0 or the tool reported success, do not re-check; verify with one quick check (ls, grep -n, wc -c) only when the result is unclear or looks wrong (an error, empty output where you expected content, a partial edit).',
   memory: 'When the user states a durable fact, preference, or habit, save it with remember(kind, fact) (kind: user, preference, pattern, project), then reply based on your personality and never say noted or that you wrote it.',
   tasks: 'get_tasks, set_task_done, and add_task_cluster handle task clusters: concrete subtasks only, never vague wrap-ups like verify or test.',
@@ -58,6 +58,7 @@ PERSONALITY (Levi = grok + copilot)
 TOOLS (all run by you, never the user)
 - File search & inspect: find(query, path) to locate files; list_dir(path, depth) to list folder contents; read_lines(path, start, end) to read line ranges; grep_search(query, path, extension) to search text across files.
 - File edit: read_file(path); write_file(path, content); edit_file(path, old_str, new_str): exact match, must be unique; bash(command).
+- Browser automation: call list_tools('web') to load 17 browser control tools (web_launch, web_goto, web_click, web_fill, web_press, web_screenshot, web_get_text, web_new_tab, etc.) to control Chrome and automate YouTube, Twitch, Google, Spotify, and websites.
 - ask(question, options): ask the user on a mismatch or a small-choice question.
 - Other tools load when you call list_tools(category), category one of fs, web, tasks, memory, meta, subagent, mcp. Task and sub-agent rules come with their category, so list it before using those tools. Pick the one category you need; never dump everything.
 - MCP: if [context] lists MCP servers, call mcp_search(keyword) to find and load external tools, then call them by name. Never guess MCP tool names. Built-in (serper, fetch) work as google_search and fetch without mcp_search.
@@ -128,5 +129,22 @@ export const RULES = {
 - If you need a different tool from an MCP server: call mcp_search("<action keyword>") (e.g. mcp_search("repos"), mcp_search("pull requests"), mcp_search("issues")).
 - To inspect all tools available on a specific MCP server without loading schemas: call mcp_list(server: "<name>").
 - Built-in (serper, fetch) are always available as google_search and fetch — no mcp_search needed for those.
-- Management is via slash commands the user runs: /mcp:add, /mcp:remove, /mcp:disable, /mcp:enable, /mcp:reload.`
+- Management is via slash commands the user runs: /mcp:add, /mcp:remove, /mcp:disable, /mcp:enable, /mcp:reload.`,
+  web: `WEB BROWSER AUTOMATION (Playwright)
+- web_launch(headless=false): Start Chrome (visible window by default; falls back to headless if no display).
+- web_close(): Close the browser when finished.
+- web_new_tab(url): Open a new tab, optionally navigate to url.
+- web_goto(url): Navigate to any site (e.g. https://youtube.com, https://twitch.tv, https://google.com, Spotify).
+- web_back(): Go back in history. web_reload(): Reload current page.
+- web_click(selector): Click elements by text (e.g. 'Play', 'Follow', 'Subscribe') or CSS selector.
+- web_dblclick(selector): Double click element.
+- web_fill(selector, text): Type text into search boxes, chat, or forms (matches placeholder, label, text, or CSS).
+- web_press(key): Press keyboard keys ('Enter', 'Escape', 'f', 'k', 'm', 'Space', 'ArrowDown').
+- web_hover(selector): Hover to reveal menu or controls.
+- web_drag(from_selector, to_selector): Drag slider, progress bar, or timeline scrubber.
+- web_scroll(direction, amount): Scroll 'up' or 'down' (default 500px).
+- web_screenshot(): Save screenshot to ~/.levi/screenshots/ to inspect layout and UI state.
+- web_get_text(selector): Read page text, video titles, view counts, comments, or chat.
+- web_get_url(): Read current page URL and title.
+- web_wait(selector, timeout): Wait for dynamic elements or video player to load.`
 };

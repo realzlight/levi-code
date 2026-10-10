@@ -31,16 +31,23 @@ function buildSystem() {
   return agentPrompt(isSoloOnly());
 }
 
+const PLAYWRIGHT_WEB_TOOLS = [
+  'web_launch', 'web_close', 'web_new_tab',
+  'web_goto', 'web_back', 'web_reload',
+  'web_click', 'web_dblclick', 'web_fill', 'web_press', 'web_hover', 'web_drag', 'web_scroll',
+  'web_screenshot', 'web_get_text', 'web_get_url', 'web_wait'
+];
+
 // messages = [{ role: 'user'|'assistant', content: string }]
 // onStep(kind, data) — optional progress callback: 'tool_call' | 'tool_result' | 'done' | 'thought'
-const LITE_NAMES = ['bash', 'read_file', 'write_file', 'edit_file', 'find', 'list_dir', 'read_lines', 'grep_search', 'google_search', 'fetch', 'ask', 'remember', 'get_tasks', 'set_task_done', 'add_task_cluster', 'mcp_search', 'mcp_list'];
+const LITE_NAMES = ['bash', 'read_file', 'write_file', 'edit_file', 'find', 'list_dir', 'read_lines', 'grep_search', 'google_search', 'fetch', ...PLAYWRIGHT_WEB_TOOLS, 'ask', 'remember', 'get_tasks', 'set_task_done', 'add_task_cluster', 'mcp_search', 'mcp_list'];
 const LITE_TOOLS = toolDefs.filter((t) => LITE_NAMES.includes(t.function.name));
 const LITE_GROUPS = {
   none: [],
   memory: ['remember'],
-  web: ['google_search', 'fetch'],
+  web: ['google_search', 'fetch', ...PLAYWRIGHT_WEB_TOOLS],
   shell: ['bash', 'read_file', 'write_file', 'edit_file', 'find', 'list_dir', 'read_lines', 'grep_search', 'ask'],
-  all: ['bash', 'read_file', 'write_file', 'edit_file', 'find', 'list_dir', 'read_lines', 'grep_search', 'google_search', 'fetch', 'ask', 'remember'],
+  all: ['bash', 'read_file', 'write_file', 'edit_file', 'find', 'list_dir', 'read_lines', 'grep_search', 'google_search', 'fetch', ...PLAYWRIGHT_WEB_TOOLS, 'ask', 'remember'],
   tasks: ['get_tasks', 'set_task_done', 'add_task_cluster'],
   mcp: ['mcp_search', 'mcp_list', 'bash', 'read_file', 'write_file', 'edit_file', 'find', 'list_dir', 'read_lines', 'grep_search', 'ask']
 };
@@ -52,13 +59,13 @@ const LITE_TOKEN_BUDGET = 30000;
 const AGENT_WEB_BUDGET = 6;
 const AGENT_WEB_CAP = 3000;
 const AGENT_OUTPUT_CAP = 8000;
-const OUTPUT_TOOLS = ['read_file', 'bash', 'find', 'list_dir', 'read_lines', 'grep_search'];
+const OUTPUT_TOOLS = ['read_file', 'bash', 'find', 'list_dir', 'read_lines', 'grep_search', 'web_get_text', 'web_screenshot', 'web_get_url'];
 async function runToolGuarded(call, state) {
   if (state.over) return 'Error: token budget for this message is used up. Answer now with what you have and say what you would check next.';
   if (!WEB_NAMES.includes(call.name)) {
     const out = await runTool(call.name, call.args);
     const s = typeof out === 'string' ? out : String(out);
-    if (OUTPUT_TOOLS.includes(call.name) && s.length > AGENT_OUTPUT_CAP) return s.slice(0, AGENT_OUTPUT_CAP) + '\n...[truncated ' + (s.length - AGENT_OUTPUT_CAP) + ' chars shortened to save tokens; the file is intact. use grep -n, sed -n or wc to read other parts]';
+    if ((OUTPUT_TOOLS.includes(call.name) || !toolDefs.some((t) => t.function.name === call.name)) && s.length > AGENT_OUTPUT_CAP) return s.slice(0, AGENT_OUTPUT_CAP) + '\n...[truncated ' + (s.length - AGENT_OUTPUT_CAP) + ' chars shortened to save tokens; the file is intact. use grep -n, sed -n or wc to read other parts]';
     return out;
   }
   if (state.web >= AGENT_WEB_BUDGET) return 'Error: web budget used up for this message. Answer with what you have and say plainly what you could not confirm.';
@@ -109,8 +116,17 @@ async function runLite(routed, sessionId, onStep, system) {
     if (webCalls >= WEB_BUDGET && !budgetNoted) {
         messages.push({ role: 'user', content: '(web budget used up. answer now with what you found and say plainly what you could not confirm. do not guess.)' });
         budgetNoted = true;
+    }
+    let text = '', toolCalls = [], message = {}, usage = {};
+      try {
+        const res = await chatWithTools(messages, { system: litePrompt(system, expanded ? 'all' : routed.tools), tools: pickLite() });
+        text = res.text;
+        toolCalls = res.toolCalls;
+        message = res.message;
+        usage = res.usage;
+      } catch (err) {
+        return `API error: ${err.message}. Please try again.`;
       }
-      const { text, toolCalls, message, usage } = await chatWithTools(messages, { system: litePrompt(system, expanded ? 'all' : routed.tools), tools: pickLite() });
     liteTokens += (usage && usage.inputTokens) || 0;
     if (sessionId) recordUsage(sessionId, usage);
     if (!toolCalls.length) {
@@ -214,7 +230,7 @@ export async function runAgent(userMessage, { onStep, maxSteps, forceAgent } = {
   let tokenBudget = 50000 + pendingTasks * 10000;
   const system = buildSystem();
   const SUB = ['spawn_subagent', 'list_subagents', 'message_subagent'];
-  const unlocked = new Set();
+  const unlocked = new Set(routed.tools === 'web' || routed.tools === 'all' ? CATEGORIES.web : []);
   const customMcp = hasCustomMcp();
   if (customMcp && !mcpMod) mcpMod = await import('../mcp.js');
   if (mcpMod) {
@@ -279,7 +295,19 @@ export async function runAgent(userMessage, { onStep, maxSteps, forceAgent } = {
     for (const i of toolIdx.slice(0, -5)) {
       if (String(messages[i].content).length > 300) messages[i] = { ...messages[i], content: String(messages[i].content).slice(0, 300) + '\n...[older result trimmed]' };
     }
-    const { text, toolCalls, message, usage } = await chatWithTools(messages, { system, tools: pickTools() });
+    let text = '', toolCalls = [], message = {}, usage = {};
+    try {
+      const res = await chatWithTools(messages, { system, tools: pickTools() });
+      text = res.text;
+      toolCalls = res.toolCalls;
+      message = res.message;
+      usage = res.usage;
+    } catch (err) {
+      onStep?.('error', err);
+      const errMsg = `API error: ${err.message}. Please try again.`;
+      onStep?.('done', errMsg);
+      return errMsg;
+    }
     webState.tokens += (usage && usage.inputTokens) || 0;
     if (webState.tokens >= tokenBudget) webState.over = true;
     if (sessionId) recordUsage(sessionId, usage);

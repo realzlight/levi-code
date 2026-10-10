@@ -16,7 +16,7 @@ function resolve(p) {
 }
 export const CATEGORIES = {
   fs: ['read_file','write_file','edit_file','bash','find','list_dir','read_lines','grep_search'],
-  web: ['google_search','fetch'],
+  web: ['web_launch','web_close','web_new_tab','web_goto','web_back','web_reload','web_click','web_dblclick','web_fill','web_press','web_hover','web_drag','web_scroll','web_screenshot','web_get_text','web_get_url','web_wait'],
   tasks: ['add_task_cluster','get_tasks','set_task_done','edit_task','delete_task','delete_cluster','add_task_to_cluster'],
   memory: ['set_project','search_sessions','read_session'],
   meta: ['list_commands','list_fs_commands','list_web_commands','list_task_commands','list_memory_commands','list_meta_commands','list_subagent_commands','list_mcp_commands','ask'],
@@ -389,6 +389,218 @@ export const toolDefs = [
   {
     type: 'function',
     function: {
+      name: 'web_launch',
+      description: 'Start Chrome browser via Playwright. Visible window by default (headless=false).',
+      parameters: {
+        type: 'object',
+        properties: {
+          headless: { type: 'boolean', description: 'Run in headless mode (default false for visible browser)' }
+        }
+      }
+    }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'web_close',
+      description: 'Close the browser and active session.',
+      parameters: { type: 'object', properties: {} }
+    }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'web_new_tab',
+      description: 'Open a new browser tab, optionally navigating to a URL.',
+      parameters: {
+        type: 'object',
+        properties: {
+          url: { type: 'string', description: 'Optional URL to open in the new tab' }
+        }
+      }
+    }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'web_goto',
+      description: 'Navigate the active tab to a URL (e.g. https://youtube.com, https://twitch.tv, https://google.com).',
+      parameters: {
+        type: 'object',
+        properties: {
+          url: { type: 'string', description: 'Target website URL' }
+        },
+        required: ['url']
+      }
+    }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'web_back',
+      description: 'Navigate back to the previous page in history.',
+      parameters: { type: 'object', properties: {} }
+    }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'web_reload',
+      description: 'Reload the current page.',
+      parameters: { type: 'object', properties: {} }
+    }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'web_click',
+      description: 'Click an element by button/link text (e.g. "Play", "Follow", "Subscribe"), ID, or CSS selector.',
+      parameters: {
+        type: 'object',
+        properties: {
+          selector: { type: 'string', description: 'Button text, link text, CSS selector, or ID to click' }
+        },
+        required: ['selector']
+      }
+    }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'web_dblclick',
+      description: 'Double click an element by text, ID, or CSS selector.',
+      parameters: {
+        type: 'object',
+        properties: {
+          selector: { type: 'string', description: 'Element text, CSS selector, or ID' }
+        },
+        required: ['selector']
+      }
+    }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'web_fill',
+      description: 'Type text into an input box, search field, or chat (matches placeholder, label, text, or CSS).',
+      parameters: {
+        type: 'object',
+        properties: {
+          selector: { type: 'string', description: 'Input field placeholder, label, name, or CSS selector' },
+          text: { type: 'string', description: 'Text to type into the field' }
+        },
+        required: ['selector', 'text']
+      }
+    }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'web_press',
+      description: 'Press a keyboard key (e.g. "Enter", "Escape", "Space", "f", "k", "m", "ArrowDown").',
+      parameters: {
+        type: 'object',
+        properties: {
+          key: { type: 'string', description: 'Key name to press' }
+        },
+        required: ['key']
+      }
+    }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'web_hover',
+      description: 'Hover over an element by text, ID, or CSS selector to reveal menus or toolbars.',
+      parameters: {
+        type: 'object',
+        properties: {
+          selector: { type: 'string', description: 'Element text, CSS selector, or ID' }
+        },
+        required: ['selector']
+      }
+    }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'web_drag',
+      description: 'Drag one element to another (e.g. sliders, progress bars, timeline scrubbers).',
+      parameters: {
+        type: 'object',
+        properties: {
+          from_selector: { type: 'string', description: 'Source element text or selector' },
+          to_selector: { type: 'string', description: 'Destination element text or selector' }
+        },
+        required: ['from_selector', 'to_selector']
+      }
+    }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'web_scroll',
+      description: 'Scroll the active page up or down.',
+      parameters: {
+        type: 'object',
+        properties: {
+          direction: { type: 'string', enum: ['up', 'down'], description: 'Scroll direction (up or down; default down)' },
+          amount: { type: 'number', description: 'Distance to scroll in pixels (default 500)' }
+        }
+      }
+    }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'web_screenshot',
+      description: 'Capture screenshot of current page (~/.levi/screenshots/ by default).',
+      parameters: {
+        type: 'object',
+        properties: {
+          path: { type: 'string', description: 'Optional output file path (~ supported)' }
+        }
+      }
+    }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'web_get_text',
+      description: 'Read text from an element (video title, views, chat, comments) or full page.',
+      parameters: {
+        type: 'object',
+        properties: {
+          selector: { type: 'string', description: 'Optional element text, CSS selector, or ID (reads page if omitted)' }
+        }
+      }
+    }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'web_get_url',
+      description: 'Get current page URL and title.',
+      parameters: { type: 'object', properties: {} }
+    }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'web_wait',
+      description: 'Wait for an element to appear/load or wait for milliseconds.',
+      parameters: {
+        type: 'object',
+        properties: {
+          selector: { type: 'string', description: 'Element text/selector to wait for, or milliseconds duration' },
+          timeout: { type: 'number', description: 'Max wait timeout in milliseconds (default 10000)' }
+        }
+      }
+    }
+  },
+  {
+    type: 'function',
+    function: {
       name: 'remember',
       description: 'Save one durable fact to memory. Picks the right file (project or global) and skips duplicates.',
       parameters: {
@@ -742,6 +954,11 @@ if (name === 'mcp_search') {
       return header + '\n' + matches.join('\n');
     }
 
+    if (name.startsWith('web_')) {
+      const { runBrowserTool } = await import('./web-browser.js');
+      return await runBrowserTool(name, args);
+    }
+
     if (name === 'set_project') {
       const projectName = (args.name || '').trim().toLowerCase().replace(/\s+/g, '-');
       if (!projectName) return 'Error: project name required';
@@ -953,7 +1170,7 @@ export function getAllCategoriesSummary() {
     usage: "Run list_<category>_commands to see tools with params, /commands for user commands",
     categories: {
       fs: "use list_fs_commands -> 8 tools",
-      web: "use list_web_commands -> 2 tools",
+      web: "use list_web_commands -> 17 tools (browser automation)",
       tasks: "use list_task_commands -> 7 tools",
       memory: "use list_memory_commands -> 3 tools",
       meta: "use list_meta_commands -> 9 tools",

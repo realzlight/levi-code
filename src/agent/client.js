@@ -61,13 +61,26 @@ export async function chat(messages, { system, maxTokens = 1024 } = {}) {
     messages: system ? [{ role: 'system', content: system }, ...messages] : messages
   };
 
-  const res = await fetch(`${base}/chat/completions`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${m.api_key}` },
-    body: JSON.stringify(payload)
-  }).then((r) => r.json());
+  let res = null;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const response = await fetch(`${base}/chat/completions`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${m.api_key}` },
+      body: JSON.stringify(payload)
+    });
+    res = await response.json();
+    const err = res?.error || (Array.isArray(res) && res[0]?.error);
+    if (err) {
+      const isTransient = err.code === 503 || err.code === 429 || err.status === 'UNAVAILABLE' || err.status === 'RESOURCE_EXHAUSTED' || String(err.message || '').includes('demand');
+      if (isTransient && attempt < 2) {
+        await new Promise((r) => setTimeout(r, 1200 * (attempt + 1)));
+        continue;
+      }
+      throw new Error(err.message || 'OpenAI-compatible API error');
+    }
+    break;
+  }
 
-  if (res.error) throw new Error(res.error.message || 'OpenAI-compatible API error');
   const text = res.choices?.[0]?.message?.content || '';
   return { text, raw: res, usage: extractUsage(res, 'openai') };
 }
@@ -118,13 +131,25 @@ export async function chatWithTools(messages, { system, tools = [], maxTokens = 
     tools: tools.length ? tools : undefined
   };
 
-  const res = await fetch(`${base}/chat/completions`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${m.api_key}` },
-    body: JSON.stringify(payload)
-  }).then((r) => r.json());
-
-  if (res.error) throw new Error(res.error.message || 'OpenAI-compatible API error');
+  let res = null;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const response = await fetch(`${base}/chat/completions`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${m.api_key}` },
+      body: JSON.stringify(payload)
+    });
+    res = await response.json();
+    const err = res?.error || (Array.isArray(res) && res[0]?.error);
+    if (err) {
+      const isTransient = err.code === 503 || err.code === 429 || err.status === 'UNAVAILABLE' || err.status === 'RESOURCE_EXHAUSTED' || String(err.message || '').includes('demand');
+      if (isTransient && attempt < 2) {
+        await new Promise((r) => setTimeout(r, 1200 * (attempt + 1)));
+        continue;
+      }
+      throw new Error(err.message || 'OpenAI-compatible API error');
+    }
+    break;
+  }
 
   const msg = res.choices?.[0]?.message || {};
   const text = msg.content || '';
