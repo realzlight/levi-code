@@ -20,7 +20,6 @@
     "@clack/prompts": "^1.8.1",
     "@executeautomation/playwright-mcp-server": "^1.0.12",
     "@modelcontextprotocol/sdk": "^1.32.1",
-    "@modelcontextprotocol/server-everything": "^2026.8.31",
     "chalk": "^6.0.0",
     "commander": "^15.0.0",
     "execa": "^8.0.1",
