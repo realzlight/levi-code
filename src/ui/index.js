@@ -31,7 +31,7 @@ const BORDER = '#999999';
 const HIGHLIGHT_BG = '#2a2a2a';
 const DOT_COLOR = '#ffffff';
 const LEVI_HOME = path.join(os.homedir(), '.levi');
-
+const v = 'v1x
 const CONFIG = path.join(LEVI_HOME,'config.json')
 
 
@@ -97,20 +97,20 @@ function sessionLine() {
   const id = currentSessionId();
   if (!id) return 'Abyssal \u2022 /resume';
   const title = getTitle(id);
-  return `SESSION-${id}${title ? ' \u2014 ' + title : ''}`;
+  return `Abyssal ${title ? ' \u2014 ' + title : ''}`;
 }
 
 function Header({ mascot, compact }) {
   if (compact) {
     return h(Box, { flexDirection: 'row', justifyContent: 'space-between', width: '100%' },
-      h(Text, { color: 'white', bold: true }, 'Levi Code ', h(Text, { color: GRAY }, 'v2.1.25')),
+      h(Text, { color: 'white', bold: true }, 'Levi Code ', h(Text, { color: GRAY }, `${v}`)),
       h(Text, { color: GRAY }, sessionLine())
     );
   }
   return h(Box, { alignItems: 'center' },
     mascot ? h(Text, null, mascot) : null,
     h(Box, { flexDirection: 'column', marginLeft: mascot ? 3 : 0 },
-      h(Text, { color: 'white', bold: true }, 'Levi Code ', h(Text, { color: GRAY }, 'v2.1.25')),
+      h(Text, { color: 'white', bold: true }, 'Levi Code ', h(Text, { color: GRAY }, `${v}`)),
       h(Text, { color: GRAY }, sessionLine()),
       h(Text, { color: '#c4c4c4' }, GREETING)
     )
