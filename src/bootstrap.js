@@ -313,11 +313,12 @@ export async function boot() {
   return await runBootstrap({ quiet: false });
 }
 
-// Auto-run when executed directly via CLI: node src/bootstrap.js
+// Auto-run when executed directly via CLI or postinstall: node src/bootstrap.js
 if (process.argv[1] && process.argv[1].endsWith('bootstrap.js')) {
-  boot().catch(err => {
-    console.error(chalk.red('[levi] Bootstrap failed:'), err);
-    process.exit(1);
+  const isQuiet = process.argv.includes('--quiet') || !process.stdout.isTTY;
+  runBootstrap({ quiet: isQuiet }).catch(err => {
+    console.error(chalk.red('[levi] Bootstrap notice:'), err.message);
+    process.exit(0);
   });
 }
 

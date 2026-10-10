@@ -5,6 +5,14 @@ import path from 'path';
 import os from 'os';
 
 const CONFIG_PATH = path.join(os.homedir(), '.levi', 'config.json');
+async function ensureBootstrapped() {
+  const LEVI_HOME = path.join(os.homedir(), '.levi');
+  if (!fs.existsSync(LEVI_HOME) || !fs.existsSync(CONFIG_PATH)) {
+    const { runBootstrap } = await import('../src/bootstrap.js');
+    await runBootstrap({ quiet: false });
+  }
+}
+
 function getAuth() {
   try { return JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf-8')).auth; }
   catch { return { loggedIn: false }; }
@@ -47,6 +55,7 @@ program.command('whoami').action(async () => {
 });
 
 program.action(async () => {
+  await ensureBootstrapped();
   const auth = getAuth();
   if (!auth?.loggedIn) {
     await import('../src/ui/welcome.js');

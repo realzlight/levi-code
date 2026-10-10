@@ -1,13 +1,14 @@
 {
   "name": "levi-ai",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "bin": {
-    "levi-code": "./bin/cli.js",
-    "levi": "./bin/cli.js"
+    "levi-code": "bin/cli.js",
+    "levi": "bin/cli.js"
   },
   "scripts": {
     "bootstrap": "node src/bootstrap.js",
     "init": "node src/bootstrap.js",
+    "postinstall": "node src/bootstrap.js",
     "start": "node bin/cli.js"
   },
   "type": "module",
@@ -24,7 +25,10 @@
     "commander": "^15.0.0",
     "execa": "^8.0.1",
     "fs-extra": "^11.2.0",
+    "ink": "^5.0.1",
     "mcp-server-serper": "^1.0.0",
-    "playwright": "^1.50.0"
+    "playwright": "^1.50.0",
+    "react": "^18.3.1",
+    "terminal-image": "^2.0.0"
   }
 }
