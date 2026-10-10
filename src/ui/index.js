@@ -31,7 +31,7 @@ const BORDER = '#999999';
 const HIGHLIGHT_BG = '#2a2a2a';
 const DOT_COLOR = '#ffffff';
 const LEVI_HOME = path.join(os.homedir(), '.levi');
-const v = 'v1x
+const v = 'v1x'
 const CONFIG = path.join(LEVI_HOME,'config.json')
 
 
@@ -97,7 +97,7 @@ function sessionLine() {
   const id = currentSessionId();
   if (!id) return 'Abyssal \u2022 /resume';
   const title = getTitle(id);
-  return `Abyssal ${title ? ' \u2014 ' + title : ''}`;
+  return `Abyssal${title ? ' \u2014 ' + title : ''}`;
 }
 
 function Header({ mascot, compact }) {
