@@ -242,6 +242,21 @@ export async function runBootstrap({ onProgress = null, quiet = false } = {}) {
     results.playwrightStatus = 'skipped (Android/Termux terminal environment)';
     results.cuaStatus = 'skipped (Android/Termux terminal environment)';
 
+    if (plat.isTermux) {
+      try {
+        const { fileURLToPath } = await import('node:url');
+        const __filename = fileURLToPath(import.meta.url);
+        const cliPath = path.resolve(path.dirname(__filename), '..', 'bin', 'cli.js');
+        if (fs.existsSync(cliPath)) {
+          await execa('termux-fix-shebang', [cliPath], { reject: false });
+        }
+        const globalBin = path.join(process.env.PREFIX || '/data/data/com.termux/files/usr', 'bin', 'levi');
+        if (fs.existsSync(globalBin)) {
+          await execa('termux-fix-shebang', [globalBin], { reject: false });
+        }
+      } catch {}
+    }
+
     if (!quiet) {
       p.log.warn(yellow('⚡ Mobile/Termux Mode Detected'));
       p.log.message(dim('  • Playwright Chromium binary install: ') + yellow('Skipped') + dim(' (requires X11/Wayland display)'));

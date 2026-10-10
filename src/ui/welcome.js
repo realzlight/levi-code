@@ -249,10 +249,12 @@ try {
 } catch (error) {
   mascot = "";
 }
-execaSync(process.platform === 'win32' ? 'cls' : 'clear', {
-  shell: true,
-  stdio: 'inherit'
-});
+try {
+  execaSync(process.platform === 'win32' ? 'cls' : 'clear', {
+    shell: true,
+    stdio: 'inherit'
+  });
+} catch {}
 
 const app = render(h(App, { mascot }));
 app.unmount();
