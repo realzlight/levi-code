@@ -310,12 +310,12 @@ async function runOnboardingSetup() {
   // 1. Tell user about models and name them
   p.note(
     `Levi connects directly to your choice of AI model provider to write code,\n` +
-    `manage tasks, and execute tools. Here are the popular options:\n\n` +
-    `• Google Gemini  ${dim('→')} Model: ${cyan.bold('gemini-2.5-flash')} (Free key at ${dim('aistudio.google.com')})\n` +
+    `manage tasks, and execute tools. Levi can run any model from any api or provider that use openai or anthropic's sdk Here are the popular options:\n\n` +
+    `• Google Gemini  ${dim('→')} Model: ${cyan.bold('gemini-3.5-flash')} (Free key at ${dim('aistudio.google.com')})\n` +
     `• OpenAI         ${dim('→')} Model: ${cyan.bold('gpt-4o')} or ${cyan.bold('gpt-4o-mini')} (${dim('platform.openai.com')})\n` +
-    `• Anthropic      ${dim('→')} Model: ${cyan.bold('claude-3-5-sonnet-20241022')} (${dim('console.anthropic.com')})\n` +
+    `• Anthropic      ${dim('→')} Model: ${cyan.bold('claude-5.5-sonnet-20241022')} (${dim('console.anthropic.com')})\n` +
     `• Groq           ${dim('→')} Model: ${cyan.bold('llama-3.3-70b-versatile')} (${dim('console.groq.com')})\n` +
-    `• OpenRouter     ${dim('→')} Model: ${cyan.bold('anthropic/claude-3.5-sonnet')} (${dim('openrouter.ai')})\n` +
+    `• OpenRouter     ${dim('→')} Model: ${cyan.bold('anthropic/claude-5.5-opus')} (${dim('openrouter.ai')})\n` +
     `• Ollama         ${dim('→')} Model: ${cyan.bold('llama3')} (Local offline at ${dim('localhost:11434')})`,
     cyan('☾ AI Models & Providers')
   );
@@ -344,7 +344,7 @@ async function runOnboardingSetup() {
     gemini: {
       name: 'gemini',
       sdk: 'openai',
-      model: 'gemini-2.5-flash',
+      model: 'gemini-3.5-flash-lite',
       baseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai',
       keyHint: 'Get your Gemini API key at https://aistudio.google.com'
     },
