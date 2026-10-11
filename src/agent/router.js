@@ -57,13 +57,13 @@ function parseMcp(val) {
   return false;
 }
 
-async function classify(query, recent, sessionId) {
+async function classify(query, recent, sessionId, signal) {
   const prompt = `last_route: ${lastRoute}
 recent user messages:
 ${recent.length ? recent.map((m) => `- ${m}`).join('\n') : '(none)'}
 current: ${query.slice(0, 600)}`;
   try {
-    const res = await chat([{ role: 'user', content: prompt }], { system: routerSystem() });
+    const res = await chat([{ role: 'user', content: prompt }], { system: routerSystem(), signal });
     if (sessionId) recordUsage(sessionId, res.usage);
     const data = JSON.parse(res.text.trim().replace(/^```json\s*|```\s*$/g, ''));
     const mcpServer = parseMcp(data.mcp);
@@ -80,12 +80,13 @@ current: ${query.slice(0, 600)}`;
       insight: String(data.insight || '').slice(0, 120)
     };
   } catch (e) {
+    if (signal?.aborted || e.name === 'AbortError' || e.message === 'Interrupted') throw e;
     return { route: 'light', tools: 'all', mcp: false, insight: 'router failed, using light: ' + String((e && e.message) || e).slice(0, 80) };
   }
 }
 
 // recentUser = last user messages only (no AI replies), excluding the current one
-export async function route(query, { recentUser = [], forceAgent = false, sessionId } = {}) {
+export async function route(query, { recentUser = [], forceAgent = false, sessionId, signal } = {}) {
   const q = query.trim();
   const recent = recentUser.slice(-2).map((m) => String(m).slice(0, 150));
 
@@ -95,7 +96,7 @@ export async function route(query, { recentUser = [], forceAgent = false, sessio
   else if (FILE_HINT.test(q)) r = { route: 'agent', insight: 'mentions code or file paths' };
   else if (/^(remember|note that|from now on|btw|fyi)\b|\bi (always|never|usually|prefer|like|love|hate|enjoy|use|play|work (as|at|on)|live in) |\bmy (name is|favou?rite|setup is)/i.test(q)) r = { route: 'conversation', tools: 'memory', mcp: false, insight: 'durable fact or preference: save with remember' };
   else if (TASK_VIEW.test(q)) r = { route: 'light', tools: 'tasks', mcp: false, insight: 'show or update task clusters' };
-  else r = await classify(q, recent, sessionId);
+  else r = await classify(q, recent, sessionId, signal);
 
   lastRoute = r.route;
   return { route: r.route, tools: r.tools || 'all', mcp: r.mcp || false, query: q, recentMessages: recent, insight: r.insight };

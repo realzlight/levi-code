@@ -24,13 +24,16 @@ function extractUsage(res, sdk) {
 
 // messages = [{ role: 'user' | 'assistant', content: string }]
 // returns { text, raw, usage: { inputTokens, outputTokens } }
-export async function chat(messages, { system, maxTokens = 1024 } = {}) {
+export async function chat(messages, { system, maxTokens = 1024, signal } = {}) {
   const m = activeModel();
   const base = m.base_url.replace(/\/$/, '');
+
+  if (signal?.aborted) throw new Error('Interrupted');
 
   if (m.sdk === 'anthropic') {
     const res = await fetch(`${base}/v1/messages`, {
       method: 'POST',
+      signal,
       headers: {
         'Content-Type': 'application/json',
         'x-api-key': m.api_key,
@@ -63,8 +66,10 @@ export async function chat(messages, { system, maxTokens = 1024 } = {}) {
 
   let res = null;
   for (let attempt = 0; attempt < 3; attempt++) {
+    if (signal?.aborted) throw new Error('Interrupted');
     const response = await fetch(`${base}/chat/completions`, {
       method: 'POST',
+      signal,
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${m.api_key}` },
       body: JSON.stringify(payload)
     });
@@ -73,7 +78,11 @@ export async function chat(messages, { system, maxTokens = 1024 } = {}) {
     if (err) {
       const isTransient = err.code === 503 || err.code === 429 || err.status === 'UNAVAILABLE' || err.status === 'RESOURCE_EXHAUSTED' || String(err.message || '').includes('demand');
       if (isTransient && attempt < 2) {
-        await new Promise((r) => setTimeout(r, 1200 * (attempt + 1)));
+        if (signal?.aborted) throw new Error('Interrupted');
+        await new Promise((resolve, reject) => {
+          const t = setTimeout(resolve, 1200 * (attempt + 1));
+          signal?.addEventListener('abort', () => { clearTimeout(t); reject(new Error('Interrupted')); }, { once: true });
+        });
         continue;
       }
       throw new Error(err.message || 'OpenAI-compatible API error');
@@ -87,13 +96,16 @@ export async function chat(messages, { system, maxTokens = 1024 } = {}) {
 
 // same as chat(), but supports tools. Returns { text, toolCalls, message, raw, usage }
 // toolCalls: [{ id, name, args }] — empty if the model just answered
-export async function chatWithTools(messages, { system, tools = [], maxTokens = 2048 } = {}) {
+export async function chatWithTools(messages, { system, tools = [], maxTokens = 2048, signal } = {}) {
   const m = activeModel();
   const base = m.base_url.replace(/\/$/, '');
+
+  if (signal?.aborted) throw new Error('Interrupted');
 
   if (m.sdk === 'anthropic') {
     const res = await fetch(`${base}/v1/messages`, {
       method: 'POST',
+      signal,
       headers: {
         'Content-Type': 'application/json',
         'x-api-key': m.api_key,
@@ -133,8 +145,10 @@ export async function chatWithTools(messages, { system, tools = [], maxTokens = 
 
   let res = null;
   for (let attempt = 0; attempt < 3; attempt++) {
+    if (signal?.aborted) throw new Error('Interrupted');
     const response = await fetch(`${base}/chat/completions`, {
       method: 'POST',
+      signal,
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${m.api_key}` },
       body: JSON.stringify(payload)
     });
@@ -143,7 +157,11 @@ export async function chatWithTools(messages, { system, tools = [], maxTokens = 
     if (err) {
       const isTransient = err.code === 503 || err.code === 429 || err.status === 'UNAVAILABLE' || err.status === 'RESOURCE_EXHAUSTED' || String(err.message || '').includes('demand');
       if (isTransient && attempt < 2) {
-        await new Promise((r) => setTimeout(r, 1200 * (attempt + 1)));
+        if (signal?.aborted) throw new Error('Interrupted');
+        await new Promise((resolve, reject) => {
+          const t = setTimeout(resolve, 1200 * (attempt + 1));
+          signal?.addEventListener('abort', () => { clearTimeout(t); reject(new Error('Interrupted')); }, { once: true });
+        });
         continue;
       }
       throw new Error(err.message || 'OpenAI-compatible API error');

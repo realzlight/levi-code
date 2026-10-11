@@ -62,7 +62,7 @@ const MORE_TOOL = { type: 'function', function: { name: 'more_tools', descriptio
 const WEB_NAMES = ['google_search', 'fetch'];
 const WEB_BUDGET = 3;
 const RESULT_CAP = 1500;
-const LITE_TOKEN_BUDGET = 30000;
+const LITE_TOKEN_BUDGET = 128000;
 const AGENT_WEB_BUDGET = 6;
 const AGENT_WEB_CAP = 3000;
 const AGENT_OUTPUT_CAP = 8000;
@@ -83,7 +83,7 @@ async function runToolGuarded(call, state) {
 
 
 // shared by chat (conversation) and light modes: small prompt, small tool set, no agent prompt
-async function runLite(routed, sessionId, onStep, system) {
+async function runLite(routed, sessionId, onStep, system, { signal } = {}) {
   const mcpNames = routed.mcp ? getMcpNames() : undefined;
   if (routed.mcp) {
     if (!mcpMod) mcpMod = await import('../mcp.js');
@@ -115,6 +115,7 @@ async function runLite(routed, sessionId, onStep, system) {
     return webCalls >= WEB_BUDGET ? tools.filter((t) => !WEB_NAMES.includes(t.function.name)) : tools;
   };
   for (let step = 0; step < 12; step++) {
+    if (signal?.aborted) return '[Interrupted]';
     if (liteTokens > LITE_TOKEN_BUDGET) return 'Stopped: light-mode token budget (' + LITE_TOKEN_BUDGET + ') reached for this message. Send another message to continue from here.';
     const liteResults = messages.map((m, i) => (m.role === 'tool' ? i : -1)).filter((i) => i >= 0);
     for (const i of liteResults.slice(0, -4)) {
@@ -126,14 +127,16 @@ async function runLite(routed, sessionId, onStep, system) {
     }
     let text = '', toolCalls = [], message = {}, usage = {};
       try {
-        const res = await chatWithTools(messages, { system: litePrompt(system, expanded ? 'all' : routed.tools), tools: pickLite() });
+        const res = await chatWithTools(messages, { system: litePrompt(system, expanded ? 'all' : routed.tools), tools: pickLite(), signal });
         text = res.text;
         toolCalls = res.toolCalls;
         message = res.message;
         usage = res.usage;
       } catch (err) {
+        if (signal?.aborted || err.name === 'AbortError' || err.message === 'Interrupted') return '[Interrupted]';
         return `API error: ${err.message}. Please try again.`;
       }
+    if (signal?.aborted) return '[Interrupted]';
     liteTokens += (usage && usage.inputTokens) || 0;
     if (sessionId) recordUsage(sessionId, usage);
     if (!toolCalls.length) {
@@ -143,12 +146,14 @@ async function runLite(routed, sessionId, onStep, system) {
     messages.push(message);
     const askCall = toolCalls.find((c) => c.name === 'ask');
     if (askCall) {
+      if (signal?.aborted) return '[Interrupted]';
       onStep?.('tool_call', askCall);
       const result = await runTool(askCall.name, askCall.args);
       onStep?.('tool_result', { call: askCall, result });
       return JSON.parse(result);
     }
     for (const call of toolCalls) {
+      if (signal?.aborted) return '[Interrupted]';
       onStep?.('tool_call', call);
       const ok = LITE_NAMES.includes(call.name) || (mcpMod && mcpMod.isMcpTool(call.name));
       let result = call.name === 'more_tools' ? (expanded = true, 'All light tools are now available.') : ok ? await runTool(call.name, call.args) : 'Error: tool not available here';
@@ -158,6 +163,7 @@ async function runLite(routed, sessionId, onStep, system) {
       if (result.length > cap) result = result.slice(0, cap) + '\n...[output shortened to save tokens; the file is intact. use grep -n or sed -n to read other parts]';
       onStep?.('tool_result', { call, result });
       messages.push({ role: 'tool', tool_call_id: call.id, content: String(result) });
+      if (signal?.aborted) return '[Interrupted]';
     }
   }
   return null;
@@ -189,7 +195,8 @@ function getMcpNames() {
   } catch { return []; }
 }
 
-export async function runAgent(userMessage, { onStep, maxSteps, forceAgent } = {}) {
+export async function runAgent(userMessage, { onStep, maxSteps, forceAgent, signal } = {}) {
+  if (signal?.aborted) return '[Interrupted]';
   const sessionId = currentSessionId();
   if (sessionId) startTurn(sessionId);
   const projectName = sessionId ? getProject(sessionId) : null;
@@ -199,8 +206,10 @@ export async function runAgent(userMessage, { onStep, maxSteps, forceAgent } = {
   const routed = await route(userMessage, {
     recentUser: stored.filter((m) => m.role === 'user').map((m) => m.text),
     forceAgent,
-    sessionId
+    sessionId,
+    signal
   });
+  if (signal?.aborted) return '[Interrupted]';
   onStep?.('route', routed);
   try { fs.appendFileSync(path.join(os.homedir(), '.levi', 'ROUTE.log'), JSON.stringify({ t: new Date().toISOString(), route: routed.route, tools: routed.tools, insight: routed.insight, q: String(userMessage).slice(0, 50) }) + '\n'); } catch {}
   const exchange = buildExchange(stored);
@@ -208,7 +217,7 @@ export async function runAgent(userMessage, { onStep, maxSteps, forceAgent } = {
 
   // conversation mode: tiny prompt, no tools, no thought step
   if (routed.route === 'light') {
-    const reply = await runLite(routed, sessionId, onStep, 'light');
+    const reply = await runLite(routed, sessionId, onStep, 'light', { signal });
     if (reply) {
       onStep?.('done', reply);
       return reply;
@@ -217,7 +226,7 @@ export async function runAgent(userMessage, { onStep, maxSteps, forceAgent } = {
   }
 
   if (routed.route === 'conversation') {
-    const reply = await runLite(routed, sessionId, onStep, 'convo');
+    const reply = await runLite(routed, sessionId, onStep, 'convo', { signal });
     if (reply) {
       onStep?.('done', reply);
       return reply;
@@ -286,6 +295,7 @@ export async function runAgent(userMessage, { onStep, maxSteps, forceAgent } = {
   const webState = { web: 0, tokens: 0, over: false, noted: false, overSteps: 0 };
 
   for (let step = 0; step < effectiveMaxSteps; step++) {
+    if (signal?.aborted) return '[Interrupted]';
     if (sessionId) {
       try {
         const pendingNow = getTasks(sessionId).reduce((a, c) => a + (c.status === 'completed' ? 0 : c.tasks.filter((t) => !t.done).length), 0);
@@ -307,17 +317,21 @@ export async function runAgent(userMessage, { onStep, maxSteps, forceAgent } = {
     }
     let text = '', toolCalls = [], message = {}, usage = {};
     try {
-      const res = await chatWithTools(messages, { system, tools: pickTools() });
+      const res = await chatWithTools(messages, { system, tools: pickTools(), signal });
       text = res.text;
       toolCalls = res.toolCalls;
       message = res.message;
       usage = res.usage;
     } catch (err) {
+      if (signal?.aborted || err.name === 'AbortError' || err.message === 'Interrupted') {
+        return '[Interrupted]';
+      }
       onStep?.('error', err);
       const errMsg = `API error: ${err.message}. Please try again.`;
       onStep?.('done', errMsg);
       return errMsg;
     }
+    if (signal?.aborted) return '[Interrupted]';
     webState.tokens += (usage && usage.inputTokens) || 0;
     if (webState.tokens >= tokenBudget) webState.over = true;
     if (sessionId) recordUsage(sessionId, usage);
@@ -383,6 +397,7 @@ export async function runAgent(userMessage, { onStep, maxSteps, forceAgent } = {
 
     const askCall = toolCalls.find((c) => c.name === 'ask');
     if (askCall) {
+      if (signal?.aborted) return '[Interrupted]';
       onStep?.('tool_call', askCall);
       const result = await runTool(askCall.name, askCall.args);
       onStep?.('tool_result', { call: askCall, result });
@@ -392,6 +407,7 @@ export async function runAgent(userMessage, { onStep, maxSteps, forceAgent } = {
     }
 
     for (const call of toolCalls) {
+      if (signal?.aborted) return '[Interrupted]';
       onStep?.('tool_call', call);
       const result = call.name === 'think'
         ? await think(call.args, { projectName, sessionId })
@@ -400,6 +416,7 @@ export async function runAgent(userMessage, { onStep, maxSteps, forceAgent } = {
       if (lc) for (const n of CATEGORIES[lc[1] === 'task' ? 'tasks' : lc[1]] || []) unlocked.add(n);
       onStep?.('tool_result', { call, result });
       messages.push({ role: 'tool', tool_call_id: call.id, content: String(result) });
+      if (signal?.aborted) return '[Interrupted]';
     }
   }
 

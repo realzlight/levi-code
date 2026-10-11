@@ -202,6 +202,32 @@ const CT_DIM = '#7d7d7d';
 
 const CT_DOTS = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
 
+// Gradient wave matching Claude Thinking cyan theme, smoothly sweeping across the line
+const CT_WAVE_PALETTE = [
+  '#0e7490', // deep cyan
+  '#0891b2', // dark cyan
+  '#06b6d4', // cyan
+  '#22d3ee', // bright cyan (base CLAUDE_COLOR)
+  '#38bdf8', // sky blue
+  '#67e8f9', // light cyan
+  '#a5f3fc', // pale cyan shimmer
+  '#ffffff', // crest highlight (white shine)
+  '#a5f3fc', // pale cyan shimmer
+  '#67e8f9', // light cyan
+  '#38bdf8', // sky blue
+  '#22d3ee', // bright cyan
+  '#06b6d4', // cyan
+  '#0891b2', // dark cyan
+  '#0e7490', // deep cyan
+  '#155e75', // trough
+];
+
+function getThinkingWaveColor(frame, offset = 0) {
+  const len = CT_WAVE_PALETTE.length;
+  const idx = Math.floor(((frame * 0.85 - offset * 0.75) % len + len) % len);
+  return CT_WAVE_PALETTE[idx];
+}
+
 function ClaudeThinking({ running = true, verbs = CT_VERBS, showTokens = true }) {
   const [frame, setFrame] = useState(0);
   const [secs, setSecs] = useState(0);
@@ -238,11 +264,16 @@ function ClaudeThinking({ running = true, verbs = CT_VERBS, showTokens = true })
     }
   }
 
+  const verbStr = `${verb}…`;
+  const verbNodes = verbStr.split('').map((char, i) =>
+    h(Text, { key: i, color: getThinkingWaveColor(frame, i), bold: true }, char)
+  );
+
   return h(Box, { gap: 1 },
-    h(Text, { color: CLAUDE_COLOR }, dot),
-    h(Text, { color: CLAUDE_COLOR }, glyph),
-    h(Text, { color: CLAUDE_COLOR, bold: true }, `${verb}\u2026`),
-    h(Text, { color: CT_DIM }, `(${secs}s${tokens} \u00b7 esc to interrupt)`)
+    h(Text, { color: getThinkingWaveColor(frame, -2) }, dot),
+    h(Text, { color: getThinkingWaveColor(frame, -1) }, glyph),
+    h(Text, { bold: true }, ...verbNodes),
+    h(Text, { color: CT_DIM }, `(${secs}s${tokens} · esc to interrupt)`)
   );
 }
 // --- end Claude Thinking ------------------------------------------------------
@@ -948,6 +979,7 @@ function App({ mascot }) {
   const [scrollOffset, setScrollOffset] = useState(0);
   const targetScrollRef = React.useRef(0);
   const animTimerRef = React.useRef(null);
+  const abortControllerRef = React.useRef(null);
   const [sel, setSel] = useState(0);
   const [form, setForm] = useState(null);
   const [commandOutput, setCommandOutput] = useState(null);
@@ -1007,6 +1039,9 @@ function App({ mascot }) {
     if (text.startsWith('/')) { runSlash(text); return; }
 
     setMessages((prev) => [...prev, { role: 'user', text }, { role: 'agent', text: '...' }]);
+
+    const abortController = new AbortController();
+    abortControllerRef.current = abortController;
 
     (async () => {
       let id = currentSessionId();
@@ -1100,9 +1135,21 @@ function App({ mascot }) {
 
       let reply;
       try {
-        reply = await runAgent(text, { onStep });
+        reply = await runAgent(text, { onStep, signal: abortController.signal });
       } catch (e) {
-        reply = `Error: ${e.message}`;
+        if (abortController.signal.aborted || e.name === 'AbortError' || e.message?.includes('aborted') || e.message === 'Interrupted') {
+          reply = '[Interrupted]';
+        } else {
+          reply = `Error: ${e.message}`;
+        }
+      } finally {
+        if (abortControllerRef.current === abortController) {
+          abortControllerRef.current = null;
+        }
+      }
+
+      if (abortController.signal.aborted && !reply) {
+        reply = '[Interrupted]';
       }
 
       appendMessage(id, 'user', text);
@@ -1190,7 +1237,16 @@ function App({ mascot }) {
         return;
       }
     }
-    if (key.escape) { setClosed(true); setCommandOutput(null); return; }
+    if (key.escape) {
+      if (abortControllerRef.current) {
+        abortControllerRef.current.abort();
+        abortControllerRef.current = null;
+        return;
+      }
+      setClosed(true);
+      setCommandOutput(null);
+      return;
+    }
 
     if (key.pageUp) {
       scrollTo(targetScrollRef.current + 6);
