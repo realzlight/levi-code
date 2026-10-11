@@ -15,7 +15,7 @@ const LIST_COMMANDS = ['list_commands','list_fs_commands','list_web_commands','l
 const TRIVIAL = new Set(['bash','read_file','write_file','edit_file','find','list_dir','read_lines','grep_search',...LIST_COMMANDS]);
 
 
-const BASE_TOOLS = [...toolDefs.filter((t) => TRIVIAL.has(t.function.name) || ['ask', 'remember', 'list_tools', 'set_project'].includes(t.function.name)), thinkToolDef(toolDefs[0])];
+const BASE_TOOLS = [...toolDefs.filter((t) => TRIVIAL.has(t.function.name) || ['ask', 'remember', 'list_tools', 'set_project', 'retrieve'].includes(t.function.name)), thinkToolDef(toolDefs[0])];
 
 function currentUserName() {
   try {
@@ -46,15 +46,15 @@ const DESKTOP_TOOLS = [
 
 // messages = [{ role: 'user'|'assistant', content: string }]
 // onStep(kind, data) — optional progress callback: 'tool_call' | 'tool_result' | 'done' | 'thought'
-const LITE_NAMES = ['bash', 'read_file', 'write_file', 'edit_file', 'find', 'list_dir', 'read_lines', 'grep_search', 'google_search', 'fetch', ...PLAYWRIGHT_WEB_TOOLS, ...DESKTOP_TOOLS, 'ask', 'remember', 'get_tasks', 'set_task_done', 'add_task_cluster', 'mcp_search', 'mcp_list'];
+const LITE_NAMES = ['bash', 'read_file', 'write_file', 'edit_file', 'find', 'list_dir', 'read_lines', 'grep_search', 'google_search', 'fetch', ...PLAYWRIGHT_WEB_TOOLS, ...DESKTOP_TOOLS, 'ask', 'remember', 'retrieve', 'get_tasks', 'set_task_done', 'add_task_cluster', 'mcp_search', 'mcp_list'];
 const LITE_TOOLS = toolDefs.filter((t) => LITE_NAMES.includes(t.function.name));
 const LITE_GROUPS = {
   none: [],
-  memory: ['remember'],
+  memory: ['remember', 'retrieve'],
   web: ['google_search', 'fetch', ...PLAYWRIGHT_WEB_TOOLS],
   desktop: [...DESKTOP_TOOLS],
   shell: ['bash', 'read_file', 'write_file', 'edit_file', 'find', 'list_dir', 'read_lines', 'grep_search', 'ask'],
-  all: ['bash', 'read_file', 'write_file', 'edit_file', 'find', 'list_dir', 'read_lines', 'grep_search', 'google_search', 'fetch', ...PLAYWRIGHT_WEB_TOOLS, ...DESKTOP_TOOLS, 'ask', 'remember'],
+  all: ['bash', 'read_file', 'write_file', 'edit_file', 'find', 'list_dir', 'read_lines', 'grep_search', 'google_search', 'fetch', ...PLAYWRIGHT_WEB_TOOLS, ...DESKTOP_TOOLS, 'ask', 'remember', 'retrieve'],
   tasks: ['get_tasks', 'set_task_done', 'add_task_cluster'],
   mcp: ['mcp_search', 'mcp_list', 'bash', 'read_file', 'write_file', 'edit_file', 'find', 'list_dir', 'read_lines', 'grep_search', 'ask']
 };

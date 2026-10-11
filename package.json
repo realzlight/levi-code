@@ -12,6 +12,9 @@
     "start": "node bin/cli.js"
   },
   "type": "module",
+  "engines": {
+    "node": ">=22.13"
+  },
   "files": [
     "bin",
     "src"

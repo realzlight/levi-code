@@ -27,12 +27,13 @@ function routerSystem() {
     : `mcp: always false (no MCP servers configured).`;
 
   cachedSystem = `Route a message for a coding assistant. Output ONLY JSON: {"route":"conversation"|"light"|"agent","tools":"none"|"memory"|"web"|"desktop"|"shell"|"tasks"|"all","mcp":"<server>"|false,"insight":"max 12 words"}
-agent = a project or big job: building or scaffolding an app, big fixes or refactors across 3+ files, complex reasoning or debugging, git workflows, deep multi-source research, planning or reorganizing task plans, sub-agents, refers to a past conversation, or continues agent work (e.g. "yes", "the second one" when last_route is agent).
-light = any other job that needs tools, up to about 10 tool calls: code reviews, small fixes and edits (1-2 files), running commands, web lookups, saving facts, task cluster views, using MCP tools. Mixed jobs: tools = all.
-conversation = durable facts, habits or preferences to remember, casual chat, questions, explanations, short follow-ups, a quick web lookup.
-tools (conversation or light): none = plain chat or thanks, memory = user states a fact or preference, web = live info/browser, desktop = mouse/keyboard/window/app control, shell = one file or shell action, tasks = show or tick off task clusters, all = unsure or mixed.
+agent = a project or big job: building or scaffolding an app, big fixes or refactors across 3+ files, complex reasoning or debugging, git workflows, deep multi-source research, planning or reorganizing task plans, sub-agents, or continues agent work (e.g. "yes", "the second one" when last_route is agent).
+light = any other job that needs tools, up to about 10 tool calls: code reviews, small fixes and edits (1-2 files), running commands, web lookups, saving facts, recalling past sessions, notes, or conversations, task cluster views, using MCP tools. Mixed jobs: tools = all.
+conversation = plain casual chat, simple questions/explanations without tools, short follow-ups.
+tools (conversation or light): none = plain chat or thanks, memory = user states a fact or preference, or recalls past sessions, notes, or conversations, web = live info/browser, desktop = mouse/keyboard/window/app control, shell = one file or shell action, tasks = show or tick off task clusters, all = unsure or mixed.
 ${mcpLine}
 When unsure between light and agent, choose light unless a project, big refactor, or complex reasoning is involved.
+Recalling past sessions, notes, or past conversations must route light with tools=memory.
 we are in testing period so never router to agent mode for now.`;
   return cachedSystem;
 }

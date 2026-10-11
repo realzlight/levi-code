@@ -3,6 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { execa } from 'execa';
 import { currentSessionId, setProject, searchSessions, readSessionOverview, isSoloOnly, getProject } from './session.js';
+import { retrieve } from './retrieval.js';
 import { runSubAgent } from './subagent.js';
 import { upsertSubAgent, getSubAgent, loadRegistry } from './subagent-registry.js';
 import { recordUsage } from './usage.js';
@@ -19,7 +20,7 @@ export const CATEGORIES = {
   web: ['web_launch','web_close','web_new_tab','web_goto','web_back','web_reload','web_click','web_dblclick','web_fill','web_press','web_hover','web_drag','web_scroll','web_screenshot','web_get_text','web_get_url','web_wait'],
   desktop: ['desktop_click','desktop_type','desktop_press','desktop_scroll','desktop_drag','desktop_screenshot','desktop_get_window_state','desktop_list_apps','desktop_launch_app'],
   tasks: ['add_task_cluster','get_tasks','set_task_done','edit_task','delete_task','delete_cluster','add_task_to_cluster'],
-  memory: ['set_project','search_sessions','read_session'],
+  memory: ['retrieve','set_project','search_sessions','read_session'],
   meta: ['list_commands','list_fs_commands','list_web_commands','list_desktop_commands','list_task_commands','list_memory_commands','list_meta_commands','list_subagent_commands','list_mcp_commands','ask'],
   subagent: ['spawn_subagent','list_subagents','message_subagent'],
   mcp: ['mcp_search','mcp_list']
@@ -258,6 +259,22 @@ export const toolDefs = [
           text: { type: 'string' }
         },
         required: ['cluster', 'text']
+      }
+    }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'retrieve',
+      description: 'Search past sessions, memory notes, and indexed files by keyword or filter by session/path.',
+      parameters: {
+        type: 'object',
+        properties: {
+          query: { type: 'string', description: 'Search keywords' },
+          session: { type: 'number', description: 'Session number' },
+          path: { type: 'string', description: 'File path' },
+          limit: { type: 'number', description: 'Max results' }
+        }
       }
     }
   },
@@ -1161,6 +1178,15 @@ if (name === 'mcp_search') {
       return `Task added to cluster ${args.cluster}`;
     }
 
+    if (name === 'retrieve') {
+      return await retrieve({
+        query: args?.query,
+        session: args?.session,
+        path: args?.path,
+        limit: args?.limit
+      });
+    }
+
     if (name === 'search_sessions') {
       const currentId = currentSessionId();
       const results = searchSessions(args.query, { excludeId: currentId });
@@ -1298,7 +1324,7 @@ export function getAllCategoriesSummary() {
       web: "use list_web_commands -> 17 tools (browser automation)",
       desktop: "use list_desktop_commands -> 9 tools (desktop automation & cua-driver)",
       tasks: "use list_task_commands -> 7 tools",
-      memory: "use list_memory_commands -> 3 tools",
+      memory: "use list_memory_commands -> 4 tools",
       meta: "use list_meta_commands -> 10 tools",
       subagent: solo? "HIDDEN (solo ON) - /solo off to enable" : "use list_subagent_commands -> 3 tools",
       mcp: "use list_mcp_commands -> 2 tools (mcp_search, mcp_list)",

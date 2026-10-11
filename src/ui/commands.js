@@ -550,3 +550,13 @@ defineCommand({
     ctx.print(`Removed ${name}`);
   }
 });
+
+defineCommand({
+  name: 'index:rebuild',
+  description: 'Rebuild search index',
+  run: async (_, ctx) => {
+    const { rebuildIndex } = await import('../agent/retrieval.js');
+    const res = await rebuildIndex();
+    ctx.print(res);
+  }
+});
