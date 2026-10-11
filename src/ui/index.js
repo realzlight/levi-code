@@ -16,7 +16,7 @@ import CompactProgress from './CompactProgress.js';
 import ChangelogViewer from './ChangelogViewer.js';
 import CommandBar from './CommandBar.js';
 import { filterCommands, runCapture } from './commands.js';
-import { currentSessionId, createSession, getTitle, setTitle, appendMessage, loadMessages, resumeSession, getSummary, getProject, deleteSession } from '../agent/session.js';
+import { currentSessionId, createSession, getTitle, setTitle, appendMessage, loadMessages, resumeSession, getSummary, getProject, deleteSession, restoreSession } from '../agent/session.js';
 import { getLastTurnUsage } from '../agent/usage.js';
 import { generateTitle } from '../agent/title.js';
 import { runAgent } from '../agent/loop.js';
@@ -126,6 +126,11 @@ function Message({ role, text, tool, arg, result, status, todos, width }) {
   }
   if (role === 'tool_call') {
     return h(ClaudeToolCall, { tool, arg, result, status, todos });
+  }
+  if (role === 'narrate') {
+    return h(Box, { marginBottom: 1, paddingLeft: 2 },
+      h(Text, { color: '#9ca3af', italic: true }, text)
+    );
   }
 
   return h(ClaudeMessage, { role: role === 'agent' ? 'assistant' : 'user', width }, text);
@@ -1010,6 +1015,13 @@ function App({ mascot }) {
               ]);
             }
           }
+        } else if (kind === 'narrate') {
+          // Show prose narration between tool calls — replaces the trailing '...' then re-adds it
+          setMessages((prev) => {
+            const last = prev[prev.length - 1];
+            const withoutDots = last && last.role === 'agent' && last.text === '...' ? prev.slice(0, -1) : prev;
+            return [...withoutDots, { role: 'narrate', text: data }, { role: 'agent', text: '...' }];
+          });
         } else if (kind === 'tool_call') {
           const arg = formatToolArg(data.name, data.args);
           const isTaskTool = [
@@ -1318,6 +1330,22 @@ function App({ mascot }) {
                 warning: 'This is permanent. No compaction. No recovery.',
                 options: ['Yes, delete it', 'Cancel'],
                 onConfirm: () => { deleteSession(form.sessionId); setMessages([]); setForm(null); },
+                onCancel: () => setForm(null)
+              })
+            : form.mode === 'alive'
+            ? h(SessionPicker, {
+                sessions: form.ended.map(e => ({ id: e.dirName, title: e.title || ('SESSION-' + e.id), summary: (e.endedAt ? 'ended ' + e.endedAt.slice(0,10) + ' · ' : '') + e.summary })),
+                current: null,
+                label: '✦ RESTORE SESSION',
+                onPick: (dirName) => {
+                  const newId = restoreSession(dirName);
+                  if (!newId) { setForm(null); return; }
+                  const s = getSummary(newId);
+                  const msgs = loadMessages(newId);
+                  setMessages(s ? [{ role: 'agent', text: '[recap] ' + s }, ...msgs] : msgs);
+                  setScrollOffset(0);
+                  setForm(null);
+                },
                 onCancel: () => setForm(null)
               })
             : h(ModelForm, { key: form.mode + (form.name ?? ''), mode: form.mode, name: form.name, onDone: () => setForm(null) }))

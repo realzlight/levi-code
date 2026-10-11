@@ -4,6 +4,7 @@ import os from 'node:os';
 
 const LEVI_HOME = path.join(os.homedir(), '.levi');
 const BUFFER_ROOT = path.join(LEVI_HOME, 'ACTIVE-BUFFER');
+const ENDED_ROOT = path.join(LEVI_HOME, 'ENDED-BUFFER');
 const CONFIG_PATH = path.join(LEVI_HOME, 'config.json');
 
 const readConfig = () => JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf-8'));
@@ -256,4 +257,63 @@ export function deleteSession(id) {
     writeConfig(config);
   }
   return true;
+}
+
+// Moves a session from ACTIVE-BUFFER to ENDED-BUFFER. Records the ended timestamp.
+export function endSession(id) {
+  const n = Number(id);
+  if (!Number.isInteger(n) || n < 1) return false;
+  const src = sessionDir(n);
+  if (!fs.existsSync(src)) return false;
+  fs.mkdirSync(ENDED_ROOT, { recursive: true });
+  // Use timestamp suffix to avoid collisions if a session was ended, restored and ended again
+  const stamp = Date.now();
+  const dest = path.join(ENDED_ROOT, `SESSION-${n}_${stamp}`);
+  fs.renameSync(src, dest);
+  // Write ended timestamp so we can display it
+  try { fs.writeFileSync(path.join(dest, 'ENDED_AT.TXT'), new Date(stamp).toISOString()); } catch {}
+  const config = readConfig();
+  if (Number(config.currentSession) === n) {
+    config.currentSession = null;
+    writeConfig(config);
+  }
+  return true;
+}
+
+// Lists all sessions in ENDED-BUFFER, newest first.
+export function listEndedSessions() {
+  if (!fs.existsSync(ENDED_ROOT)) return [];
+  return fs.readdirSync(ENDED_ROOT)
+    .map((n) => /^SESSION-(\d+)_(\d+)$/.exec(n))
+    .filter(Boolean)
+    .map((m) => {
+      const id = Number(m[1]);
+      const stamp = Number(m[2]);
+      const dir = path.join(ENDED_ROOT, m[0]);
+      let title = '', summary = '(no summary)', endedAt = '';
+      try { title = fs.readFileSync(path.join(dir, 'TITLE.TXT'), 'utf-8').trim(); } catch {}
+      try {
+        const first = fs.readFileSync(path.join(dir, 'BUFFER.MD'), 'utf-8').split('\n')[0];
+        if (first.startsWith('summary:')) summary = first.slice(8).trim() || summary;
+      } catch {}
+      try { endedAt = fs.readFileSync(path.join(dir, 'ENDED_AT.TXT'), 'utf-8').trim(); } catch {}
+      return { id, stamp, dirName: m[0], title, summary, endedAt };
+    })
+    .sort((a, b) => b.stamp - a.stamp);
+}
+
+// Moves an ended session back into ACTIVE-BUFFER as a new session id.
+export function restoreSession(dirName) {
+  const src = path.join(ENDED_ROOT, dirName);
+  if (!fs.existsSync(src)) return null;
+  fs.mkdirSync(BUFFER_ROOT, { recursive: true });
+  const newId = nextId();
+  const dest = sessionDir(newId);
+  fs.renameSync(src, dest);
+  // Remove ended marker
+  try { fs.rmSync(path.join(dest, 'ENDED_AT.TXT'), { force: true }); } catch {}
+  const config = readConfig();
+  config.currentSession = newId;
+  writeConfig(config);
+  return newId;
 }

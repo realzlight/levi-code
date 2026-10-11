@@ -392,30 +392,30 @@ defineCommand({
 
 defineCommand({
   name: 'end',
-  description: 'Compact, then permanently delete the current session',
+  description: 'Compact, then move the current session to ended-buffer',
   args: [{ name: 'confirm', rest: true }],
   run: async (args, ctx) => {
     const typed = (typeof args === 'string' ? args : Array.isArray(args) ? args.join(' ') : Object.values(args || {}).join(' '))
       .toLowerCase().replace(/\s+/g, ' ').trim();
-    const { currentSessionId, getTitle, getProject, deleteSession } = await sessionMod();
+    const { currentSessionId, getTitle, getProject, endSession } = await sessionMod();
     const id = currentSessionId();
     if (!id) return ctx.print('No active session to end.');
-    const anyway = typed === 'i want to delete anyway';
-    if (typed !== 'i want to delete' && !anyway) {
+    const anyway = typed === 'i want to end anyway';
+    if (typed !== 'i want to end' && !anyway) {
       const title = getTitle(id);
-      return ctx.print('This permanently deletes SESSION-' + id + (title ? ' "' + title + '"' : '') + '. /compact runs first so your memory is saved.\nTo confirm, type exactly: /end i want to delete');
+      return ctx.print('This will end SESSION-' + id + (title ? ' "' + title + '"' : '') + '. /compact runs first so your memory is saved.\nTo confirm, type exactly: /end i want to end');
     }
     if (!anyway) {
       const { compact } = await import('../agent/compact.js');
       ctx.print('Compacting first...');
       const result = await compact(id, getProject(id), { force: true });
       if (!(result && (result.ok || result.skipped))) {
-        return ctx.print('Compaction failed: ' + (result?.error || 'unknown error') + '. Nothing was deleted.\nTo delete without compacting, type: /end i want to delete anyway');
+        return ctx.print('Compaction failed: ' + (result?.error || 'unknown error') + '. Nothing was ended.\nTo end without compacting, type: /end i want to end anyway');
       }
     }
-    if (!deleteSession(id)) return ctx.print('Could not delete SESSION-' + id + '.');
+    if (!endSession(id)) return ctx.print('Could not end SESSION-' + id + '.');
     ctx.clear?.();
-    ctx.print('SESSION-' + id + ' deleted. Your next message starts a new session.');
+    ctx.print('SESSION-' + id + ' moved to ended-buffer. Use /alive to restore it. Your next message starts a new session.');
   }
 });
 
@@ -600,5 +600,16 @@ defineCommand({
     if (!id) return ctx.print('No active session to delete.');
     const title = session.getTitle(id);
     ctx.openForm({ mode: 'delete-confirm', sessionId: id, title });
+  }
+});
+
+defineCommand({
+  name: 'alive',
+  description: 'Restore an ended session back to active',
+  run: async (_, ctx) => {
+    const session = await import('../agent/session.js');
+    const ended = session.listEndedSessions();
+    if (!ended.length) return ctx.print('No ended sessions found in ~/.levi/ENDED-BUFFER.');
+    ctx.openForm({ mode: 'alive', ended });
   }
 });

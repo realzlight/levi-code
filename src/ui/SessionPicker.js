@@ -6,7 +6,7 @@ const CYAN = '#afd7ff';
 const SOFT = '#c4c4c4';
 const GRAY = '#666666';
 
-export default function SessionPicker({ sessions, current, onPick, onCancel }) {
+export default function SessionPicker({ sessions, current, onPick, onCancel, label = '✦ RESUME SESSION' }) {
   const [sel, setSel] = useState(Math.max(0, sessions.findIndex((s) => s.id === current)));
 
   useInput((_, key) => {
@@ -20,7 +20,7 @@ export default function SessionPicker({ sessions, current, onPick, onCancel }) {
     Box,
     { flexDirection: 'column', borderStyle: 'round', borderColor: CYAN, paddingX: 1 },
     h(Box, { justifyContent: 'space-between', marginBottom: 1 },
-      h(Text, { color: CYAN, bold: true }, '✦ RESUME SESSION'),
+      h(Text, { color: CYAN, bold: true }, label),
       h(Text, { color: CYAN }, `[${sessions.length} sessions]`)
     ),
     sessions.length

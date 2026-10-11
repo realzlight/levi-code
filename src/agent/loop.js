@@ -377,6 +377,10 @@ export async function runAgent(userMessage, { onStep, maxSteps, forceAgent } = {
 
     messages.push(message);
 
+    // Emit narration text when the model writes prose alongside tool calls.
+    // Only emit if meaningful and not every step — skip pure whitespace and very short fragments.
+    if (text && text.trim().length > 12) onStep?.('narrate', text.trim());
+
     const askCall = toolCalls.find((c) => c.name === 'ask');
     if (askCall) {
       onStep?.('tool_call', askCall);
