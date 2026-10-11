@@ -129,7 +129,7 @@ function Message({ role, text, tool, arg, result, status, todos, width }) {
   }
   if (role === 'narrate') {
     return h(Box, { marginBottom: 1, paddingLeft: 2 },
-      h(Text, { color: '#9ca3af', italic: true }, text)
+      h(Text, { color: '#c8c8c8' }, text)
     );
   }
 
@@ -448,26 +448,22 @@ function wrapAgentLines(text, maxW) {
 function ClaudeMessage({ role = 'assistant', children, width }) {
   if (role === 'user') {
     const text = typeof children === 'string' ? children : '';
+    const safeW = Math.max(15, width || 80);
     const lines = text.split('\n');
-    return h(Box, { flexDirection: 'column', width, marginBottom: 1 },
+    return h(Box, { flexDirection: 'column', marginBottom: 1 },
       lines.map((line, i) => {
         const prefix = i === 0 ? '\u276F ' : '  ';
         const isBlank = line.trim().length === 0;
-
-        if (isBlank) {
-          return h(Text, { key: i }, ' ');
-        }
-
-        return h(
-          Text,
-          { key: i, color: 'white', backgroundColor: CM_USER_BG },
-          (prefix + line).padEnd(width, ' ')
+        if (isBlank) return h(Text, { key: i }, ' ');
+        return h(Text, { key: i, color: 'white', backgroundColor: CM_USER_BG },
+          (prefix + line).padEnd(safeW, ' ')
         );
       })
     );
   }
 
-  const safeW = Math.max(15, (width || 80) - 3);
+  // Agent: prefix is '● ' = 2 chars, leave 2 cols for it
+  const safeW = Math.max(15, (width || 80) - 2);
   const wrapped = wrapAgentLines(typeof children === 'string' ? children : '', safeW);
 
   return h(Box, { marginBottom: 1, flexDirection: 'column' },
@@ -865,9 +861,31 @@ function buildDisplayLines(messages, width, compactTools = false) {
       return;
     }
 
-    if (msg.role === 'user') {
+    // Narration — off-white prose between tool calls
+    if (msg.role === 'narrate') {
       const text = typeof msg.text === 'string' ? msg.text : '';
       const textWidth = Math.max(10, safeWidth - 2);
+      const wrapped = wrapAgentLines(text, textWidth);
+      wrapped.forEach((chunk, lineIdx) => {
+        lines.push({
+          key: `msg-${msgIdx}-nar-${lineIdx}`,
+          node: h(Box, { key: `msg-${msgIdx}-nar-${lineIdx}`, paddingLeft: 2 },
+            h(Text, { color: '#c8c8c8' }, chunk || ' ')
+          )
+        });
+      });
+      lines.push({
+        key: `msg-${msgIdx}-nar-sep`,
+        node: h(Box, { key: `msg-${msgIdx}-nar-sep`, height: 1 }, h(Text, null, ' '))
+      });
+      return;
+    }
+
+    if (msg.role === 'user') {
+      const text = typeof msg.text === 'string' ? msg.text : '';
+      // padEnd fills full terminal width so background extends edge-to-edge
+      const padW = safeWidth;
+      const textWidth = Math.max(10, padW - 2); // 2 chars for prefix '\u276F ' or '  '
       const wrapped = wrapText(text, textWidth);
 
       wrapped.forEach((chunk, lineIdx) => {
@@ -880,12 +898,12 @@ function buildDisplayLines(messages, width, compactTools = false) {
             : h(
                 Text,
                 { key: `msg-${msgIdx}-${lineIdx}`, color: 'white', backgroundColor: CM_USER_BG },
-                (prefix + chunk).padEnd(safeWidth, ' ')
+                (prefix + chunk).padEnd(padW, ' ')
               )
         });
       });
 
-      // Explicit non-collapsing row spacer between user message and agent
+      // Spacer between user message and agent
       lines.push({
         key: `msg-${msgIdx}-sep`,
         node: h(Box, { key: `msg-${msgIdx}-sep`, height: 1 }, h(Text, null, ' '))
@@ -893,9 +911,9 @@ function buildDisplayLines(messages, width, compactTools = false) {
       return;
     }
 
-    // Agent message
+    // Agent message — prefix '\u25CF ' = 2 chars
     const text = typeof msg.text === 'string' ? msg.text : '';
-    const textWidth = Math.max(10, safeWidth - 3);
+    const textWidth = Math.max(10, safeWidth - 2);
     const wrapped = wrapAgentLines(text, textWidth);
 
     wrapped.forEach((chunk, lineIdx) => {
@@ -909,7 +927,7 @@ function buildDisplayLines(messages, width, compactTools = false) {
       });
     });
 
-    // Explicit non-collapsing row spacer after agent message
+    // Spacer after agent message
     lines.push({
       key: `msg-${msgIdx}-sep`,
       node: h(Box, { key: `msg-${msgIdx}-sep`, height: 1 }, h(Text, null, ' '))
