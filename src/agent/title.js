@@ -9,13 +9,15 @@ function activeModelConfig() {
 }
 
 // short, cheap call — plain text back, no tools
-export async function generateTitle(message) {
+export async function generateTitle(message, signal) {
+  if (signal?.aborted) return message.slice(0, 40);
   const m = activeModelConfig();
   if (!m) return message.slice(0, 40);
 
   try {
     const res = await fetch(`${m.base_url.replace(/\/$/, '')}/chat/completions`, {
       method: 'POST',
+      signal,
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${m.api_key}` },
       body: JSON.stringify({
         model: m.model,

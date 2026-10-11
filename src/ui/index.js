@@ -202,32 +202,6 @@ const CT_DIM = '#7d7d7d';
 
 const CT_DOTS = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
 
-// Gradient wave matching Claude Thinking cyan theme, smoothly sweeping across the line
-const CT_WAVE_PALETTE = [
-  '#0e7490', // deep cyan
-  '#0891b2', // dark cyan
-  '#06b6d4', // cyan
-  '#22d3ee', // bright cyan (base CLAUDE_COLOR)
-  '#38bdf8', // sky blue
-  '#67e8f9', // light cyan
-  '#a5f3fc', // pale cyan shimmer
-  '#ffffff', // crest highlight (white shine)
-  '#a5f3fc', // pale cyan shimmer
-  '#67e8f9', // light cyan
-  '#38bdf8', // sky blue
-  '#22d3ee', // bright cyan
-  '#06b6d4', // cyan
-  '#0891b2', // dark cyan
-  '#0e7490', // deep cyan
-  '#155e75', // trough
-];
-
-function getThinkingWaveColor(frame, offset = 0) {
-  const len = CT_WAVE_PALETTE.length;
-  const idx = Math.floor(((frame * 0.85 - offset * 0.75) % len + len) % len);
-  return CT_WAVE_PALETTE[idx];
-}
-
 function ClaudeThinking({ running = true, verbs = CT_VERBS, showTokens = true }) {
   const [frame, setFrame] = useState(0);
   const [secs, setSecs] = useState(0);
@@ -264,15 +238,10 @@ function ClaudeThinking({ running = true, verbs = CT_VERBS, showTokens = true })
     }
   }
 
-  const verbStr = `${verb}…`;
-  const verbNodes = verbStr.split('').map((char, i) =>
-    h(Text, { key: i, color: getThinkingWaveColor(frame, i), bold: true }, char)
-  );
-
   return h(Box, { gap: 1 },
-    h(Text, { color: getThinkingWaveColor(frame, -2) }, dot),
-    h(Text, { color: getThinkingWaveColor(frame, -1) }, glyph),
-    h(Text, { bold: true }, ...verbNodes),
+    h(Text, { color: CLAUDE_COLOR }, dot),
+    h(Text, { color: CLAUDE_COLOR }, glyph),
+    h(Text, { color: CLAUDE_COLOR, bold: true }, `${verb}…`),
     h(Text, { color: CT_DIM }, `(${secs}s${tokens} · esc to interrupt)`)
   );
 }
@@ -718,6 +687,7 @@ function getTodoItems(id) {
 let globalScrollUp = null;
 let globalScrollDown = null;
 let globalTap = null;
+let globalInterrupt = null;
 
 const origRead = process.stdin.read;
 process.stdin.read = function (...args) {
@@ -725,6 +695,12 @@ process.stdin.read = function (...args) {
   if (!chunk) return chunk;
 
   let str = typeof chunk === 'string' ? chunk : chunk.toString('utf8');
+
+  // Immediate low-level interrupt on Escape (\x1b) or Ctrl+C (\x03)
+  if (globalInterrupt && (str === '\x1b' || str === '\x1b\x1b' || str === '\x03')) {
+    globalInterrupt();
+    return Buffer.isBuffer(chunk) ? Buffer.alloc(0) : '';
+  }
 
   // SGR mouse mode: \x1b[<btn;col;rowM or m
   if (str.includes('\x1b[<')) {
@@ -1046,7 +1022,11 @@ function App({ mascot }) {
     (async () => {
       let id = currentSessionId();
       if (!id) id = createSession();
-      if (id && !getTitle(id)) setTitle(id, await generateTitle(text));
+      if (id && !getTitle(id) && !abortController.signal.aborted) {
+        try {
+          setTitle(id, await generateTitle(text, abortController.signal));
+        } catch {}
+      }
 
       const onStep = (kind, data) => {
         if (kind === 'thought') {
@@ -1237,7 +1217,8 @@ function App({ mascot }) {
         return;
       }
     }
-    if (key.escape) {
+    const isEsc = Boolean(key.escape || key.name === 'escape' || char === '\x1b' || char === '\u001b');
+    if (isEsc) {
       if (abortControllerRef.current) {
         abortControllerRef.current.abort();
         abortControllerRef.current = null;
@@ -1304,6 +1285,12 @@ function App({ mascot }) {
   useEffect(() => {
     globalScrollUp = () => scrollTo(targetScrollRef.current + 2);
     globalScrollDown = () => scrollTo(targetScrollRef.current - 2);
+    globalInterrupt = () => {
+      if (abortControllerRef.current) {
+        abortControllerRef.current.abort();
+        abortControllerRef.current = null;
+      }
+    };
 
     let tapTimer = null;
     globalTap = () => {
@@ -1318,6 +1305,7 @@ function App({ mascot }) {
     return () => {
       globalScrollUp = null;
       globalScrollDown = null;
+      globalInterrupt = null;
       globalTap = null;
       if (tapTimer) clearTimeout(tapTimer);
     };
