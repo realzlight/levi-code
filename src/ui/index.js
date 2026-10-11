@@ -13,9 +13,10 @@ import AskPrompt from './AskPrompt.js';
 import MemSync from './MemSync.js';
 import Confirm from './Confirm.js';
 import CompactProgress from './CompactProgress.js';
+import ChangelogViewer from './ChangelogViewer.js';
 import CommandBar from './CommandBar.js';
 import { filterCommands, runCapture } from './commands.js';
-import { currentSessionId, createSession, getTitle, setTitle, appendMessage, loadMessages, resumeSession, getSummary, getProject } from '../agent/session.js';
+import { currentSessionId, createSession, getTitle, setTitle, appendMessage, loadMessages, resumeSession, getSummary, getProject, deleteSession } from '../agent/session.js';
 import { getLastTurnUsage } from '../agent/usage.js';
 import { generateTitle } from '../agent/title.js';
 import { runAgent } from '../agent/loop.js';
@@ -1308,6 +1309,16 @@ function App({ mascot }) {
                     }
                   }
                 }
+              })
+            : form.mode === 'changelog'
+            ? h(ChangelogViewer, { content: form.content, width: terminalWidth, height: terminalHeight, onClose: () => setForm(null) })
+            : form.mode === 'delete-confirm'
+            ? h(Confirm, {
+                message: 'Hard delete SESSION-' + form.sessionId + (form.title ? ' "' + form.title + '"' : '') + '?',
+                warning: 'This is permanent. No compaction. No recovery.',
+                options: ['Yes, delete it', 'Cancel'],
+                onConfirm: () => { deleteSession(form.sessionId); setMessages([]); setForm(null); },
+                onCancel: () => setForm(null)
               })
             : h(ModelForm, { key: form.mode + (form.name ?? ''), mode: form.mode, name: form.name, onDone: () => setForm(null) }))
         : h(ClaudePrompt, { value: input, width: terminalWidth })

@@ -560,3 +560,45 @@ defineCommand({
     ctx.print(res);
   }
 });
+
+defineCommand({
+  name: 'changelog',
+  description: 'View the Levi changelog (fullscreen, Esc to close)',
+  run: async (_, ctx) => {
+    const { readFileSync, existsSync } = await import('node:fs');
+    const { fileURLToPath } = await import('node:url');
+    const nodePath = await import('node:path');
+    const __filename = fileURLToPath(import.meta.url);
+    const clPath = nodePath.join(nodePath.dirname(__filename), '../../CHANGELOG.md');
+    if (!existsSync(clPath)) return ctx.print('CHANGELOG.md not found at ' + clPath);
+    const content = readFileSync(clPath, 'utf-8');
+    ctx.openForm({ mode: 'changelog', content });
+  }
+});
+
+defineCommand({
+  name: 'title',
+  description: 'Rename the current session',
+  args: [{ name: 'name', required: true, rest: true }],
+  run: async ({ name }, ctx) => {
+    const session = await import('../agent/session.js');
+    const id = session.currentSessionId();
+    if (!id) return ctx.print('No active session.');
+    const newTitle = Array.isArray(name) ? name.join(' ') : String(name ?? '').trim();
+    if (!newTitle) return ctx.print('Usage: /title <new name>');
+    session.setTitle(id, newTitle);
+    ctx.print(`Session renamed to "${newTitle}"`);
+  }
+});
+
+defineCommand({
+  name: 'delete',
+  description: 'Hard-delete the current session (no compact, permanent)',
+  run: async (_, ctx) => {
+    const session = await import('../agent/session.js');
+    const id = session.currentSessionId();
+    if (!id) return ctx.print('No active session to delete.');
+    const title = session.getTitle(id);
+    ctx.openForm({ mode: 'delete-confirm', sessionId: id, title });
+  }
+});
