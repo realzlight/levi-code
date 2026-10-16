@@ -11,8 +11,11 @@ import { RULES } from './prompts.js';
 import { addCluster, setTaskDone, getTasks, editTask, deleteTask, deleteCluster, addTaskToCluster } from './tasks.js';
 
 function resolve(p) {
+  if (!p) return p;
   if (p === '~') return os.homedir();
   if (p.startsWith('~/')) return path.join(os.homedir(), p.slice(2));
+  if (p.startsWith('.levi/')) return path.join(os.homedir(), p);
+  if (p.startsWith('SKILLS/')) return path.join(os.homedir(), '.levi', p);
   return p;
 }
 export const CATEGORIES = {

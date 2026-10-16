@@ -613,3 +613,99 @@ defineCommand({
     ctx.openForm({ mode: 'alive', ended });
   }
 });
+
+// ---- skills commands ----
+const skillsMod = () => import('../agent/skills.js');
+
+defineCommand({
+  name: 'skills',
+  description: 'List all custom skills',
+  run: async (_, ctx) => {
+    const { listSkills } = await skillsMod();
+    const skills = listSkills();
+    if (!skills.length) return ctx.print('No skills yet. Use /skills:create <name>');
+    ctx.printPanel({
+      title: 'Skills (~/.levi/SKILLS/)',
+      fields: skills.map((s) => ({
+        label: (s.disabled ? '❌ ' : '🟢 ') + s.name,
+        value: `${s.title ? s.title + ' — ' : ''}${s.summary || 'No summary'} (${s.disabled ? 'disabled' : 'active'})`
+      }))
+    });
+  }
+});
+
+defineCommand({
+  name: 'skills:list',
+  description: 'List all custom skills',
+  run: async (_, ctx) => {
+    const { listSkills } = await skillsMod();
+    const skills = listSkills();
+    if (!skills.length) return ctx.print('No skills yet. Use /skills:create <name>');
+    ctx.printPanel({
+      title: 'Skills (~/.levi/SKILLS/)',
+      fields: skills.map((s) => ({
+        label: (s.disabled ? '❌ ' : '🟢 ') + s.name,
+        value: `${s.title ? s.title + ' — ' : ''}${s.summary || 'No summary'} (${s.disabled ? 'disabled' : 'active'})`
+      }))
+    });
+  }
+});
+
+defineCommand({
+  name: 'skills:create',
+  description: 'Create a new skill in ~/.levi/SKILLS/',
+  args: [{ name: 'name', required: true }],
+  run: async ({ name }, ctx) => {
+    const { createSkill } = await skillsMod();
+    const res = await createSkill(name);
+    if (!res.ok) return ctx.print(res.error);
+    ctx.print(`Skill "${res.name}" created at ~/.levi/SKILLS/${res.name}.md.\nUse /skills:edit ${res.name} to write instructions.`);
+  }
+});
+
+defineCommand({
+  name: 'skills:edit',
+  description: 'Open nano editor to write skill instructions and auto-summarize',
+  args: [{ name: 'name', required: true }],
+  screen: true,
+  run: async ({ name }, ctx) => {
+    const { editSkill } = await skillsMod();
+    await editSkill(name, ctx);
+  }
+});
+
+defineCommand({
+  name: 'skills:delete',
+  description: 'Permanently delete a skill',
+  args: [{ name: 'name', required: true }],
+  run: async ({ name }, ctx) => {
+    const { deleteSkill } = await skillsMod();
+    const res = deleteSkill(name);
+    if (!res.ok) return ctx.print(res.error);
+    ctx.print(`Skill "${res.name}" deleted.`);
+  }
+});
+
+defineCommand({
+  name: 'skills:disable',
+  description: 'Disable a skill (excludes it from model context)',
+  args: [{ name: 'name', required: true }],
+  run: async ({ name }, ctx) => {
+    const { disableSkill } = await skillsMod();
+    const res = disableSkill(name);
+    if (!res.ok) return ctx.print(res.error);
+    ctx.print(`Skill "${res.name}" disabled. It will not be sent to the model context.`);
+  }
+});
+
+defineCommand({
+  name: 'skills:enable',
+  description: 'Enable a skill (includes it in model context)',
+  args: [{ name: 'name', required: true }],
+  run: async ({ name }, ctx) => {
+    const { enableSkill } = await skillsMod();
+    const res = enableSkill(name);
+    if (!res.ok) return ctx.print(res.error);
+    ctx.print(`Skill "${res.name}" enabled. It will be sent to the model context.`);
+  }
+});

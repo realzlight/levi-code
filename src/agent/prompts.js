@@ -1,4 +1,5 @@
 import os from 'node:os';
+import { getSkillsPromptList } from './skills.js';
 
 // Static strings on purpose: no per-turn text in either prompt, so the prefix is identical every call (cacheable).
 // Per-turn info goes through buildContext() and is attached to the latest user message only.
@@ -78,6 +79,10 @@ MEMORY (~/.levi/)
 PROJECTS
 - New distinct thing the user is building: ls ~/.levi/PROJECTS first, reuse a similar existing name, else set_project(short name); if the code location is unknown ask once, then record it as Location in DATA.md. Request about an existing project: read DATA.md, get_tasks, ls the Location, and read the code before acting. When you finish building or changing something, save 2-4 project facts with remember(project): what it is, where it lives, the stack, how to run it. In bash use $HOME or an unquoted ~ (a quoted ~ does not expand); file tools accept ~ directly. Full project rules: list_tools(memory).
 
+SKILLS (~/.levi/SKILLS/)
+- If [context] lists available skills, check if any skill matches the user's request.
+- Based on the request, decide whether to use a skill: if relevant, use read_file('~/.levi/SKILLS/<name>.md') to read its full instructions, then follow them.
+
 ASKING
 - Max one clarifying question in a row; never ask what the user already said. A request that names what to build is the spec: ask location if unknown, then build with sensible defaults (pick the stack yourself). Second question only for a consequential fork.
 - Use the ask tool for small-choice questions (clickable). Plain text only for free-form answers.
@@ -87,7 +92,7 @@ THINK TOOL
 
 FAILURES
 - If you already built or changed real files, a later failing check (missing dependency, command not found, test can't run) doesn't erase that. Say what you built, name the specific missing thing and how to fix it, or offer a no-dependency alternative.`;
-export function buildContext({ userName, insight, dataContent, taskSummary, hint, recent, memory, exchange, mcpServers } = {}) {
+export function buildContext({ userName, insight, dataContent, taskSummary, hint, recent, memory, exchange, mcpServers, skills } = {}) {
   const lines = ['date: ' + new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' })];
   lines.push(`home directory: ${os.homedir()}`);
   lines.push(`current directory: ${process.cwd()}`);
@@ -95,6 +100,10 @@ export function buildContext({ userName, insight, dataContent, taskSummary, hint
   if (insight) lines.push(`router: ${insight}`);
   if (hint) lines.push(`hint: ${hint}`);
   if (mcpServers?.length) lines.push('MCP servers: ' + mcpServers.join(', ') + ' — use mcp_search(query) to load tools');
+  const skillsList = skills !== undefined ? skills : getSkillsPromptList();
+  if (skillsList?.length) {
+    lines.push('available skills (decide whether to use based on the user\'s request; to use one, read its instructions with read_file("~/.levi/SKILLS/<name>.md") and follow them):\n' + skillsList.map((s) => s.line || `- ${s.name}: ${s.summary || s.title || s.name}`).join('\n'));
+  }
   if (memory) lines.push('saved memory:\n' + memory);
   if (exchange && exchange.length) lines.push('recent conversation (background; answer only the current message, but use it to resolve references such as fix it or that):\n' + exchange.map((m) => m.role + ': ' + String(m.text).replace(/\s+/g, ' ')).join('\n'));
   if (!(exchange && exchange.length) && recent && recent.length) lines.push("earlier user messages (background only, already handled, do not answer them again):\n" + recent.map((m) => "- " + m).join("\n"));
