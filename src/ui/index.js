@@ -687,7 +687,6 @@ function getTodoItems(id) {
 let globalScrollUp = null;
 let globalScrollDown = null;
 let globalTap = null;
-let globalInterrupt = null;
 
 const origRead = process.stdin.read;
 process.stdin.read = function (...args) {
@@ -695,12 +694,6 @@ process.stdin.read = function (...args) {
   if (!chunk) return chunk;
 
   let str = typeof chunk === 'string' ? chunk : chunk.toString('utf8');
-
-  // Immediate low-level interrupt on Escape (\x1b) or Ctrl+C (\x03)
-  if (globalInterrupt && (str === '\x1b' || str === '\x1b\x1b' || str === '\x03')) {
-    globalInterrupt();
-    return Buffer.isBuffer(chunk) ? Buffer.alloc(0) : '';
-  }
 
   // SGR mouse mode: \x1b[<btn;col;rowM or m
   if (str.includes('\x1b[<')) {
@@ -1285,12 +1278,6 @@ function App({ mascot }) {
   useEffect(() => {
     globalScrollUp = () => scrollTo(targetScrollRef.current + 2);
     globalScrollDown = () => scrollTo(targetScrollRef.current - 2);
-    globalInterrupt = () => {
-      if (abortControllerRef.current) {
-        abortControllerRef.current.abort();
-        abortControllerRef.current = null;
-      }
-    };
 
     let tapTimer = null;
     globalTap = () => {
@@ -1305,7 +1292,6 @@ function App({ mascot }) {
     return () => {
       globalScrollUp = null;
       globalScrollDown = null;
-      globalInterrupt = null;
       globalTap = null;
       if (tapTimer) clearTimeout(tapTimer);
     };
