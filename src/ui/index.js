@@ -1212,6 +1212,23 @@ function App({ mascot }) {
     }
     const isEsc = Boolean(key.escape || key.name === 'escape' || char === '\x1b' || char === '\u001b');
     if (isEsc) {
+      // 1. If a command output window is open, close it without interrupting the agent
+      if (commandOutput) {
+        setCommandOutput(null);
+        return;
+      }
+      // 2. If the slash command menu/palette is open, close it without interrupting the agent
+      if (paletteOn) {
+        setClosed(true);
+        return;
+      }
+      // 3. If a slash command is being typed in the prompt, clear it without interrupting the agent
+      if (input.startsWith('/')) {
+        setInput('');
+        setClosed(true);
+        return;
+      }
+      // 4. Only interrupt the running agent if no command window, palette, or command input is open
       if (abortControllerRef.current) {
         abortControllerRef.current.abort();
         abortControllerRef.current = null;
