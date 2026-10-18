@@ -98,7 +98,8 @@ function sessionLine() {
   const id = currentSessionId();
   if (!id) return 'Abyssal \u2022 /resume';
   const title = getTitle(id);
-  return `Abyssal${title ? ' \u2014 ' + title : ''}`;
+  const raw = `Abyssal${title ? ' \u2014 ' + title : ''}`;
+  return raw.length > 36 ? raw.slice(0, 35) + '…' : raw;
 }
 
 function Header({ mascot, compact }) {
@@ -202,7 +203,14 @@ const CT_DIM = '#7d7d7d';
 
 const CT_DOTS = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
 
-function ClaudeThinking({ running = true, verbs = CT_VERBS, showTokens = true }) {
+function formatTokenCount(n) {
+  if (!n || n <= 0) return '0';
+  if (n >= 1000000) return (n / 1000000).toFixed(1).replace(/\.0$/, '') + 'M';
+  if (n >= 1000) return (n / 1000).toFixed(n >= 10000 ? 0 : 1).replace(/\.0$/, '') + 'k';
+  return String(n);
+}
+
+function ClaudeThinking({ running = true, verbs = CT_VERBS, showTokens = true, width = 80 }) {
   const [frame, setFrame] = useState(0);
   const [secs, setSecs] = useState(0);
 
@@ -224,25 +232,39 @@ function ClaudeThinking({ running = true, verbs = CT_VERBS, showTokens = true })
   const verbIdx = Math.floor(secs / 3);
   const verb = verbs[verbIdx % verbs.length];
 
-  let tokens = '';
+  let inTok = 0;
+  let outTok = 0;
+  let total = 0;
   if (showTokens) {
     const id = currentSessionId();
     if (id) {
       const u = getLastTurnUsage(id);
-      const inTok = u.inputTokens || 0;
-      const outTok = u.outputTokens || 0;
-      const total = inTok + outTok;
-      if (total > 0) {
-        tokens = ` · ↑ ${inTok} in · ↓ ${outTok} out`;
-      }
+      inTok = u.inputTokens || 0;
+      outTok = u.outputTokens || 0;
+      total = inTok + outTok;
     }
   }
 
-  return h(Box, { gap: 1 },
-    h(Text, { color: CLAUDE_COLOR }, dot),
-    h(Text, { color: CLAUDE_COLOR }, glyph),
-    h(Text, { color: CLAUDE_COLOR, bold: true }, `${verb}…`),
-    h(Text, { color: CT_DIM }, `(${secs}s${tokens} · esc to interrupt)`)
+  const maxW = Math.max(20, (width || 80) - 2);
+  let statusDetail = '';
+  if (total > 0) {
+    if (maxW >= 65) {
+      statusDetail = `(${secs}s · ↑${formatTokenCount(inTok)} · ↓${formatTokenCount(outTok)} · esc to stop)`;
+    } else if (maxW >= 42) {
+      statusDetail = `(${secs}s · ↑${formatTokenCount(inTok)} ↓${formatTokenCount(outTok)})`;
+    } else if (maxW >= 28) {
+      statusDetail = `(${secs}s · ${formatTokenCount(total)} tok)`;
+    } else {
+      statusDetail = `(${secs}s)`;
+    }
+  } else {
+    statusDetail = maxW >= 45 ? `(${secs}s · esc to stop)` : `(${secs}s)`;
+  }
+
+  return h(Box, { height: 1, overflow: 'hidden', flexWrap: 'nowrap' },
+    h(Text, { color: CLAUDE_COLOR }, `${dot} ${glyph} `),
+    h(Text, { color: CLAUDE_COLOR, bold: true }, `${verb}… `),
+    h(Text, { color: CT_DIM }, statusDetail)
   );
 }
 // --- end Claude Thinking ------------------------------------------------------
@@ -419,8 +441,16 @@ function wrapAgentLines(text, maxW) {
       continue;
     }
 
-    const clean = line.replace(/\[\/?(c|b|chip|code|dim|g|r|gold|badge|h|i|em)\]/g, '').replace(/`[^`]+`/g, 'XXXX').replace(/\*\*[^*]+\*\*/g, 'XXXX').replace(/\*[^*\n]+\*/g, 'XXXX');
-    if (clean.length <= max) {
+    // Measure true visible length by stripping syntax tags/delimiters
+    const cleanLen = (str) =>
+      str
+        .replace(/\[\/?(c|b|chip|code|dim|g|r|gold|badge|h|i|em)\]/g, '')
+        .replace(/`([^`]+)`/g, '$1')
+        .replace(/\*\*([^*]+)\*\*/g, '$1')
+        .replace(/\*([^*\n]+)\*/g, '$1')
+        .length;
+
+    if (cleanLen(line) <= max) {
       result.push(line);
       continue;
     }
@@ -429,8 +459,16 @@ function wrapAgentLines(text, maxW) {
     let cur = '';
     let curVis = 0;
     for (const w of words) {
-      const wVis = w.replace(/\[\/?(c|b|chip|code|dim|g|r|gold|badge|h|i|em)\]/g, '').replace(/`[^`]+`/g, 'XXXX').replace(/\*\*[^*]+\*\*/g, 'XXXX').replace(/\*[^*\n]+\*/g, 'XXXX').length;
-      if (curVis + wVis + 1 > max && cur.length > 0) {
+      const wVis = cleanLen(w);
+      // If a single word/URL/path is longer than max, chunk it
+      if (wVis > max) {
+        if (cur) { result.push(cur); cur = ''; curVis = 0; }
+        for (let i = 0; i < w.length; i += max) {
+          result.push(w.slice(i, i + max));
+        }
+        continue;
+      }
+      if (curVis + wVis + (cur ? 1 : 0) > max && cur.length > 0) {
         result.push(cur);
         cur = w;
         curVis = wVis;
@@ -775,14 +813,19 @@ function buildDisplayLines(messages, width, compactTools = false) {
       }
 
       const statusColor = TC_STATUS_COLOR[msg.status || 'success'] || TC_STATUS_COLOR.success;
+      const maxArgLen = Math.max(8, safeWidth - (msg.tool.length + 8));
+      const displayArg = msg.arg && msg.arg.length > maxArgLen
+        ? msg.arg.slice(0, maxArgLen - 1) + '…'
+        : msg.arg;
+
       lines.push({
         key: `tc-${msgIdx}-head`,
-        node: h(Box, { key: `tc-${msgIdx}-head` },
+        node: h(Box, { key: `tc-${msgIdx}-head`, height: 1, overflow: 'hidden' },
           h(Text, { color: statusColor }, '\u23FA '),
           h(Text, { color: TC_TOOL }, msg.tool),
-          msg.arg !== undefined && msg.arg !== '' ? h(Text, null,
+          displayArg !== undefined && displayArg !== '' ? h(Text, null,
             h(Text, { color: TC_PAREN }, '('),
-            h(Text, { color: TC_ARG }, msg.arg),
+            h(Text, { color: TC_ARG }, displayArg),
             h(Text, { color: TC_PAREN }, ')')
           ) : null
         )
@@ -795,20 +838,24 @@ function buildDisplayLines(messages, width, compactTools = false) {
           const labelColor = t.status === 'done' ? CTL_DIM : (t.status === 'active' ? '#ffffff' : '#c4c4c4');
           const bold = t.status === 'active';
           const prefix = todoIdx === 0 ? '  \u23BF ' : '    ';
+          const maxLabelLen = Math.max(10, safeWidth - 10);
+          const displayLabel = t.label && t.label.length > maxLabelLen
+            ? t.label.slice(0, maxLabelLen - 1) + '…'
+            : t.label;
 
           lines.push({
             key: `tc-${msgIdx}-todo-${todoIdx}`,
-            node: h(Box, { key: `tc-${msgIdx}-todo-${todoIdx}` },
+            node: h(Box, { key: `tc-${msgIdx}-todo-${todoIdx}`, height: 1, overflow: 'hidden' },
               h(Text, { color: CTL_DIM }, prefix),
               h(Text, { color: iconColor }, `${icon} `),
-              h(Text, { color: labelColor, bold }, t.label)
+              h(Text, { color: labelColor, bold }, displayLabel)
             )
           });
         });
       } else if (msg.status === 'pending') {
         lines.push({
           key: `tc-${msgIdx}-pending`,
-          node: h(Box, { key: `tc-${msgIdx}-pending` },
+          node: h(Box, { key: `tc-${msgIdx}-pending`, height: 1, overflow: 'hidden' },
             h(Text, { color: TC_BRANCH }, '  \u23BF '),
             h(Text, { color: TC_STATUS_COLOR.pending }, 'running...')
           )
@@ -823,7 +870,7 @@ function buildDisplayLines(messages, width, compactTools = false) {
           const chunk = rLine.length > rWidth ? rLine.slice(0, rWidth - 1) + '…' : rLine;
           lines.push({
             key: `tc-${msgIdx}-res-${rIdx}`,
-            node: h(Box, { key: `tc-${msgIdx}-res-${rIdx}` },
+            node: h(Box, { key: `tc-${msgIdx}-res-${rIdx}`, height: 1, overflow: 'hidden' },
               h(Text, { color: TC_BRANCH }, prefix),
               h(Text, { color: TC_RESULT }, chunk)
             )
@@ -832,7 +879,7 @@ function buildDisplayLines(messages, width, compactTools = false) {
         if (rawLines.length > maxResultLines) {
           lines.push({
             key: `tc-${msgIdx}-res-more`,
-            node: h(Box, { key: `tc-${msgIdx}-res-more` },
+            node: h(Box, { key: `tc-${msgIdx}-res-more`, height: 1, overflow: 'hidden' },
               h(Text, { color: TC_BRANCH }, '    '),
               h(Text, { color: '#666666' }, `... (+${rawLines.length - maxResultLines} more lines)`)
             )
@@ -843,7 +890,7 @@ function buildDisplayLines(messages, width, compactTools = false) {
       // Explicit non-collapsing row spacer
       lines.push({
         key: `msg-${msgIdx}-sep`,
-        node: h(Box, { key: `msg-${msgIdx}-sep`, height: 1 }, h(Text, null, ' '))
+        node: h(Box, { key: `msg-${msgIdx}-sep`, height: 1, overflow: 'hidden' }, h(Text, null, ' '))
       });
       return;
     }
@@ -853,8 +900,8 @@ function buildDisplayLines(messages, width, compactTools = false) {
       if (msgIdx === messages.length - 1) {
         lines.push({
           key: `msg-${msgIdx}-thinking`,
-          node: h(Box, { key: `msg-${msgIdx}-thinking` },
-            h(ClaudeThinking, { running: true })
+          node: h(Box, { key: `msg-${msgIdx}-thinking`, height: 1, overflow: 'hidden' },
+            h(ClaudeThinking, { running: true, width: safeWidth })
           )
         });
       }
@@ -864,28 +911,28 @@ function buildDisplayLines(messages, width, compactTools = false) {
     // Narration — off-white prose between tool calls
     if (msg.role === 'narrate') {
       const text = typeof msg.text === 'string' ? msg.text : '';
-      const textWidth = Math.max(10, safeWidth - 2);
+      const textWidth = Math.max(10, safeWidth - 4);
       const wrapped = wrapAgentLines(text, textWidth);
       wrapped.forEach((chunk, lineIdx) => {
         lines.push({
           key: `msg-${msgIdx}-nar-${lineIdx}`,
-          node: h(Box, { key: `msg-${msgIdx}-nar-${lineIdx}`, paddingLeft: 2 },
+          node: h(Box, { key: `msg-${msgIdx}-nar-${lineIdx}`, paddingLeft: 2, height: 1, overflow: 'hidden' },
             h(Text, { color: '#c8c8c8' }, chunk || ' ')
           )
         });
       });
       lines.push({
         key: `msg-${msgIdx}-nar-sep`,
-        node: h(Box, { key: `msg-${msgIdx}-nar-sep`, height: 1 }, h(Text, null, ' '))
+        node: h(Box, { key: `msg-${msgIdx}-nar-sep`, height: 1, overflow: 'hidden' }, h(Text, null, ' '))
       });
       return;
     }
 
     if (msg.role === 'user') {
       const text = typeof msg.text === 'string' ? msg.text : '';
-      // padEnd fills full terminal width so background extends edge-to-edge
-      const padW = safeWidth;
-      const textWidth = Math.max(10, padW - 2); // 2 chars for prefix '\u276F ' or '  '
+      // padEnd fills terminal width safely without touching margin column
+      const padW = Math.max(10, safeWidth - 1);
+      const textWidth = Math.max(8, padW - 2); // 2 chars for prefix '\u276F ' or '  '
       const wrapped = wrapText(text, textWidth);
 
       wrapped.forEach((chunk, lineIdx) => {
@@ -894,11 +941,15 @@ function buildDisplayLines(messages, width, compactTools = false) {
         lines.push({
           key: `msg-${msgIdx}-${lineIdx}`,
           node: isBlank
-            ? h(Text, { key: `msg-${msgIdx}-${lineIdx}` }, ' ')
+            ? h(Box, { key: `msg-${msgIdx}-${lineIdx}`, height: 1, overflow: 'hidden' }, h(Text, null, ' '))
             : h(
-                Text,
-                { key: `msg-${msgIdx}-${lineIdx}`, color: 'white', backgroundColor: CM_USER_BG },
-                (prefix + chunk).padEnd(padW, ' ')
+                Box,
+                { key: `msg-${msgIdx}-${lineIdx}`, height: 1, overflow: 'hidden' },
+                h(
+                  Text,
+                  { color: 'white', backgroundColor: CM_USER_BG },
+                  (prefix + chunk).padEnd(padW, ' ')
+                )
               )
         });
       });
@@ -906,21 +957,21 @@ function buildDisplayLines(messages, width, compactTools = false) {
       // Spacer between user message and agent
       lines.push({
         key: `msg-${msgIdx}-sep`,
-        node: h(Box, { key: `msg-${msgIdx}-sep`, height: 1 }, h(Text, null, ' '))
+        node: h(Box, { key: `msg-${msgIdx}-sep`, height: 1, overflow: 'hidden' }, h(Text, null, ' '))
       });
       return;
     }
 
     // Agent message — prefix '\u25CF ' = 2 chars
     const text = typeof msg.text === 'string' ? msg.text : '';
-    const textWidth = Math.max(10, safeWidth - 2);
+    const textWidth = Math.max(10, safeWidth - 3);
     const wrapped = wrapAgentLines(text, textWidth);
 
     wrapped.forEach((chunk, lineIdx) => {
       const isFirst = lineIdx === 0;
       lines.push({
         key: `msg-${msgIdx}-${lineIdx}`,
-        node: h(Box, { key: `msg-${msgIdx}-${lineIdx}` },
+        node: h(Box, { key: `msg-${msgIdx}-${lineIdx}`, height: 1, overflow: 'hidden' },
           h(Text, { color: isFirst ? DOT_COLOR : 'transparent' }, isFirst ? '\u25CF ' : '  '),
           h(Box, null, ...parseLineToNodes(chunk, textWidth))
         )
@@ -930,7 +981,7 @@ function buildDisplayLines(messages, width, compactTools = false) {
     // Spacer after agent message
     lines.push({
       key: `msg-${msgIdx}-sep`,
-      node: h(Box, { key: `msg-${msgIdx}-sep`, height: 1 }, h(Text, null, ' '))
+      node: h(Box, { key: `msg-${msgIdx}-sep`, height: 1, overflow: 'hidden' }, h(Text, null, ' '))
     });
   });
 
@@ -1324,8 +1375,7 @@ function App({ mascot }) {
 
     h(Box, {
       flexDirection: 'column',
-      flexGrow: 1,
-      flexShrink: 1,
+      height: rawAvailable,
       overflow: 'hidden'
     },
       hiddenAbove ? h(Text, { color: GRAY }, '\u2191 swipe down to scroll up') : null,
