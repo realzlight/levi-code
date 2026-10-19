@@ -1,5 +1,16 @@
 import os from 'node:os';
+import fs from 'node:fs';
+import path from 'node:path';
 import { getSkillsPromptList } from './skills.js';
+
+function getExistingProjects() {
+  try {
+    const root = path.join(os.homedir(), '.levi', 'PROJECTS');
+    return fs.readdirSync(root, { withFileTypes: true })
+      .filter(d => d.isDirectory())
+      .map(d => d.name);
+  } catch { return []; }
+}
 
 // Static strings on purpose: no per-turn text in either prompt, so the prefix is identical every call (cacheable).
 // Per-turn info goes through buildContext() and is attached to the latest user message only.
@@ -77,9 +88,10 @@ MEMORY (~/.levi/)
 - Context priority: current thread, session summary, TASK.md (get_tasks), DATA.md; retrieve / search_sessions last.
 
 PROJECTS
-- Direct path or folder: If the user provides a folder, path, or directory (e.g. "in homedir", "~/project", "./app", or names a directory), go DIRECTLY to that location and inspect the files there first (list_dir, read_file). Do NOT search ~/.levi/PROJECTS or look for DATA.md if the user gave the path or folder name!
-- Registered projects: Only look in ~/.levi/PROJECTS/<name>/DATA.md if the project was previously registered with set_project AND no location was specified in the user's message.
-- New distinct thing the user is building: if the code location is unknown ask once, then record it as Location in DATA.md. When you finish building or changing something, save 2-4 project facts with remember(project): what it is, where it lives, the stack, how to run it. In bash use $HOME or an unquoted ~ (a quoted ~ does not expand); file tools accept ~ directly. Full project rules: list_tools(memory).
+- NOT EVERY CODING REQUEST IS A PROJECT. Simple one-offs (single file, quick script, small fix, "make me a calculator") do NOT need set_project or task clusters — just build them directly. Only register a project when the user is building something substantial and ongoing they'll return to across sessions.
+- ALWAYS CHECK EXISTING PROJECTS FIRST: [context] lists "existing projects:" with all registered names. If a matching or similar project already exists, call set_project with THAT existing name — never create a duplicate. "make a todo app" when "todo-app" already exists → set_project("todo-app") and continue from its DATA.md.
+- Direct path or folder: If the user provides a folder, path, or directory (e.g. "in homedir", "~/project", "./app"), go DIRECTLY to that location and inspect files there first (list_dir, read_file). Do NOT search ~/.levi/PROJECTS or look for DATA.md if the user gave the path!
+- New substantial project only: if [context] shows no matching existing project AND the work is multi-session and substantial, then set_project with a short name. If the code location is unknown ask once, then record it as Location in DATA.md. In bash use $HOME or an unquoted ~ (a quoted ~ does not expand); file tools accept ~ directly.
 
 SKILLS (~/.levi/SKILLS/)
 - If [context] lists available skills, check if any skill matches the user's request.
@@ -107,6 +119,8 @@ export function buildContext({ userName, insight, dataContent, taskSummary, hint
     lines.push('available skills (decide whether to use based on the user\'s request; to use one, read its instructions with read_file("~/.levi/SKILLS/<name>.md") and follow them):\n' + skillsList.map((s) => s.line || `- ${s.name}: ${s.summary || s.title || s.name}`).join('\n'));
   }
   if (memory) lines.push('saved memory:\n' + memory);
+  const existingProjects = getExistingProjects();
+  if (existingProjects.length) lines.push('existing projects: ' + existingProjects.join(', ') + ' — use set_project with one of these names to reuse, never create a duplicate');
   if (exchange && exchange.length) lines.push('recent conversation (background; answer only the current message, but use it to resolve references such as fix it or that):\n' + exchange.map((m) => m.role + ': ' + String(m.text).replace(/\s+/g, ' ')).join('\n'));
   if (!(exchange && exchange.length) && recent && recent.length) lines.push("earlier user messages (background only, already handled, do not answer them again):\n" + recent.map((m) => "- " + m).join("\n"));
   if (dataContent) lines.push(`DATA.md (already read, may be stale): ${dataContent}`);
@@ -136,9 +150,10 @@ export function loopPrompt(solo) {
 
 export const RULES = {
   memory: `PROJECTS
+- NOT EVERY REQUEST IS A PROJECT. Simple one-offs (single file, quick script, small fix, "make me a todo app" with one file) do NOT need set_project — just build them directly. Only register a project for substantial ongoing work the user will return to.
+- NEVER CREATE DUPLICATES: [context] lists "existing projects:". If a matching or similar project name already exists, call set_project with THAT name — never create a new one. "make a todo app" when "todo-app" exists → set_project("todo-app").
 - Direct path or location: If the user specifies a directory, project folder, or path (e.g. "~/folder", "in homedir"), inspect and work in that directory directly (read_file, list_dir). Never spend tool calls looking for DATA.md in ~/.levi/PROJECTS when the user explicitly told you where the project is.
-- Registered projects: Only look in ~/.levi/PROJECTS/<name>/DATA.md if the project was previously registered with set_project AND no location was specified in the user's message.
-- New distinct thing the user is building: ls -R ~/.levi/PROJECTS first and reuse any similar existing name; if none, set_project with a short name (don't ask, don't create the folder by hand). Ambiguous whether it's a project: ask in one short line first. After set_project, file project facts under PROJECTS/<name>/. When you finish building or changing something, save 2-4 project facts with remember(project): what it is, where it lives, the stack, and how to run it.
+- New substantial project only: if no matching project exists in context AND the work is multi-session and substantial, then set_project with a short name (don't ask, don't create the folder by hand). After set_project, file project facts under PROJECTS/<name>/. When you finish, save 2-4 project facts with remember(project): what it is, where it lives, the stack, how to run it.
 - set_project only makes the memory folder. Before writing code, if the code location isn't known, ask once (home, current dir, other path). Use that exact absolute path everywhere and record it as Location in DATA.md. In bash use $HOME/... or an unquoted ~/... (a quoted ~ does not expand); read_file, write_file, and edit_file accept ~ directly. Never guess /root or /home/user.
 - Request about an existing project (change, feature, "is it done"): if the path is known, inspect the code directly. Never judge from folder names alone.
 - If it genuinely doesn't fit what's built (e.g. dark mode for a CLI), use ask to name the specific mismatch you found, with specific options. Never a vague "can you rephrase". After the user confirms a pivot, delete_cluster the stale cluster and add_task_cluster for the new direction.`,

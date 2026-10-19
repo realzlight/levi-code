@@ -189,6 +189,15 @@ async function runLite(routed, sessionId, onStep, system, { signal } = {}) {
       messages.push({ role: 'tool', tool_call_id: call.id, content: String(result) });
       if (signal?.aborted) return '[Interrupted]';
     }
+
+    // Dead-loop detection: if we've accumulated too many duplicate read-only calls, we're stuck
+    const totalDupes = [...callCounts.values()].reduce((sum, v) => sum + Math.max(0, v - 1), 0);
+    if (totalDupes >= 3) {
+      const dupeList = [...callCounts.entries()].filter(([, v]) => v > 1).map(([k, v]) => `${k.split(':')[0]} (${v}x)`).join(', ');
+      const breakMsg = `alright, i'm going in circles — re-reading the same things (${dupeList}). what exactly should i do here? give me a specific instruction or path and i'll get it done.`;
+      onStep?.('done', breakMsg);
+      return breakMsg;
+    }
   }
   return (text || '').trim() || `Completed ${maxLiteSteps} steps in light mode. Check the updated files, or let me know if you want me to keep going.`;
 }
@@ -388,9 +397,12 @@ export async function runAgent(userMessage, { onStep, maxSteps, forceAgent, sign
           continue;
         }
 
-        // build a fallback from real task status instead of a generic apology,
-        // so even a failed wrap-up tells the user something true and useful
-        let fallback = "Ran into something that didn't fit and didn't manage to explain it well — send that again and I'll actually look into what's there and tell you specifically what the issue is.";
+        // build a dynamic fallback from what actually happened in this turn
+        let fallback;
+        const toolMsgs = messages.filter(m => m.role === 'tool');
+        const toolCallMsgs = messages.filter(m => m.role === 'assistant' && m.tool_calls?.length);
+        const uniqueTools = [...new Set(toolCallMsgs.flatMap(m => (m.tool_calls || []).map(t => t.function?.name || 'unknown')))];
+
         if (sessionId) {
           const clusters = getTasks(sessionId);
           if (clusters.length) {
@@ -400,7 +412,14 @@ export async function runAgent(userMessage, { onStep, maxSteps, forceAgent, sign
                 return `"${c.title}" — ${done}/${c.tasks.length} tasks done`;
               })
               .join('; ');
-            fallback = `Couldn't put together a clean final summary, but here's the real status: ${summary}. Check list_subagents or the files directly for specifics — send another message if you want me to keep going or explain further.`;
+            fallback = `alright, got stuck mid-work. here's where things stand: ${summary}. used ${toolMsgs.length} tool calls (${uniqueTools.join(', ') || 'none'}). send another message to keep going or tell me what to focus on.`;
+          }
+        }
+        if (!fallback) {
+          if (toolMsgs.length) {
+            fallback = `alright, tried ${toolMsgs.length} tool call${toolMsgs.length > 1 ? 's' : ''} (${uniqueTools.join(', ')}) but couldn't finish cleanly. what specifically do you want me to do next?`;
+          } else {
+            fallback = `alright, got stuck before making any tool calls — the request might need more context. can you rephrase or tell me exactly what file/folder to work with?`;
           }
         }
         onStep?.('done', fallback);
@@ -457,6 +476,15 @@ export async function runAgent(userMessage, { onStep, maxSteps, forceAgent, sign
       onStep?.('tool_result', { call, result });
       messages.push({ role: 'tool', tool_call_id: call.id, content: String(result) });
       if (signal?.aborted) return '[Interrupted]';
+    }
+
+    // Dead-loop detection: if we've accumulated too many duplicate read-only calls, we're stuck
+    const totalDupes = [...callCounts.values()].reduce((sum, v) => sum + Math.max(0, v - 1), 0);
+    if (totalDupes >= 4) {
+      const dupeList = [...callCounts.entries()].filter(([, v]) => v > 1).map(([k, v]) => `${k.split(':')[0]} (${v}x)`).join(', ');
+      const breakMsg = `alright, i'm going in circles — re-reading the same things (${dupeList}). what exactly should i do here? give me a specific instruction or path and i'll get it done.`;
+      onStep?.('done', breakMsg);
+      return breakMsg;
     }
   }
 

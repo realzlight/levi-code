@@ -1109,8 +1109,37 @@ if (name === 'mcp_search') {
       if (!projectName) return 'Error: project name required';
       const id = currentSessionId();
       if (!id) return 'Error: no active session';
+
+      // Check for existing projects — always reuse if a match or close match exists
+      const projectsRoot = path.join(os.homedir(), '.levi', 'PROJECTS');
+      let existing = [];
+      try { existing = fs.readdirSync(projectsRoot, { withFileTypes: true }).filter(d => d.isDirectory()).map(d => d.name); } catch {}
+
+      // Exact match — just reuse
+      if (existing.includes(projectName)) {
+        setProject(id, projectName);
+        let dataSnippet = '';
+        try { dataSnippet = '\nDATA.md: ' + fs.readFileSync(path.join(projectsRoot, projectName, 'DATA.md'), 'utf-8').slice(0, 500); } catch {}
+        return `Project "${projectName}" already exists — reusing it. Future memory facts go to ~/.levi/PROJECTS/${projectName}/${dataSnippet}`;
+      }
+
+      // Fuzzy match — check if a similar name exists (e.g. "todo" matches "todo-app", "todoapp" matches "todo-app")
+      const normalize = s => s.replace(/[-_\s]/g, '').toLowerCase();
+      const norm = normalize(projectName);
+      const fuzzy = existing.find(e => {
+        const en = normalize(e);
+        return en.includes(norm) || norm.includes(en) || en === norm;
+      });
+      if (fuzzy) {
+        setProject(id, fuzzy);
+        let dataSnippet = '';
+        try { dataSnippet = '\nDATA.md: ' + fs.readFileSync(path.join(projectsRoot, fuzzy, 'DATA.md'), 'utf-8').slice(0, 500); } catch {}
+        return `Found existing project "${fuzzy}" (similar to "${projectName}") — reusing it instead of creating a duplicate. Future memory facts go to ~/.levi/PROJECTS/${fuzzy}/${dataSnippet}`;
+      }
+
+      // No match — create new
       setProject(id, projectName);
-      const root = path.join(os.homedir(), '.levi', 'PROJECTS', projectName);
+      const root = path.join(projectsRoot, projectName);
       fs.mkdirSync(root, { recursive: true });
       const seed = {
         'DATA.md': '# DATA\n',
