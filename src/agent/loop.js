@@ -89,6 +89,49 @@ function synthNarration(calls) {
   return parts.join(', ') + '...';
 }
 
+// Detect and extract pseudo tool calls written as text, e.g. [find: query: foo] or [read_file(bar)]
+function extractPseudoToolCall(str) {
+  if (!str || typeof str !== 'string') return null;
+
+  // Format 1: [tool_name: key: val, ...] or [tool_name: val]
+  const m1 = str.match(/\[(find|read_file|code_search|grep_search|list_dir|read_lines|bash|write_file|edit_file):\s*([^\]]+)\]/i);
+  if (m1) {
+    const name = m1[1].toLowerCase();
+    const rawArgs = m1[2].trim();
+    const args = {};
+
+    if (name === 'find' || name === 'grep_search' || name === 'code_search') {
+      const qm = rawArgs.match(/query:\s*([^,\n]+)/i);
+      args.query = (qm ? qm[1] : rawArgs).replace(/^["']|["']$/g, '').trim();
+      const pm = rawArgs.match(/(?:path|folder):\s*([^,\n]+)/i);
+      if (pm) args.path = pm[1].replace(/^["']|["']$/g, '').trim();
+    } else if (name === 'read_file' || name === 'list_dir') {
+      const pm = rawArgs.match(/path:\s*([^,\n]+)/i);
+      args.path = (pm ? pm[1] : rawArgs).replace(/^["']|["']$/g, '').trim();
+    } else if (name === 'bash') {
+      const cm = rawArgs.match(/command:\s*(.+)/i);
+      args.command = (cm ? cm[1] : rawArgs).replace(/^["']|["']$/g, '').trim();
+    } else if (name === 'edit_file') {
+      const pm = rawArgs.match(/path:\s*([^,\n]+)/i);
+      if (pm) args.path = pm[1].replace(/^["']|["']$/g, '').trim();
+    }
+    return { name, args, rawMatch: m1[0] };
+  }
+
+  // Format 2: [tool_name(args)]
+  const m2 = str.match(/\[(find|read_file|code_search|grep_search|list_dir|read_lines|bash|write_file|edit_file)\(([^)]*)\)\]/i);
+  if (m2) {
+    const name = m2[1].toLowerCase();
+    const raw = m2[2].trim().replace(/^["']|["']$/g, '');
+    const args = (name === 'find' || name === 'grep_search' || name === 'code_search')
+      ? { query: raw }
+      : (name === 'bash' ? { command: raw } : { path: raw });
+    return { name, args, rawMatch: m2[0] };
+  }
+
+  return null;
+}
+
 const TRIVIAL = new Set(['bash', 'read_file', 'write_file', 'edit_file', 'find', 'list_dir', 'read_lines', 'grep_search', 'code_search']);
 
 const BASE_TOOLS = [
@@ -237,12 +280,28 @@ async function runLite(routed, sessionId, onStep, system, { signal } = {}) {
     liteTokens += (usage && (usage.inputTokens + usage.outputTokens)) || 0;
     if (sessionId) recordUsage(sessionId, usage);
     if (!toolCalls.length) {
-      const out = (text || '').trim();
-      if (!out && messages.some((m) => m.role === 'tool') && step < maxLiteSteps - 1) {
-        messages.push({ role: 'user', content: '(that came back empty. You already inspected the files above. Proceed directly to writing or editing them with write_file or edit_file now to fulfill the request. Do not stop blank.)' });
-        continue;
+      const pseudo = extractPseudoToolCall(text);
+      if (pseudo) {
+        toolCalls = [{ id: 'call_pseudo_' + Date.now(), name: pseudo.name, args: pseudo.args }];
+        text = text.replace(pseudo.rawMatch, '').trim();
+        message = {
+          role: 'assistant',
+          content: text,
+          tool_calls: [{ id: toolCalls[0].id, type: 'function', function: { name: pseudo.name, arguments: JSON.stringify(pseudo.args) } }]
+        };
+      } else {
+        const out = (text || '').trim();
+        if (!out && messages.some((m) => m.role === 'tool') && step < maxLiteSteps - 1) {
+          messages.push({ role: 'user', content: '(that came back empty. You already inspected the files above. Proceed directly to writing or editing them with write_file or edit_file now to fulfill the request. Do not stop blank.)' });
+          continue;
+        }
+        if (step < 2 && !messages.some((m) => m.role === 'tool') && !out.slice(-160).includes('?') && /\b(i'll|i will|let me|going to|gonna|about to|setting (it )?up|inspecting|checking|examining|looking into|diving into)\b/i.test(out)) {
+          messages.push({ role: 'assistant', content: out });
+          messages.push({ role: 'user', content: '(you announced you would inspect or do this, but made no tool call. Call the relevant tool now using your tools to inspect the files or run the command. Do not stop with only an announcement.)' });
+          continue;
+        }
+        return !out || out.includes('[[AGENT]]') ? null : out;
       }
-      return !out || out.includes('[[AGENT]]') ? null : out;
     }
     messages.push(message);
 
@@ -474,7 +533,16 @@ export async function runAgent(userMessage, { onStep, maxSteps, forceAgent, sign
     if (sessionId) recordUsage(sessionId, usage);
 
     if (!toolCalls.length) {
-      if (!text || !text.trim()) {
+      const pseudo = extractPseudoToolCall(text);
+      if (pseudo) {
+        toolCalls = [{ id: 'call_pseudo_' + Date.now(), name: pseudo.name, args: pseudo.args }];
+        text = text.replace(pseudo.rawMatch, '').trim();
+        message = {
+          role: 'assistant',
+          content: text,
+          tool_calls: [{ id: toolCalls[0].id, type: 'function', function: { name: pseudo.name, arguments: JSON.stringify(pseudo.args) } }]
+        };
+      } else if (!text || !text.trim()) {
         blankRetries++;
         onStep?.('blank_retry', { attempt: blankRetries, step });
 
@@ -525,7 +593,7 @@ export async function runAgent(userMessage, { onStep, maxSteps, forceAgent, sign
         onStep?.('done', fallback);
         return fallback;
       }
-      if (stallNudges < 2 && step < effectiveMaxSteps - 1 && !messages.some((m) => m.role === 'tool') && !text.trim().slice(-160).includes('?') && /\b(i'll|i will|let me|going to|gonna|about to|setting (it )?up)\b/i.test(text)) {
+      if (stallNudges < 2 && step < effectiveMaxSteps - 1 && !messages.some((m) => m.role === 'tool') && !text.trim().slice(-160).includes('?') && /\b(i'll|i will|let me|going to|gonna|about to|setting (it )?up|inspecting|checking|examining|looking into|diving into)\b/i.test(text)) {
         stallNudges++;
         onStep?.('stall_nudge', { attempt: stallNudges, step });
         messages.push(message);
