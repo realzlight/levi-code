@@ -121,17 +121,17 @@ const AGENT_WEB_BUDGET = 6;
 const AGENT_WEB_CAP = 3000;
 const AGENT_OUTPUT_CAP = 8000;
 const OUTPUT_TOOLS = ['read_file', 'bash', 'find', 'list_dir', 'read_lines', 'grep_search', 'web_get_text', 'web_screenshot', 'web_get_url', 'desktop_screenshot', 'desktop_get_window_state', 'desktop_list_apps'];
-async function runToolGuarded(call, state) {
+async function runToolGuarded(call, state, opts = {}) {
   if (state.over) return 'Error: token budget for this message is used up. Answer now with what you have and say what you would check next.';
   if (!WEB_NAMES.includes(call.name)) {
-    const out = await runTool(call.name, call.args);
+    const out = await runTool(call.name, call.args, opts);
     const toolCap = call.name === 'read_file' ? 65000 : AGENT_OUTPUT_CAP;
     if ((OUTPUT_TOOLS.includes(call.name) || !toolDefs.some((t) => t.function.name === call.name)) && out.length > toolCap) return String(out).slice(0, toolCap) + '\n...[truncated ' + (out.length - toolCap) + ' chars shortened to save tokens; the file is intact. use grep -n, sed -n or wc to read other parts]';
     return out;
   }
   if (state.web >= AGENT_WEB_BUDGET) return 'Error: web budget used up for this message. Answer with what you have and say plainly what you could not confirm.';
   state.web++;
-  const r = String(await runTool(call.name, call.args));
+  const r = String(await runTool(call.name, call.args, opts));
   return r.length > AGENT_WEB_CAP ? r.slice(0, AGENT_WEB_CAP) + '\n...[truncated]' : r;
 }
 
@@ -532,9 +532,9 @@ export async function runAgent(userMessage, { onStep, maxSteps, forceAgent, sign
           : 'Error: Redundant call aborted to save tokens. Proceed with the data already retrieved.';
       } else {
         if (isReadOnly) callCounts.set(callKey, 1);
-        result = call.name === 'think'
-          ? await think(call.args, { projectName, sessionId })
-          : await runToolGuarded(call, webState);
+          result = call.name === 'think'
+            ? await think(call.args, { projectName, sessionId })
+            : await runToolGuarded(call, webState, { onStep });
       }
       const lc = call.name === 'list_tools' ? [null, String(call.args?.category || '').toLowerCase()] : call.name.match(/^list_(\w+)_commands$/);
       if (lc) for (const n of CATEGORIES[lc[1] === 'task' ? 'tasks' : lc[1]] || []) unlocked.add(n);

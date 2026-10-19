@@ -25,7 +25,7 @@ Use read_file/write_file/edit_file/bash as needed to actually complete whatever 
 // prior sub-agent's own thread (a follow-up), or omit it to start fresh.
 // Returns { report, messages } — messages is the full thread so far, meant
 // to be persisted by the caller and passed back in for any later follow-up.
-export async function runSubAgent(role, instruction, { maxSteps = 15, existingMessages = null } = {}) {
+export async function runSubAgent(role, instruction, { maxSteps = 15, existingMessages = null, onStep = null } = {}) {
   const originalTask = existingMessages && existingMessages.length ? existingMessages[0].content : instruction;
   const system = buildSubAgentSystem(role, originalTask);
 
@@ -34,8 +34,10 @@ export async function runSubAgent(role, instruction, { maxSteps = 15, existingMe
     : [{ role: 'user', content: instruction }];
 
   const usage = { inputTokens: 0, outputTokens: 0 };
+  onStep?.('subagent_start', { role, task: instruction });
 
   for (let step = 0; step < maxSteps; step++) {
+    onStep?.('subagent_progress', { role, status: `step ${step + 1}/${maxSteps}`, action: 'thinking...', task: instruction });
     const { text, toolCalls, message, usage: stepUsage } = await chatWithTools(messages, { system, tools: getSubAgentToolDefs() });
     usage.inputTokens += stepUsage?.inputTokens || 0;
     usage.outputTokens += stepUsage?.outputTokens || 0;
@@ -48,20 +50,25 @@ export async function runSubAgent(role, instruction, { maxSteps = 15, existingMe
           continue;
         }
         const report = `[${role}] Ran out of steps without producing a clear report. Last state unknown — may need manual follow-up.`;
+        onStep?.('subagent_done', { role });
         return { report, messages, usage };
       }
       messages.push(message);
+      onStep?.('subagent_done', { role });
       return { report: text, messages, usage };
     }
 
     messages.push(message);
 
     for (const call of toolCalls) {
+      const actionName = `${call.name} ${call.args?.path || call.args?.command || ''}`.trim().slice(0, 45);
+      onStep?.('subagent_progress', { role, status: `step ${step + 1}/${maxSteps}`, action: actionName, task: instruction });
       const result = await runTool(call.name, call.args);
       messages.push({ role: 'tool', tool_call_id: call.id, content: String(result) });
     }
   }
 
+  onStep?.('subagent_done', { role });
   const report = `[${role}] Hit the step limit (${maxSteps}) before finishing. Work may be partially done — check the files directly.`;
   return { report, messages, usage };
 }

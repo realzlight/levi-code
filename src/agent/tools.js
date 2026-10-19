@@ -761,7 +761,7 @@ export const toolDefs = [
   { type: 'function', function: { name: 'mcp_list', description: 'List configured MCP servers. If server name is provided, lists all tools available on that server.', parameters: { type: 'object', properties: { server: { type: 'string', description: 'Optional MCP server name (e.g. "github", "youtube") to view its full tool catalog' } } } } }
 ];
 
-export async function runTool(name, args) {
+export async function runTool(name, args, opts = {}) {
   try {
     if (name === 'read_file') {
       const p = resolve(args.path);
@@ -1318,7 +1318,7 @@ if (name === 'mcp_search') {
         return `Error: a sub-agent named "${role}" already exists this session. Use message_subagent to follow up with it instead of spawning a duplicate.`;
       }
 
-      const { report, messages, usage } = await runSubAgent(role, args.instruction);
+      const { report, messages, usage } = await runSubAgent(role, args.instruction, { onStep: opts?.onStep });
 
       if (id) {
         recordUsage(id, usage);
@@ -1350,7 +1350,7 @@ if (name === 'mcp_search') {
       const existing = getSubAgent(id, args.role);
       if (!existing) return `Error: no sub-agent named "${args.role}" found this session. Use spawn_subagent to create one first.`;
 
-      const { report, messages, usage } = await runSubAgent(args.role, args.message, { existingMessages: existing.messages });
+      const { report, messages, usage } = await runSubAgent(args.role, args.message, { existingMessages: existing.messages, onStep: opts?.onStep });
       recordUsage(id, usage);
       upsertSubAgent(id, { role: args.role, task: existing.task, report, messages });
 

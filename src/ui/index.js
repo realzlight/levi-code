@@ -16,6 +16,7 @@ import Confirm from './Confirm.js';
 import CompactProgress from './CompactProgress.js';
 import ChangelogViewer from './ChangelogViewer.js';
 import CommandBar from './CommandBar.js';
+import SubAgentBar from './SubAgentBar.js';
 import { filterCommands, runCapture } from './commands.js';
 import { currentSessionId, createSession, getTitle, setTitle, appendMessage, loadMessages, resumeSession, getSummary, getProject, deleteSession, restoreSession } from '../agent/session.js';
 import { getLastTurnUsage } from '../agent/usage.js';
@@ -1008,6 +1009,7 @@ function App({ mascot }) {
   const [commandOutput, setCommandOutput] = useState(null);
   const [closed, setClosed] = useState(false);
   const [compactTools, setCompactTools] = useState(false);
+  const [activeSubagents, setActiveSubagents] = useState([]);
   const { exit } = useApp();
   const { columns: terminalWidth, rows: terminalHeight } = useTerminalSize();
 
@@ -1102,7 +1104,35 @@ function App({ mascot }) {
             const withoutDots = last && last.role === 'agent' && last.text === '...' ? prev.slice(0, -1) : prev;
             return [...withoutDots, { role: 'narrate', text: data }, { role: 'agent', text: '...' }];
           });
+        } else if (kind === 'subagent_start') {
+          setActiveSubagents((prev) => [
+            ...prev.filter((s) => s.role !== data.role),
+            { role: data.role, task: data.task, status: 'running', action: 'starting...' }
+          ]);
+        } else if (kind === 'subagent_progress') {
+          setActiveSubagents((prev) =>
+            prev.map((s) =>
+              s.role === data.role
+                ? {
+                    ...s,
+                    status: data.status || s.status,
+                    action: data.action !== undefined ? data.action : s.action,
+                    task: data.task || s.task
+                  }
+                : s
+            )
+          );
+        } else if (kind === 'subagent_done') {
+          setActiveSubagents((prev) => prev.filter((s) => s.role !== data.role));
         } else if (kind === 'tool_call') {
+          if (data.name === 'spawn_subagent' || data.name === 'message_subagent') {
+            const role = data.args?.role || 'subagent';
+            const task = data.args?.instruction || data.args?.message || '';
+            setActiveSubagents((prev) => [
+              ...prev.filter((s) => s.role !== role),
+              { role, task, status: 'running', action: 'starting...' }
+            ]);
+          }
           const arg = formatToolArg(data.name, data.args);
           const isTaskTool = [
             'add_task_cluster', 'set_task_done', 'add_task_to_cluster',
@@ -1126,6 +1156,10 @@ function App({ mascot }) {
             { role: 'agent', text: '...' }
           ]);
         } else if (kind === 'tool_result') {
+          if (data.call?.name === 'spawn_subagent' || data.call?.name === 'message_subagent') {
+            const role = data.call?.args?.role || 'subagent';
+            setActiveSubagents((prev) => prev.filter((s) => s.role !== role));
+          }
           const resStr = String(data.result || '');
           const isError = resStr.startsWith('Error:');
           const isTaskTool = [
@@ -1170,6 +1204,7 @@ function App({ mascot }) {
           reply = `Error: ${e.message}`;
         }
       } finally {
+        setActiveSubagents([]);
         if (abortControllerRef.current === abortController) {
           abortControllerRef.current = null;
         }
@@ -1216,7 +1251,8 @@ function App({ mascot }) {
     ? (form.mode === 'compact' ? 9 : (form.mode === 'effort' ? 9 : (form.mode.startsWith('mem-') ? 7 : 4)))
     : 0;
   const bottomAreaHeight = form ? formHeight : inputAreaHeight;
-  const fixedHeight = headerHeight + headerMargin + bottomAreaHeight + footerHeight + (paletteOn ? slashMenuHeight(matches.length) : 0) + commandOutputHeight;
+  const subagentsHeight = activeSubagents.length > 0 ? activeSubagents.length * 4 : 0;
+  const fixedHeight = headerHeight + headerMargin + bottomAreaHeight + footerHeight + (paletteOn ? slashMenuHeight(matches.length) : 0) + commandOutputHeight + subagentsHeight;
   const rawAvailable = Math.max(1, terminalHeight - fixedHeight);
   const needsScrollIndicators = totalLines > rawAvailable;
   const availableForMessages = Math.max(1, rawAvailable - (needsScrollIndicators ? 2 : 0));
@@ -1389,6 +1425,7 @@ function App({ mascot }) {
     paletteOn ? h(ClaudeSlashMenu, { matches, active }) : null,
     h(CommandBar, { output: commandOutput }),
     h(Box, { flexShrink: 0, flexDirection: 'column' },
+      h(SubAgentBar, { subagents: activeSubagents, width: terminalWidth }),
       form
         ? (form.mode === 'resume'
             ? h(SessionPicker, {
