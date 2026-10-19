@@ -926,6 +926,10 @@ function buildDisplayLines(messages, width, compactTools = false) {
           )
         });
       });
+      lines.push({
+        key: `msg-${msgIdx}-nar-sep`,
+        node: h(Box, { key: `msg-${msgIdx}-nar-sep`, height: 1, overflow: 'hidden' }, h(Text, null, ' '))
+      });
       return;
     }
 
