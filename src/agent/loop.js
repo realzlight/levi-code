@@ -77,8 +77,8 @@ async function runToolGuarded(call, state) {
   if (state.over) return 'Error: token budget for this message is used up. Answer now with what you have and say what you would check next.';
   if (!WEB_NAMES.includes(call.name)) {
     const out = await runTool(call.name, call.args);
-    const s = typeof out === 'string' ? out : String(out);
-    if ((OUTPUT_TOOLS.includes(call.name) || !toolDefs.some((t) => t.function.name === call.name)) && s.length > AGENT_OUTPUT_CAP) return s.slice(0, AGENT_OUTPUT_CAP) + '\n...[truncated ' + (s.length - AGENT_OUTPUT_CAP) + ' chars shortened to save tokens; the file is intact. use grep -n, sed -n or wc to read other parts]';
+    const toolCap = call.name === 'read_file' ? 65000 : AGENT_OUTPUT_CAP;
+    if ((OUTPUT_TOOLS.includes(call.name) || !toolDefs.some((t) => t.function.name === call.name)) && s.length > toolCap) return s.slice(0, toolCap) + '\n...[truncated ' + (s.length - toolCap) + ' chars shortened to save tokens; the file is intact. use grep -n, sed -n or wc to read other parts]';
     return out;
   }
   if (state.web >= AGENT_WEB_BUDGET) return 'Error: web budget used up for this message. Answer with what you have and say plainly what you could not confirm.';
@@ -139,7 +139,7 @@ async function runLite(routed, sessionId, onStep, system, { signal } = {}) {
     let text = '', toolCalls = [], message = {}, usage = {};
       try {
         const activeSystem = step === 0 ? litePrompt(system, expanded ? 'all' : routed.tools) : buildLoopSystem();
-        const res = await chatWithTools(messages, { system: activeSystem, tools: pickLite(), signal });
+        const res = await chatWithTools(messages, { system: activeSystem, tools: pickLite(), maxTokens: 8192, signal });
         text = res.text;
         toolCalls = res.toolCalls;
         message = res.message;
@@ -153,6 +153,10 @@ async function runLite(routed, sessionId, onStep, system, { signal } = {}) {
     if (sessionId) recordUsage(sessionId, usage);
     if (!toolCalls.length) {
       const out = (text || '').trim();
+      if (!out && messages.some((m) => m.role === 'tool') && step < maxLiteSteps - 1) {
+        messages.push({ role: 'user', content: '(that came back empty. You already inspected the files above. Proceed directly to writing or editing them with write_file or edit_file now to fulfill the request. Do not stop blank.)' });
+        continue;
+      }
       return !out || out.includes('[[AGENT]]') ? null : out;
     }
     messages.push(message);
@@ -183,7 +187,7 @@ async function runLite(routed, sessionId, onStep, system, { signal } = {}) {
       }
       if (WEB_NAMES.includes(call.name)) webCalls++;
       result = String(result);
-      const cap = ['read_file', 'bash'].includes(call.name) ? 6000 : RESULT_CAP;
+      const cap = call.name === 'read_file' ? 65000 : call.name === 'bash' ? 12000 : RESULT_CAP;
       if (result.length > cap) result = result.slice(0, cap) + '\n...[output shortened to save tokens; the file is intact. use grep -n or sed -n to read other parts]';
       onStep?.('tool_result', { call, result });
       messages.push({ role: 'tool', tool_call_id: call.id, content: String(result) });
@@ -354,7 +358,7 @@ export async function runAgent(userMessage, { onStep, maxSteps, forceAgent, sign
     let text = '', toolCalls = [], message = {}, usage = {};
     try {
       const activeSystem = step === 0 ? system : loopSystem;
-      const res = await chatWithTools(messages, { system: activeSystem, tools: pickTools(), signal });
+      const res = await chatWithTools(messages, { system: activeSystem, tools: pickTools(), maxTokens: 8192, signal });
       text = res.text;
       toolCalls = res.toolCalls;
       message = res.message;
@@ -381,12 +385,12 @@ export async function runAgent(userMessage, { onStep, maxSteps, forceAgent, sign
         if (blankRetries <= MAX_BLANK_RETRIES && step < effectiveMaxSteps - 1) {
           messages.push(message);
 
-          // context-aware nudge: don't push generic "go investigate files"
-          // language when the real issue is more likely an un-updated task —
-          // that was actively pointing the model in the wrong direction before
           let nudge;
+          const hasInspected = messages.some((m) => m.role === 'tool');
           const pendingCluster = sessionId ? getTasks(sessionId).find((c) => c.status !== 'completed') : null;
-          if (pendingCluster) {
+          if (hasInspected) {
+            nudge = "(that came back empty. You already inspected the files above. Do NOT call read_file or list_dir again — write or edit the files directly with write_file or edit_file now to fulfill the user's request. Do not stop blank.)";
+          } else if (pendingCluster) {
             const undone = pendingCluster.tasks.filter((t) => !t.done);
             nudge = `(that came back empty. You have an active task cluster "${pendingCluster.title}" with ${undone.length} task(s) not yet marked done: ${undone.map((t) => t.text).join(', ')}. If you just got a sub-agent report back, call set_task_done for it now. If the work is actually finished, mark the remaining tasks done and give a real summary. Don't stop blank.)`;
           } else {

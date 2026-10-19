@@ -24,7 +24,7 @@ function extractUsage(res, sdk) {
 
 // messages = [{ role: 'user' | 'assistant', content: string }]
 // returns { text, raw, usage: { inputTokens, outputTokens } }
-export async function chat(messages, { system, maxTokens = 1024, signal } = {}) {
+export async function chat(messages, { system, maxTokens = 4096, signal } = {}) {
   const m = activeModel();
   const base = m.base_url.replace(/\/$/, '');
 
@@ -96,7 +96,7 @@ export async function chat(messages, { system, maxTokens = 1024, signal } = {}) 
 
 // same as chat(), but supports tools. Returns { text, toolCalls, message, raw, usage }
 // toolCalls: [{ id, name, args }] — empty if the model just answered
-export async function chatWithTools(messages, { system, tools = [], maxTokens = 2048, signal } = {}) {
+export async function chatWithTools(messages, { system, tools = [], maxTokens = 8192, signal } = {}) {
   const m = activeModel();
   const base = m.base_url.replace(/\/$/, '');
 

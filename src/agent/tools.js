@@ -876,6 +876,7 @@ if (name === 'mcp_search') {
       const stat = fs.statSync(root);
       if (!stat.isDirectory()) return `Error: ${root} is not a directory`;
 
+      const isWildcard = !q || q === '*' || q === '.' || q === '.*';
       const qLower = q.toLowerCase();
       const results = [];
       const IGNORE_DIRS = new Set(['.git', 'node_modules', '.cache', '.npm', '.cargo', '.vscode', '.idea', 'dist', 'build', '.next', '.levi']);
@@ -895,7 +896,7 @@ if (name === 'mcp_search') {
           const nameLower = entry.name.toLowerCase();
           const relLower = relPath.toLowerCase();
 
-          if (nameLower.includes(qLower) || relLower.includes(qLower)) {
+          if (isWildcard || nameLower.includes(qLower) || relLower.includes(qLower)) {
             results.push(entry.isDirectory() ? relPath + '/' : relPath);
           }
 
