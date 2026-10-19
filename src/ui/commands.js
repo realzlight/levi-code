@@ -719,6 +719,17 @@ defineCommand({
     if (level) {
       try {
         const set = setEffort(level);
+        if (ctx.printPanel) {
+          return ctx.printPanel({
+            title: 'EFFORT ATTUNED',
+            status: 'ACTIVE',
+            fields: [
+              { label: 'Mode', value: set.label, color: '#afd7ff' },
+              { label: 'Pacing', value: set.pacing || 'Optimal', color: '#ffd700' },
+              { label: 'Harmonics', value: set.description, color: '#ffffff' }
+            ]
+          });
+        }
         return ctx.print(`Effort set to ${set.label} — ${set.description}`);
       } catch (e) {
         return ctx.print(`Error: ${e.message}`);

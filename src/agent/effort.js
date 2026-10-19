@@ -11,7 +11,8 @@ export const EFFORTS = {
     name: 'Eternal',
     level: 'low',
     label: 'Eternal (low)',
-    description: 'uses light mode with low effort or conversational mode',
+    description: 'Instantaneous reflex. Swift, nimble, and lightweight for quick answers and brief checks.',
+    pacing: 'Blazing Fast · Minimal latency',
     maxLiteSteps: 6,
     maxAgentSteps: 12,
     tokenBudgetMult: 0.6
@@ -21,7 +22,8 @@ export const EFFORTS = {
     name: 'Empyrean',
     level: 'medium',
     label: 'Empyrean (medium)',
-    description: 'uses light mode with medium effort, default for everything and best for everything',
+    description: 'The golden standard. Harmonic balance of rapid speed, surgical precision, and ideal depth.',
+    pacing: 'Balanced · Standard cadence',
     maxLiteSteps: 12,
     maxAgentSteps: 30,
     tokenBudgetMult: 1.0
@@ -31,7 +33,8 @@ export const EFFORTS = {
     name: 'Abyssal',
     level: 'high',
     label: 'Abyssal (high)',
-    description: 'uses light mode or agent mode sometimes but mostly light, thinks longer',
+    description: 'Oceanic contemplation. Meditates deeply through intricate logic, complex codebases, and subtle bugs.',
+    pacing: 'Deep Thinking · Extended contemplation',
     maxLiteSteps: 18,
     maxAgentSteps: 40,
     tokenBudgetMult: 1.5
@@ -41,7 +44,8 @@ export const EFFORTS = {
     name: 'Seraphic',
     level: 'max',
     label: 'Seraphic (max)',
-    description: 'uses agent mode and light mode, mostly light mode but max effort',
+    description: 'Transcendent intensity. Exhaustive multi-layer reasoning and boundless resolve for the toughest challenges.',
+    pacing: 'Maximum Depth · Boundless focus',
     maxLiteSteps: 25,
     maxAgentSteps: 60,
     tokenBudgetMult: 2.0

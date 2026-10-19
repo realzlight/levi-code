@@ -1213,7 +1213,7 @@ function App({ mascot }) {
     : 0;
 
   const formHeight = form
-    ? (form.mode === 'compact' ? 9 : (form.mode === 'effort' ? 8 : (form.mode.startsWith('mem-') ? 7 : 4)))
+    ? (form.mode === 'compact' ? 9 : (form.mode === 'effort' ? 9 : (form.mode.startsWith('mem-') ? 7 : 4)))
     : 0;
   const bottomAreaHeight = form ? formHeight : inputAreaHeight;
   const fixedHeight = headerHeight + headerMargin + bottomAreaHeight + footerHeight + (paletteOn ? slashMenuHeight(matches.length) : 0) + commandOutputHeight;
@@ -1473,7 +1473,16 @@ function App({ mascot }) {
                   setEffort(picked.id);
                   setEffortState(picked);
                   setForm(null);
-                  setCommandOutput({ kind: 'text', text: `Effort set to ${picked.label} — ${picked.description}` });
+                  setCommandOutput({
+                    kind: 'panel',
+                    title: 'EFFORT ATTUNED',
+                    status: 'ACTIVE',
+                    fields: [
+                      { label: 'Mode', value: picked.label, color: '#afd7ff' },
+                      { label: 'Pacing', value: picked.pacing || 'Optimal', color: '#ffd700' },
+                      { label: 'Harmonics', value: picked.description, color: '#ffffff' }
+                    ]
+                  });
                 },
                 onCancel: () => setForm(null)
               })

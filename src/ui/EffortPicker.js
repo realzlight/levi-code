@@ -5,7 +5,8 @@ import { EFFORT_LIST } from '../agent/effort.js';
 const h = React.createElement;
 const CYAN = '#afd7ff';
 const SOFT = '#c4c4c4';
-const GRAY = '#666666';
+const GRAY = '#777777';
+const GOLD = '#ffd700';
 
 export default function EffortPicker({ current, onPick, onCancel }) {
   const currentId = current?.id || current || 'empyrean';
@@ -19,29 +20,35 @@ export default function EffortPicker({ current, onPick, onCancel }) {
     if (key.return) return onPick(EFFORT_LIST[sel]);
   });
 
+  const activeItem = EFFORT_LIST[sel];
+
   return h(
     Box,
     { flexDirection: 'column', borderStyle: 'round', borderColor: CYAN, paddingX: 1 },
     h(Box, { justifyContent: 'space-between', marginBottom: 1, height: 1, overflow: 'hidden' },
-      h(Text, { color: CYAN, bold: true }, '✦ SELECT EFFORT LEVEL'),
+      h(Text, { color: CYAN, bold: true }, '✦ EFFORT HARMONY'),
       h(Text, { color: GRAY }, `[active: ${current?.name || 'Empyrean'}]`)
     ),
     EFFORT_LIST.map((e, i) => {
       const isSel = i === sel;
       const isCur = e.id === currentId;
-      const indicator = isSel ? '❯ ' : '  ';
-      const star = isCur ? '★ ' : '  ';
+      const marker = isSel ? '❯ ' : '  ';
+      const badge = isCur ? '★ ' : '  ';
       return h(
         Box,
         { key: e.id, height: 1, overflow: 'hidden' },
-        h(Text, { color: CYAN }, indicator),
-        h(Text, { color: isCur ? '#ffd700' : GRAY }, star),
-        h(Text, { color: isSel ? CYAN : SOFT, bold: isSel }, e.label.padEnd(18)),
-        h(Text, { color: isSel ? '#ffffff' : GRAY }, `: ${e.description}`)
+        h(Text, { color: isSel ? CYAN : GRAY }, marker),
+        h(Text, { color: isCur ? GOLD : GRAY }, badge),
+        h(Text, { color: isSel ? CYAN : SOFT, bold: isSel }, e.label.padEnd(20)),
+        h(Text, { color: isSel ? GOLD : GRAY }, e.pacing || '')
       );
     }),
     h(Box, { marginTop: 1, height: 1, overflow: 'hidden' },
-      h(Text, { color: GRAY }, '↑↓ select · enter confirm · esc cancel')
+      h(Text, { color: CYAN }, '▸ '),
+      h(Text, { color: '#ffffff' }, activeItem.description)
+    ),
+    h(Box, { height: 1, overflow: 'hidden' },
+      h(Text, { color: GRAY }, '↑↓ navigate · enter select · esc cancel')
     )
   );
 }
