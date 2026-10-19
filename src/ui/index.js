@@ -911,22 +911,20 @@ function buildDisplayLines(messages, width, compactTools = false) {
       return;
     }
 
-    // Narration — off-white prose between tool calls
+    // Narration — white prose between tool calls, with tag parsing and ▸ prefix
     if (msg.role === 'narrate') {
       const text = typeof msg.text === 'string' ? msg.text : '';
-      const textWidth = Math.max(10, safeWidth - 4);
+      const textWidth = Math.max(10, safeWidth - 5);
       const wrapped = wrapAgentLines(text, textWidth);
       wrapped.forEach((chunk, lineIdx) => {
+        const isFirst = lineIdx === 0;
         lines.push({
           key: `msg-${msgIdx}-nar-${lineIdx}`,
           node: h(Box, { key: `msg-${msgIdx}-nar-${lineIdx}`, paddingLeft: 2, height: 1, overflow: 'hidden' },
-            h(Text, { color: '#c8c8c8' }, chunk || ' ')
+            h(Text, { color: isFirst ? '#afd7ff' : 'transparent' }, isFirst ? '▸ ' : '  '),
+            h(Box, null, ...parseLineToNodes(chunk, textWidth))
           )
         });
-      });
-      lines.push({
-        key: `msg-${msgIdx}-nar-sep`,
-        node: h(Box, { key: `msg-${msgIdx}-nar-sep`, height: 1, overflow: 'hidden' }, h(Text, null, ' '))
       });
       return;
     }
