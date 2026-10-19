@@ -132,8 +132,8 @@ function Message({ role, text, tool, arg, result, status, todos, width }) {
     return h(ClaudeToolCall, { tool, arg, result, status, todos });
   }
   if (role === 'narrate') {
-    return h(Box, { marginBottom: 1, paddingLeft: 2 },
-      h(Text, { color: 'white' }, text || ' ')
+    return h(Box, { marginBottom: 0, paddingLeft: 2 },
+      h(ClaudeMessage, { role: 'assistant', width }, text || ' ')
     );
   }
 
