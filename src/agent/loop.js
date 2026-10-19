@@ -167,7 +167,7 @@ async function runLite(routed, sessionId, onStep, system, { signal } = {}) {
     if (step > 0 && hasCodingContext && ['shell', 'all'].includes(routed.tools) && !routed.mcp && !expanded) {
       names = names.filter(n => CODING_ONLY_NAMES.has(n));
     }
-    if (expanded) names = [...new Set([...names, ...PLAYWRIGHT_WEB_TOOLS, ...DESKTOP_TOOLS])];
+    if (expanded) names = [...new Set([...names, ...LITE_GROUPS.all, ...PLAYWRIGHT_WEB_TOOLS, ...DESKTOP_TOOLS])];
     if (routed.mcp) names = [...new Set([...names, ...mcpToolNames])];
     let tools = LITE_TOOLS.filter((t) => names.includes(t.function.name));
     if (mcpMod) tools = [...tools, ...mcpMod.getLoadedMcpDefs()];
@@ -178,6 +178,7 @@ async function runLite(routed, sessionId, onStep, system, { signal } = {}) {
   const maxLiteSteps = effort?.maxLiteSteps || 12;
   const liteTokenBudget = Math.floor(LITE_TOKEN_BUDGET * (effort?.tokenBudgetMult || 1.0));
   const callCounts = new Map();
+  let lastText = '';
   for (let step = 0; step < maxLiteSteps; step++) {
     if (signal?.aborted) return '[Interrupted]';
     if (liteTokens > liteTokenBudget) return 'Stopped: light-mode token budget (' + liteTokenBudget + ') reached for this message. Send another message to continue from here.';
@@ -195,6 +196,7 @@ async function runLite(routed, sessionId, onStep, system, { signal } = {}) {
         const hasCodingContext = messages.some(m => m.role === 'tool');
         const res = await chatWithTools(messages, { system: activeSystem, tools: pickLite(step, hasCodingContext), maxTokens: 8192, signal });
         text = res.text;
+        lastText = text;
         toolCalls = res.toolCalls;
         message = res.message;
         usage = res.usage;
@@ -225,7 +227,7 @@ async function runLite(routed, sessionId, onStep, system, { signal } = {}) {
     for (const call of toolCalls) {
       if (signal?.aborted) return '[Interrupted]';
       onStep?.('tool_call', call);
-      const isReadOnly = ['read_file', 'list_dir', 'find', 'read_lines', 'grep_search'].includes(call.name);
+      const isReadOnly = ['read_file', 'list_dir', 'find', 'read_lines', 'grep_search', 'retrieve'].includes(call.name);
       const callKey = `${call.name}:${JSON.stringify(call.args || {})}`;
       const seenCount = callCounts.get(callKey) || 0;
       let result;
@@ -237,7 +239,7 @@ async function runLite(routed, sessionId, onStep, system, { signal } = {}) {
       } else {
         if (isReadOnly) callCounts.set(callKey, 1);
         const ok = LITE_NAMES.includes(call.name) || (mcpMod && mcpMod.isMcpTool(call.name));
-        result = call.name === 'more_tools' ? (expanded = true, 'All light tools including web and desktop are now available.') : ok ? await runTool(call.name, call.args) : 'Error: tool not available here';
+        result = call.name === 'more_tools' ? (expanded = true, 'All light tools including file, shell, web and desktop are now available.') : ok ? await runTool(call.name, call.args) : 'Error: tool not available here';
       }
       if (WEB_NAMES.includes(call.name)) webCalls++;
       result = String(result);
@@ -262,7 +264,7 @@ async function runLite(routed, sessionId, onStep, system, { signal } = {}) {
       return breakMsg;
     }
   }
-  return (text || '').trim() || `Completed ${maxLiteSteps} steps in light mode. Check the updated files, or let me know if you want me to keep going.`;
+  return (lastText || '').trim() || `Completed ${maxLiteSteps} steps in light mode. Check the updated files, or let me know if you want me to keep going.`;
 }
 
 function buildExchange(stored) {
@@ -519,7 +521,7 @@ export async function runAgent(userMessage, { onStep, maxSteps, forceAgent, sign
     for (const call of toolCalls) {
       if (signal?.aborted) return '[Interrupted]';
       onStep?.('tool_call', call);
-      const isReadOnly = ['read_file', 'list_dir', 'find', 'read_lines', 'grep_search'].includes(call.name);
+      const isReadOnly = ['read_file', 'list_dir', 'find', 'read_lines', 'grep_search', 'retrieve'].includes(call.name);
       const callKey = `${call.name}:${JSON.stringify(call.args || {})}`;
       const seenCount = callCounts.get(callKey) || 0;
       let result;

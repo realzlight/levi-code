@@ -53,10 +53,11 @@ function routerSystem() {
 agent = a project or big job: building or scaffolding an app, big fixes or refactors across 3+ files, complex reasoning or debugging, git workflows, deep multi-source research, planning or reorganizing task plans, sub-agents, or continues agent work (e.g. "yes", "the second one" when last_route is agent).
 light = any other job that needs tools, up to about 10 tool calls: code reviews, small fixes and edits (1-2 files), running commands, web lookups, saving facts, recalling past sessions, notes, or conversations, task cluster views, using MCP tools. Mixed jobs: tools = all.
 conversation = plain casual chat, simple questions/explanations without tools, short follow-ups.
-tools (conversation or light): none = plain chat or thanks, memory = user states a fact or preference, or recalls past sessions, notes, or conversations, web = live info/browser, desktop = mouse/keyboard/window/app control, shell = one file or shell action, tasks = show or tick off task clusters, all = unsure or mixed.
+tools (conversation or light): none = plain chat or thanks, memory = ONLY for passive queries about past facts/sessions ("what did we talk about", "remember this"), web = live info/browser, desktop = mouse/keyboard/window/app control, shell = one file or shell action, tasks = show or tick off task clusters, all = continuation, completion, building, unsure or mixed.
 ${mcpLine}
 When unsure between light and agent, choose light unless a project, big refactor, or complex reasoning is involved.
-Recalling past sessions, notes, or past conversations must route light with tools=memory.
+Recalling past sessions, notes, or past conversations passively must route light with tools=memory.
+CRITICAL: Continuing, finishing, completing, or building work (e.g. "continue", "finish it", "complete my request", "do it") must ALWAYS route with tools=all or tools=shell, NEVER tools=memory.
 we are in testing period so never router to agent mode for now.`;
   return cachedSystem;
 }
@@ -116,6 +117,7 @@ export async function route(query, { recentUser = [], forceAgent = false, sessio
   let r;
   if (forceAgent) r = { route: 'agent', insight: 'agent mode forced' };
   else if (GREETING.test(q)) r = { route: 'conversation', tools: 'none', mcp: false, insight: 'greeting or thanks' };
+  else if (/^(continue|keep going|finish(\s+\w+)?|complete(\s+\w+)?|com0lete(\s+\w+)?|proceed|go ahead|do it|next)\b/i.test(q)) r = { route: 'light', tools: 'all', mcp: false, insight: 'fast-path: continue/complete request' };
   else if (/^git\s+(status|diff|log|branch|checkout|add|commit|pull|push|stash)\b/i.test(q)) r = { route: 'light', tools: 'shell', mcp: false, insight: 'fast-path: git command' };
   else if (/^(ls|pwd|cat|cd|mkdir|touch|grep|find|rm|mv|cp|which|where|head|tail|sed|awk|echo|curl)\b/i.test(q)) r = { route: 'light', tools: 'shell', mcp: false, insight: 'fast-path: shell utility' };
   else if (/^(read|view|show|check|cat|inspect|open)\s+([a-zA-Z0-9_\-./~]+\.[a-zA-Z0-9]+)$/i.test(q)) r = { route: 'light', tools: 'shell', mcp: false, insight: 'fast-path: read single file' };
