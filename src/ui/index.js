@@ -306,7 +306,7 @@ function parseLineToNodes(line, safeWidth = 70) {
 
   // 3. Tokenize inline tags and bar graphs
   const tokens = [];
-  const regex = /\[(\/?)(c|b|chip|code|dim|g|r|gold|badge|h|i|em)\]|\[bar:(\d+)(?:%|)?(?::([^\]]+))?\]|`([^`]+)`|\*\*([^*]+)\*\*|\*([^*\n]+)\*/g;
+  const regex = /\[(\/?)(c|cyan|b|bold|chip|code|dim|g|green|r|red|gold|badge|h|i|em|italic)\]|\[bar:(\d+)(?:%|)?(?::([^\]]+))?\]|`([^`]+)`|\*\*([^*]+)\*\*|\*([^*\n]+)\*/gi;
   let lastIndex = 0;
   let match;
   const styleStack = [];
@@ -316,6 +316,8 @@ function parseLineToNodes(line, safeWidth = 70) {
     for (const st of styleStack) Object.assign(s, st);
     return s;
   };
+
+  const stripInnerTags = (s) => (typeof s === 'string' ? s.replace(/\[\/?(?:c|cyan|b|bold|chip|code|dim|g|green|r|red|gold|badge|h|i|em|italic)\]/gi, '') : '');
 
   while ((match = regex.exec(line)) !== null) {
     if (match.index > lastIndex) {
@@ -342,51 +344,40 @@ function parseLineToNodes(line, safeWidth = 70) {
 
     // Markdown `code`
     if (match[5] !== undefined) {
-      tokens.push({ text: match[5], style: { ...getActiveStyle(), backgroundColor: '#2a2a2a', color: '#afd7ff' } });
+      tokens.push({ text: stripInnerTags(match[5]), style: { ...getActiveStyle(), backgroundColor: '#2a2a2a', color: '#afd7ff' } });
       continue;
     }
 
     // Markdown **bold**
     if (match[6] !== undefined) {
-      tokens.push({ text: match[6], style: { ...getActiveStyle(), bold: true } });
+      tokens.push({ text: stripInnerTags(match[6]), style: { ...getActiveStyle(), bold: true } });
       continue;
     }
 
     // Markdown *italic*
     if (match[7] !== undefined) {
-      tokens.push({ text: match[7], style: { ...getActiveStyle(), italic: true } });
+      tokens.push({ text: stripInnerTags(match[7]), style: { ...getActiveStyle(), italic: true } });
       continue;
     }
 
     const isClose = match[1] === '/';
-    const tag = match[2];
+    const rawTag = (match[2] || '').toLowerCase();
+    const tag = rawTag === 'bold' ? 'b' : rawTag === 'cyan' ? 'c' : rawTag === 'green' ? 'g' : rawTag === 'red' ? 'r' : (rawTag === 'em' || rawTag === 'italic') ? 'i' : rawTag === 'code' ? 'chip' : rawTag;
 
     if (!isClose) {
-      if (tag === 'c') styleStack.push({ color: '#afd7ff', bold: true });
-      else if (tag === 'b') styleStack.push({ bold: true });
-      else if (tag === 'i' || tag === 'em') styleStack.push({ italic: true });
-      else if (tag === 'chip' || tag === 'code') styleStack.push({ backgroundColor: '#2a2a2a', color: '#afd7ff' });
-      else if (tag === 'dim') styleStack.push({ color: '#888888' });
-      else if (tag === 'g') styleStack.push({ color: '#4ade80' });
-      else if (tag === 'r') styleStack.push({ color: '#f87171' });
-      else if (tag === 'gold') styleStack.push({ color: '#ffd700' });
-      else if (tag === 'badge') styleStack.push({ color: '#afd7ff', bold: true, isBadge: true });
-      else if (tag === 'h') styleStack.push({ color: '#afd7ff', bold: true, isHeading: true });
+      if (tag === 'c') styleStack.push({ tag, color: '#afd7ff', bold: true });
+      else if (tag === 'b') styleStack.push({ tag, bold: true });
+      else if (tag === 'i') styleStack.push({ tag, italic: true });
+      else if (tag === 'chip') styleStack.push({ tag, backgroundColor: '#2a2a2a', color: '#afd7ff' });
+      else if (tag === 'dim') styleStack.push({ tag, color: '#888888' });
+      else if (tag === 'g') styleStack.push({ tag, color: '#4ade80' });
+      else if (tag === 'r') styleStack.push({ tag, color: '#f87171' });
+      else if (tag === 'gold') styleStack.push({ tag, color: '#ffd700' });
+      else if (tag === 'badge') styleStack.push({ tag, color: '#afd7ff', bold: true, isBadge: true });
+      else if (tag === 'h') styleStack.push({ tag, color: '#afd7ff', bold: true, isHeading: true });
     } else {
       for (let i = styleStack.length - 1; i >= 0; i--) {
-        const item = styleStack[i];
-        if (
-          (tag === 'c' && item.color === '#afd7ff' && !item.isBadge && !item.isHeading) ||
-          (tag === 'b' && item.bold && !item.color) ||
-          ((tag === 'i' || tag === 'em') && item.italic) ||
-          ((tag === 'chip' || tag === 'code') && item.backgroundColor === '#2a2a2a') ||
-          (tag === 'dim' && item.color === '#888888') ||
-          (tag === 'g' && item.color === '#4ade80') ||
-          (tag === 'r' && item.color === '#f87171') ||
-          (tag === 'gold' && item.color === '#ffd700') ||
-          (tag === 'badge' && item.isBadge) ||
-          (tag === 'h' && item.isHeading)
-        ) {
+        if (styleStack[i].tag === tag) {
           styleStack.splice(i, 1);
           break;
         }
@@ -447,7 +438,7 @@ function wrapAgentLines(text, maxW) {
     // Measure true visible length by stripping syntax tags/delimiters
     const cleanLen = (str) =>
       str
-        .replace(/\[\/?(c|b|chip|code|dim|g|r|gold|badge|h|i|em)\]/g, '')
+        .replace(/\[\/?(c|cyan|b|bold|chip|code|dim|g|green|r|red|gold|badge|h|i|em|italic)\]/gi, '')
         .replace(/`([^`]+)`/g, '$1')
         .replace(/\*\*([^*]+)\*\*/g, '$1')
         .replace(/\*([^*\n]+)\*/g, '$1')

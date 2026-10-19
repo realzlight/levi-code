@@ -121,17 +121,19 @@ export async function route(query, { recentUser = [], forceAgent = false, sessio
   else if (/^git\s+(status|diff|log|branch|checkout|add|commit|pull|push|stash)\b/i.test(q)) r = { route: 'light', tools: 'shell', mcp: false, insight: 'fast-path: git command' };
   else if (/^(ls|pwd|cat|cd|mkdir|touch|grep|find|rm|mv|cp|which|where|head|tail|sed|awk|echo|curl)\b/i.test(q)) r = { route: 'light', tools: 'shell', mcp: false, insight: 'fast-path: shell utility' };
   else if (/^(read|view|show|check|cat|inspect|open)\s+([a-zA-Z0-9_\-./~]+\.[a-zA-Z0-9]+)$/i.test(q)) r = { route: 'light', tools: 'shell', mcp: false, insight: 'fast-path: read single file' };
-  else if (/^(go to|open|check|show|cd|look at|work on)\s+([~/a-zA-Z0-9_\-. ]+)$/i.test(q)) {
-    const m = q.match(/^(?:go to|open|check|show|cd|look at|work on)\s+(.+)$/i);
-    const target = m ? m[1].trim() : q;
+  else if (/^(go to|open|check|show|cd|look at|work on)\s+([~/a-zA-Z0-9_\-./]+)$/i.test(q) && dirPreview(q.match(/^(?:go to|open|check|show|cd|look at|work on)\s+(.+)$/i)?.[1]?.trim())) {
+    const target = q.match(/^(?:go to|open|check|show|cd|look at|work on)\s+(.+)$/i)[1].trim();
     const preview = dirPreview(target);
-    if (preview) r = { route: 'light', tools: 'shell', mcp: false, insight: 'fast-path: directory entry — ' + preview };
+    r = { route: 'light', tools: 'shell', mcp: false, insight: 'fast-path: directory entry — ' + preview };
   }
   else if (/^(search|google|lookup)\s+(about|for|how|what|why|who)\b/i.test(q)) r = { route: 'light', tools: 'web', mcp: false, insight: 'fast-path: web lookup' };
   else if (FILE_HINT.test(q)) r = { route: 'agent', insight: 'mentions code or file paths' };
   else if (/^(remember|note that|from now on|btw|fyi)\b|\bi (always|never|usually|prefer|like|love|hate|enjoy|use|play|work (as|at|on)|live in) |\bmy (name is|favou?rite|setup is)/i.test(q)) r = { route: 'conversation', tools: 'memory', mcp: false, insight: 'durable fact or preference: save with remember' };
   else if (TASK_VIEW.test(q)) r = { route: 'light', tools: 'tasks', mcp: false, insight: 'show or update task clusters' };
   else r = await classify(q, recent, sessionId, signal);
+
+  if (!r) r = await classify(q, recent, sessionId, signal);
+  r = r || { route: 'light', tools: 'all', mcp: false, insight: 'fallback to light mode' };
 
   const effort = getEffort();
   if (effort.id === 'eternal' && r.route === 'agent') {
