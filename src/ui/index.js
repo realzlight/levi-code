@@ -679,6 +679,10 @@ function formatToolArg(name, args) {
   if (name === 'playwright_click' || name === 'playwright_fill') {
     return args.selector || '';
   }
+  if (name === 'code_search') {
+    const loc = args.folder || args.path || '.';
+    return `"${args.query || ''}" in ${loc}`;
+  }
   const keys = Object.keys(args);
   if (keys.length === 1 && typeof args[keys[0]] === 'string') {
     return args[keys[0]];

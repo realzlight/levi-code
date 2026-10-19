@@ -10,6 +10,7 @@ import { upsertSubAgent, getSubAgent, loadRegistry } from './subagent-registry.j
 import { recordUsage } from './usage.js';
 import { RULES } from './prompts.js';
 import { addCluster, setTaskDone, getTasks, editTask, deleteTask, deleteCluster, addTaskToCluster } from './tasks.js';
+import { searchCode } from './codeSearch.js';
 
 function resolve(p) {
   if (!p) return p;
@@ -20,7 +21,7 @@ function resolve(p) {
   return p;
 }
 export const CATEGORIES = {
-  fs: ['read_file','write_file','edit_file','bash','find','list_dir','read_lines','grep_search'],
+  fs: ['read_file','write_file','edit_file','bash','find','list_dir','read_lines','grep_search','code_search'],
   web: ['web_launch','web_close','web_new_tab','web_goto','web_back','web_reload','web_click','web_dblclick','web_fill','web_press','web_hover','web_drag','web_scroll','web_screenshot','web_get_text','web_get_url','web_wait'],
   desktop: ['desktop_click','desktop_type','desktop_press','desktop_scroll','desktop_drag','desktop_screenshot','desktop_get_window_state','desktop_list_apps','desktop_launch_app'],
   tasks: ['add_task_cluster','get_tasks','set_task_done','edit_task','delete_task','delete_cluster','add_task_to_cluster'],
@@ -152,6 +153,24 @@ export const toolDefs = [
           query: { type: 'string', description: 'Text or regular expression pattern to search for' },
           path: { type: 'string', description: 'Directory or file to search within (optional, defaults to current directory; ~ supported)' },
           extension: { type: 'string', description: 'Optional file extension filter, e.g. "js", "ts", "json", "py"' }
+        },
+        required: ['query']
+      }
+    }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'code_search',
+      description: 'Fast full-text code search across a folder using SQLite FTS5 with BM25 ranking. Pinpoints exact files and line numbers instantly without manually searching every file. Best for locating functions, classes, symbols, or concepts.',
+      parameters: {
+        type: 'object',
+        properties: {
+          query: { type: 'string', description: 'Code symbol, function name, class, phrase or search terms' },
+          path: { type: 'string', description: 'Directory or folder to search (optional, defaults to current directory; ~ supported)' },
+          folder: { type: 'string', description: 'Alternative alias for path parameter' },
+          extension: { type: 'string', description: 'Optional file extension filter, e.g. "js", "ts", "py", "json"' },
+          limit: { type: 'number', description: 'Max number of ranked results to return (default: 8, max: 15)' }
         },
         required: ['query']
       }
@@ -1168,6 +1187,10 @@ if (name === 'mcp_search') {
         ? `Found 25+ matches for "${q}" (capped at 25):`
         : `Found ${matches.length} match(es) for "${q}":`;
       return header + '\n' + matches.join('\n');
+    }
+
+    if (name === 'code_search') {
+      return await searchCode(args);
     }
 
     if (name.startsWith('web_')) {
