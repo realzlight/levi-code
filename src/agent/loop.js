@@ -60,15 +60,15 @@ const LITE_GROUPS = {
   web: ['google_search', 'fetch', ...PLAYWRIGHT_WEB_TOOLS],
   desktop: [...DESKTOP_TOOLS],
   shell: ['bash', 'read_file', 'write_file', 'edit_file', 'find', 'list_dir', 'read_lines', 'grep_search', 'ask'],
-  all: ['bash', 'read_file', 'write_file', 'edit_file', 'find', 'list_dir', 'read_lines', 'grep_search', 'google_search', 'fetch', ...PLAYWRIGHT_WEB_TOOLS, ...DESKTOP_TOOLS, 'ask', 'remember', 'retrieve'],
+  all: ['bash', 'read_file', 'write_file', 'edit_file', 'find', 'list_dir', 'read_lines', 'grep_search', 'google_search', 'fetch', 'ask', 'remember', 'retrieve', 'get_tasks', 'set_task_done'],
   tasks: ['get_tasks', 'set_task_done', 'add_task_cluster'],
   mcp: ['mcp_search', 'mcp_list', 'bash', 'read_file', 'write_file', 'edit_file', 'find', 'list_dir', 'read_lines', 'grep_search', 'ask']
 };
-const MORE_TOOL = { type: 'function', function: { name: 'more_tools', description: 'Load all light tools (shell, files, web, desktop, ask, remember) when your current tools are not enough.', parameters: { type: 'object', properties: {} } } };
+const MORE_TOOL = { type: 'function', function: { name: 'more_tools', description: 'Load browser automation and desktop tools when web browser or GUI automation is needed.', parameters: { type: 'object', properties: {} } } };
 const WEB_NAMES = ['google_search', 'fetch'];
 const WEB_BUDGET = 3;
 const RESULT_CAP = 1500;
-const LITE_TOKEN_BUDGET = 128000;
+const LITE_TOKEN_BUDGET = 45000;
 const AGENT_WEB_BUDGET = 6;
 const AGENT_WEB_CAP = 3000;
 const AGENT_OUTPUT_CAP = 8000;
@@ -110,21 +110,24 @@ async function runLite(routed, sessionId, onStep, system, { signal } = {}) {
   let webCalls = 0;
   let budgetNoted = false;
   let liteTokens = 0;
-  let expanded = (routed.tools || 'all') === 'all';
+  let expanded = false;
   const mcpToolNames = routed.mcp ? ['mcp_search', 'mcp_list'] : [];
   const pickLite = () => {
-    let names = expanded ? LITE_GROUPS.all : (LITE_GROUPS[routed.tools] || LITE_GROUPS.all);
-    if (routed.mcp && !expanded) names = [...new Set([...names, ...mcpToolNames])];
+    let names = LITE_GROUPS[routed.tools] || LITE_GROUPS.all;
+    if (expanded) names = [...new Set([...names, ...PLAYWRIGHT_WEB_TOOLS, ...DESKTOP_TOOLS])];
+    if (routed.mcp) names = [...new Set([...names, ...mcpToolNames])];
     let tools = LITE_TOOLS.filter((t) => names.includes(t.function.name));
     if (mcpMod) tools = [...tools, ...mcpMod.getLoadedMcpDefs()];
-    if (!expanded) tools = [...tools, MORE_TOOL];
+    if (!expanded && !['web', 'desktop'].includes(routed.tools)) tools = [...tools, MORE_TOOL];
     return webCalls >= WEB_BUDGET ? tools.filter((t) => !WEB_NAMES.includes(t.function.name)) : tools;
   };
   const effort = getEffort();
   const maxLiteSteps = effort?.maxLiteSteps || 12;
+  const liteTokenBudget = Math.floor(LITE_TOKEN_BUDGET * (effort?.tokenBudgetMult || 1.0));
+  const callCounts = new Map();
   for (let step = 0; step < maxLiteSteps; step++) {
     if (signal?.aborted) return '[Interrupted]';
-    if (liteTokens > LITE_TOKEN_BUDGET) return 'Stopped: light-mode token budget (' + LITE_TOKEN_BUDGET + ') reached for this message. Send another message to continue from here.';
+    if (liteTokens > liteTokenBudget) return 'Stopped: light-mode token budget (' + liteTokenBudget + ') reached for this message. Send another message to continue from here.';
     const liteResults = messages.map((m, i) => (m.role === 'tool' ? i : -1)).filter((i) => i >= 0);
     for (const i of liteResults.slice(0, -4)) {
       if (String(messages[i].content).length > 300) messages[i] = { ...messages[i], content: String(messages[i].content).slice(0, 300) + '\n...[older result trimmed]' };
@@ -164,8 +167,20 @@ async function runLite(routed, sessionId, onStep, system, { signal } = {}) {
     for (const call of toolCalls) {
       if (signal?.aborted) return '[Interrupted]';
       onStep?.('tool_call', call);
-      const ok = LITE_NAMES.includes(call.name) || (mcpMod && mcpMod.isMcpTool(call.name));
-      let result = call.name === 'more_tools' ? (expanded = true, 'All light tools are now available.') : ok ? await runTool(call.name, call.args) : 'Error: tool not available here';
+      const isReadOnly = ['read_file', 'list_dir', 'find', 'read_lines', 'grep_search'].includes(call.name);
+      const callKey = `${call.name}:${JSON.stringify(call.args || {})}`;
+      const seenCount = callCounts.get(callKey) || 0;
+      let result;
+      if (isReadOnly && seenCount >= 1) {
+        callCounts.set(callKey, seenCount + 1);
+        result = seenCount === 1
+          ? 'Notice: You already called this exact tool with identical arguments earlier in this turn. See earlier result in conversation history. Do not repeat; proceed with your edit or answer.'
+          : 'Error: Redundant call aborted to save tokens. Proceed with the data already retrieved.';
+      } else {
+        if (isReadOnly) callCounts.set(callKey, 1);
+        const ok = LITE_NAMES.includes(call.name) || (mcpMod && mcpMod.isMcpTool(call.name));
+        result = call.name === 'more_tools' ? (expanded = true, 'All light tools including web and desktop are now available.') : ok ? await runTool(call.name, call.args) : 'Error: tool not available here';
+      }
       if (WEB_NAMES.includes(call.name)) webCalls++;
       result = String(result);
       const cap = ['read_file', 'bash'].includes(call.name) ? 6000 : RESULT_CAP;
@@ -175,7 +190,7 @@ async function runLite(routed, sessionId, onStep, system, { signal } = {}) {
       if (signal?.aborted) return '[Interrupted]';
     }
   }
-  return null;
+  return (text || '').trim() || `Completed ${maxLiteSteps} steps in light mode. Check the updated files, or let me know if you want me to keep going.`;
 }
 
 function buildExchange(stored) {
@@ -258,8 +273,8 @@ export async function runAgent(userMessage, { onStep, maxSteps, forceAgent, sign
   const loopSystem = buildLoopSystem();
   const SUB = ['spawn_subagent', 'list_subagents', 'message_subagent'];
   const unlocked = new Set([
-    ...(routed.tools === 'web' || routed.tools === 'all' ? CATEGORIES.web : []),
-    ...(routed.tools === 'desktop' || routed.tools === 'all' ? CATEGORIES.desktop : [])
+    ...(routed.tools === 'web' ? CATEGORIES.web : []),
+    ...(routed.tools === 'desktop' ? CATEGORIES.desktop : [])
   ]);
   const customMcp = hasCustomMcp();
   if (customMcp && !mcpMod) mcpMod = await import('../mcp.js');
@@ -304,6 +319,7 @@ export async function runAgent(userMessage, { onStep, maxSteps, forceAgent, sign
   let blankRetries = 0;
   let stallNudges = 0;
   const webState = { web: 0, tokens: 0, over: false, noted: false, overSteps: 0 };
+  const callCounts = new Map();
 
   for (let step = 0; step < effectiveMaxSteps; step++) {
     if (signal?.aborted) return '[Interrupted]';
@@ -365,7 +381,7 @@ export async function runAgent(userMessage, { onStep, maxSteps, forceAgent, sign
             const undone = pendingCluster.tasks.filter((t) => !t.done);
             nudge = `(that came back empty. You have an active task cluster "${pendingCluster.title}" with ${undone.length} task(s) not yet marked done: ${undone.map((t) => t.text).join(', ')}. If you just got a sub-agent report back, call set_task_done for it now. If the work is actually finished, mark the remaining tasks done and give a real summary. Don't stop blank.)`;
           } else {
-            nudge = "(that came back empty. Before answering: have you actually read the project's DATA.md for its Location, ls'd that real directory, and read the actual code file? If not, do that now. If you have and something genuinely doesn't fit, use ask to name the specific mismatch you found. Don't stop without either doing more investigation or giving a real specific answer.)";
+            nudge = "(that came back empty. Before answering: inspect the relevant files directly using read_file, list_dir, or grep_search, and proceed with the requested work or give a clear specific answer. Don't stop blank.)";
           }
 
           messages.push({ role: 'user', content: nudge });
@@ -421,9 +437,21 @@ export async function runAgent(userMessage, { onStep, maxSteps, forceAgent, sign
     for (const call of toolCalls) {
       if (signal?.aborted) return '[Interrupted]';
       onStep?.('tool_call', call);
-      const result = call.name === 'think'
-        ? await think(call.args, { projectName, sessionId })
-        : await runToolGuarded(call, webState);
+      const isReadOnly = ['read_file', 'list_dir', 'find', 'read_lines', 'grep_search'].includes(call.name);
+      const callKey = `${call.name}:${JSON.stringify(call.args || {})}`;
+      const seenCount = callCounts.get(callKey) || 0;
+      let result;
+      if (isReadOnly && seenCount >= 1) {
+        callCounts.set(callKey, seenCount + 1);
+        result = seenCount === 1
+          ? 'Notice: You already called this exact tool with identical arguments earlier in this turn. See earlier result in conversation history. Do not repeat; proceed with your edit or answer.'
+          : 'Error: Redundant call aborted to save tokens. Proceed with the data already retrieved.';
+      } else {
+        if (isReadOnly) callCounts.set(callKey, 1);
+        result = call.name === 'think'
+          ? await think(call.args, { projectName, sessionId })
+          : await runToolGuarded(call, webState);
+      }
       const lc = call.name === 'list_tools' ? [null, String(call.args?.category || '').toLowerCase()] : call.name.match(/^list_(\w+)_commands$/);
       if (lc) for (const n of CATEGORIES[lc[1] === 'task' ? 'tasks' : lc[1]] || []) unlocked.add(n);
       onStep?.('tool_result', { call, result });

@@ -28,7 +28,7 @@ const FRAG = {
   ask: 'Use ask for small-choice questions.',
   mcp: 'Relevant MCP tools are automatically pre-loaded when needed — call them directly! To find or switch tools: call mcp_search("<action keyword>") (e.g. "repos", "prs", "issues", "commits"). Call mcp_list(server: "<name>") to inspect all available tools on a server without loading schemas. Built-in servers (serper, fetch) are always available as google_search and fetch.'
 };
-const GROUP_FRAGS = { none: [], memory: ['memory'], web: ['web'], desktop: ['desktop'], shell: ['shell'], tasks: ['tasks'], mcp: ['mcp', 'shell'], all: ['web', 'desktop', 'shell', 'memory', 'ask'] };
+const GROUP_FRAGS = { none: [], memory: ['memory'], web: ['web'], desktop: ['desktop'], shell: ['shell'], tasks: ['tasks'], mcp: ['mcp', 'shell'], all: ['shell', 'memory', 'ask'] };
 
 export function litePrompt(kind, group) {
   const g = GROUP_FRAGS[group] ? group : 'all';
@@ -77,7 +77,9 @@ MEMORY (~/.levi/)
 - Context priority: current thread, session summary, TASK.md (get_tasks), DATA.md; retrieve / search_sessions last.
 
 PROJECTS
-- New distinct thing the user is building: ls ~/.levi/PROJECTS first, reuse a similar existing name, else set_project(short name); if the code location is unknown ask once, then record it as Location in DATA.md. Request about an existing project: read DATA.md, get_tasks, ls the Location, and read the code before acting. When you finish building or changing something, save 2-4 project facts with remember(project): what it is, where it lives, the stack, how to run it. In bash use $HOME or an unquoted ~ (a quoted ~ does not expand); file tools accept ~ directly. Full project rules: list_tools(memory).
+- Direct path or folder: If the user provides a folder, path, or directory (e.g. "in homedir", "~/project", "./app", or names a directory), go DIRECTLY to that location and inspect the files there first (list_dir, read_file). Do NOT search ~/.levi/PROJECTS or look for DATA.md if the user gave the path or folder name!
+- Registered projects: Only look in ~/.levi/PROJECTS/<name>/DATA.md if the project was previously registered with set_project AND no location was specified in the user's message.
+- New distinct thing the user is building: if the code location is unknown ask once, then record it as Location in DATA.md. When you finish building or changing something, save 2-4 project facts with remember(project): what it is, where it lives, the stack, how to run it. In bash use $HOME or an unquoted ~ (a quoted ~ does not expand); file tools accept ~ directly. Full project rules: list_tools(memory).
 
 SKILLS (~/.levi/SKILLS/)
 - If [context] lists available skills, check if any skill matches the user's request.
@@ -134,9 +136,11 @@ export function loopPrompt(solo) {
 
 export const RULES = {
   memory: `PROJECTS
+- Direct path or location: If the user specifies a directory, project folder, or path (e.g. "~/folder", "in homedir"), inspect and work in that directory directly (read_file, list_dir). Never spend tool calls looking for DATA.md in ~/.levi/PROJECTS when the user explicitly told you where the project is.
+- Registered projects: Only look in ~/.levi/PROJECTS/<name>/DATA.md if the project was previously registered with set_project AND no location was specified in the user's message.
 - New distinct thing the user is building: ls -R ~/.levi/PROJECTS first and reuse any similar existing name; if none, set_project with a short name (don't ask, don't create the folder by hand). Ambiguous whether it's a project: ask in one short line first. After set_project, file project facts under PROJECTS/<name>/. When you finish building or changing something, save 2-4 project facts with remember(project): what it is, where it lives, the stack, and how to run it.
 - set_project only makes the memory folder. Before writing code, if the code location isn't known, ask once (home, current dir, other path). Use that exact absolute path everywhere and record it as Location in DATA.md. In bash use $HOME/... or an unquoted ~/... (a quoted ~ does not expand); read_file, write_file, and edit_file accept ~ directly. Never guess /root or /home/user.
-- Request about an existing project (change, feature, "is it done"): in order, (1) read DATA.md, (2) get_tasks, (3) ls the Location, (4) read the main code. Never judge from folder names alone.
+- Request about an existing project (change, feature, "is it done"): if the path is known, inspect the code directly. Never judge from folder names alone.
 - If it genuinely doesn't fit what's built (e.g. dark mode for a CLI), use ask to name the specific mismatch you found, with specific options. Never a vague "can you rephrase". After the user confirms a pivot, delete_cluster the stale cluster and add_task_cluster for the new direction.`,
   tasks: `TASKS (TASK.md clusters)
 - New multi-step work not already covered: add_task_cluster with a short title and concrete, completable subtasks. No vague wrap-up items (verify, test, report status); verify as part of the real task. No cluster for simple one-offs.
