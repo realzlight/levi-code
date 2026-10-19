@@ -60,6 +60,34 @@ function compactSupersededReads(messages, writtenPath) {
 // Strips ~400 tokens of unused tool schemas per step.
 const CODING_ONLY_NAMES = new Set(['bash', 'read_file', 'write_file', 'edit_file', 'list_dir', 'find', 'read_lines', 'grep_search', 'ask']);
 
+// Generate a brief, human-readable narration from a tool call when the model
+// doesn't provide its own text alongside tool_calls (common with Gemini).
+function synthNarration(calls) {
+  if (!calls?.length) return null;
+  const parts = calls.map(c => {
+    const p = c.args?.path || c.args?.file || '';
+    const base = p ? path.basename(p) : '';
+    switch (c.name) {
+      case 'read_file': return `reading ${base || 'a file'}`;
+      case 'write_file': return `writing ${base || 'a file'}`;
+      case 'edit_file': return `editing ${base || 'a file'}`;
+      case 'bash': return `running \`${String(c.args?.command || '').slice(0, 40)}\``;
+      case 'list_dir': return `listing ${base || c.args?.path || 'directory'}`;
+      case 'find': return `searching for ${c.args?.query || 'files'}`;
+      case 'grep_search': return `searching for "${String(c.args?.query || '').slice(0, 30)}"`;
+      case 'read_lines': return `reading lines from ${base || 'a file'}`;
+      case 'google_search': return `searching the web`;
+      case 'fetch': return `fetching a URL`;
+      case 'remember': return `saving a note`;
+      case 'retrieve': return `looking up memory`;
+      case 'spawn_subagent': return `spawning sub-agent "${c.args?.role || 'worker'}"`;
+      case 'message_subagent': return `messaging sub-agent`;
+      default: return `calling ${c.name}`;
+    }
+  });
+  return parts.join(', ') + '...';
+}
+
 const TRIVIAL = new Set(['bash', 'read_file', 'write_file', 'edit_file', 'find', 'list_dir', 'read_lines', 'grep_search']);
 
 const BASE_TOOLS = [
@@ -216,6 +244,12 @@ async function runLite(routed, sessionId, onStep, system, { signal } = {}) {
       return !out || out.includes('[[AGENT]]') ? null : out;
     }
     messages.push(message);
+
+    // Emit narration text when the model writes prose alongside tool calls.
+    // If the model didn't narrate (common with Gemini), generate one from the tool calls.
+    if (text && text.trim().length > 12) onStep?.('narrate', text.trim());
+    else { const synth = synthNarration(toolCalls); if (synth) onStep?.('narrate', synth); }
+
     const askCall = toolCalls.find((c) => c.name === 'ask');
     if (askCall) {
       if (signal?.aborted) return '[Interrupted]';
@@ -504,8 +538,9 @@ export async function runAgent(userMessage, { onStep, maxSteps, forceAgent, sign
     messages.push(message);
 
     // Emit narration text when the model writes prose alongside tool calls.
-    // Only emit if meaningful and not every step — skip pure whitespace and very short fragments.
+    // If the model didn't narrate (common with Gemini), generate one from the tool calls.
     if (text && text.trim().length > 12) onStep?.('narrate', text.trim());
+    else { const synth = synthNarration(toolCalls); if (synth) onStep?.('narrate', synth); }
 
     const askCall = toolCalls.find((c) => c.name === 'ask');
     if (askCall) {
