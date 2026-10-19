@@ -1455,7 +1455,7 @@ function App({ mascot }) {
                 sessions: form.ended.map(e => ({ id: e.dirName, title: e.title || ('SESSION-' + e.id), summary: (e.endedAt ? 'ended ' + e.endedAt.slice(0,10) + ' · ' : '') + e.summary })),
                 current: null,
                 label: '✦ RESTORE SESSION',
-                onPick: (dirName) => {
+                onPick: async (dirName) => {
                   const newId = restoreSession(dirName);
                   if (!newId) { setForm(null); return; }
                   const s = getSummary(newId);
@@ -1463,6 +1463,11 @@ function App({ mascot }) {
                   setMessages(s ? [{ role: 'agent', text: '[recap] ' + s }, ...msgs] : msgs);
                   setScrollOffset(0);
                   setForm(null);
+                  try {
+                    const { rebuildIndex } = await import('../agent/retrieval.js');
+                    const res = await rebuildIndex();
+                    setCommandOutput({ kind: 'text', text: `Restored to SESSION-${newId}. ${res}` });
+                  } catch {}
                 },
                 onCancel: () => setForm(null)
               })

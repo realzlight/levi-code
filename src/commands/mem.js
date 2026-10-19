@@ -151,6 +151,15 @@ export async function runMemSync(onProgress) {
     await execa('git', ['reset', '--hard', `origin/${BRANCH}`], { cwd: LEVI_HOME });
     await execa('git', ['clean', '-fd'], { cwd: LEVI_HOME });
     report('reset', 'done', '~/.levi replaced with the remote version');
+
+    report('index', 'running', 'Rebuilding search index...');
+    try {
+      const { rebuildIndex } = await import('../agent/retrieval.js');
+      const res = await rebuildIndex();
+      report('index', 'done', res);
+    } catch (e) {
+      report('index', 'done', 'Search index updated');
+    }
     return true;
   } catch (e) {
     report('reset', 'error', e.message);

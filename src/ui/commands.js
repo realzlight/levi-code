@@ -605,11 +605,21 @@ defineCommand({
 
 defineCommand({
   name: 'alive',
-  description: 'Restore an ended session back to active',
-  run: async (_, ctx) => {
+  description: 'Restore an ended session back to active (and rebuild search index)',
+  args: [{ name: 'id', required: false, description: 'Optional session ID to restore' }],
+  run: async ({ id: targetId }, ctx) => {
     const session = await import('../agent/session.js');
+    const { rebuildIndex } = await import('../agent/retrieval.js');
     const ended = session.listEndedSessions();
     if (!ended.length) return ctx.print('No ended sessions found in ~/.levi/ENDED-BUFFER.');
+    if (targetId) {
+      const match = ended.find((e) => String(e.id) === String(targetId) || e.dirName === targetId);
+      if (!match) return ctx.print(`Session "${targetId}" not found in ~/.levi/ENDED-BUFFER.`);
+      const newId = session.restoreSession(match.dirName);
+      if (!newId) return ctx.print(`Failed to restore session "${targetId}".`);
+      const res = await rebuildIndex();
+      return ctx.print(`Restored to SESSION-${newId}. ${res}`);
+    }
     ctx.openForm({ mode: 'alive', ended });
   }
 });

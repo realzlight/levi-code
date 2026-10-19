@@ -17,7 +17,8 @@ const PUSH_STEPS = [
 const SYNC_STEPS = [
   { id: 'check', label: 'Checking remote' },
   { id: 'fetch', label: 'Fetching from GitHub' },
-  { id: 'reset', label: 'Replacing local files' }
+  { id: 'reset', label: 'Replacing local files' },
+  { id: 'index', label: 'Rebuilding search index' }
 ];
 
 function Spinner({ frame }) {

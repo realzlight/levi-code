@@ -315,5 +315,6 @@ export function restoreSession(dirName) {
   const config = readConfig();
   config.currentSession = newId;
   writeConfig(config);
+  import('./retrieval.js').then((m) => m.rebuildIndex()).catch(() => {});
   return newId;
 }
