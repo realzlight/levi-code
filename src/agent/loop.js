@@ -10,6 +10,7 @@ import { startTurn, recordUsage } from './usage.js';
 import { route } from './router.js';
 import { readMemoryDigest } from './memory.js';
 import { CONVO_PROMPT, LIGHT_PROMPT, agentPrompt, buildContext, litePrompt, loopPrompt } from './prompts.js';
+import { getEffort } from './effort.js';
 
 const TRIVIAL = new Set(['bash', 'read_file', 'write_file', 'edit_file', 'find', 'list_dir', 'read_lines', 'grep_search']);
 
@@ -119,7 +120,9 @@ async function runLite(routed, sessionId, onStep, system, { signal } = {}) {
     if (!expanded) tools = [...tools, MORE_TOOL];
     return webCalls >= WEB_BUDGET ? tools.filter((t) => !WEB_NAMES.includes(t.function.name)) : tools;
   };
-  for (let step = 0; step < 12; step++) {
+  const effort = getEffort();
+  const maxLiteSteps = effort?.maxLiteSteps || 12;
+  for (let step = 0; step < maxLiteSteps; step++) {
     if (signal?.aborted) return '[Interrupted]';
     if (liteTokens > LITE_TOKEN_BUDGET) return 'Stopped: light-mode token budget (' + LITE_TOKEN_BUDGET + ') reached for this message. Send another message to continue from here.';
     const liteResults = messages.map((m, i) => (m.role === 'tool' ? i : -1)).filter((i) => i >= 0);
@@ -247,9 +250,10 @@ export async function runAgent(userMessage, { onStep, maxSteps, forceAgent, sign
   if (sessionId) {
     pendingTasks = getTasks(sessionId).reduce((n, c) => n + (c.status === 'completed' ? 0 : c.tasks.filter((t) => !t.done).length), 0);
   }
-  // a cap, not spend: agent mode is real work, so keep a high ceiling
-  const effectiveMaxSteps = maxSteps || Math.max(pendingTasks * 4 + 10, 30);
-  let tokenBudget = 50000 + pendingTasks * 10000;
+  const effort = getEffort();
+  // a cap, not spend: agent mode is real work, scaled by active effort
+  const effectiveMaxSteps = maxSteps || Math.max(pendingTasks * 4 + 10, effort?.maxAgentSteps || 30);
+  let tokenBudget = Math.floor((50000 + pendingTasks * 10000) * (effort?.tokenBudgetMult || 1.0));
   const system = buildSystem();
   const loopSystem = buildLoopSystem();
   const SUB = ['spawn_subagent', 'list_subagents', 'message_subagent'];

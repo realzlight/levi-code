@@ -709,3 +709,26 @@ defineCommand({
     ctx.print(`Skill "${res.name}" enabled. It will be sent to the model context.`);
   }
 });
+
+defineCommand({
+  name: 'effort',
+  description: 'Select reasoning effort: Eternal (low), Empyrean (medium), Abyssal (high), Seraphic (max)',
+  args: [{ name: 'level', required: false, description: 'Optional effort name or level' }],
+  run: async ({ level }, ctx) => {
+    const { getEffort, setEffort, EFFORT_LIST } = await import('../agent/effort.js');
+    if (level) {
+      try {
+        const set = setEffort(level);
+        return ctx.print(`Effort set to ${set.label} — ${set.description}`);
+      } catch (e) {
+        return ctx.print(`Error: ${e.message}`);
+      }
+    }
+    if (ctx.openForm) {
+      return ctx.openForm({ mode: 'effort' });
+    }
+    const cur = getEffort();
+    ctx.print(`Current effort: ${cur.label}\n\nAvailable effort levels:\n` + EFFORT_LIST.map((e) => `• ${e.label} : ${e.description}`).join('\n'));
+  }
+});
+

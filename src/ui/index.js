@@ -9,6 +9,7 @@ import { getCommands } from './commands.js';
 import Footer, { activeModel } from './Footer.js';
 import ModelForm from './ModelForm.js';
 import SessionPicker from './SessionPicker.js';
+import EffortPicker from './EffortPicker.js';
 import AskPrompt from './AskPrompt.js';
 import MemSync from './MemSync.js';
 import Confirm from './Confirm.js';
@@ -22,6 +23,7 @@ import { generateTitle } from '../agent/title.js';
 import { runAgent } from '../agent/loop.js';
 import { maybeCompact } from '../agent/compact.js';
 import { getTasks } from '../agent/tasks.js';
+import { getEffort, setEffort } from '../agent/effort.js';
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import readline from 'node:readline/promises';
@@ -94,26 +96,26 @@ function Rule() {
 
 const GREETING = getGreeting();
 
-function sessionLine() {
+function sessionLine(effortName = 'Empyrean') {
   const id = currentSessionId();
-  if (!id) return 'Abyssal \u2022 /resume';
+  if (!id) return `${effortName} \u2022 /resume`;
   const title = getTitle(id);
-  const raw = `Abyssal${title ? ' \u2014 ' + title : ''}`;
+  const raw = `${effortName}${title ? ' \u2014 ' + title : ''}`;
   return raw.length > 36 ? raw.slice(0, 35) + '…' : raw;
 }
 
-function Header({ mascot, compact }) {
+function Header({ mascot, compact, effortName }) {
   if (compact) {
     return h(Box, { flexDirection: 'row', justifyContent: 'space-between', width: '100%' },
       h(Text, { color: 'white', bold: true }, 'Levi Code ', h(Text, { color: GRAY }, `${v}`)),
-      h(Text, { color: GRAY }, sessionLine())
+      h(Text, { color: GRAY }, sessionLine(effortName))
     );
   }
   return h(Box, { alignItems: 'center' },
     mascot ? h(Text, null, mascot) : null,
     h(Box, { flexDirection: 'column', marginLeft: mascot ? 3 : 0 },
       h(Text, { color: 'white', bold: true }, 'Levi Code ', h(Text, { color: GRAY }, `${v}`)),
-      h(Text, { color: GRAY }, sessionLine()),
+      h(Text, { color: GRAY }, sessionLine(effortName)),
       h(Text, { color: '#c4c4c4' }, GREETING)
     )
   );
@@ -1001,6 +1003,7 @@ function App({ mascot }) {
   const animTimerRef = React.useRef(null);
   const abortControllerRef = React.useRef(null);
   const [sel, setSel] = useState(0);
+  const [effort, setEffortState] = useState(() => getEffort());
   const [form, setForm] = useState(null);
   const [commandOutput, setCommandOutput] = useState(null);
   const [closed, setClosed] = useState(false);
@@ -1210,7 +1213,7 @@ function App({ mascot }) {
     : 0;
 
   const formHeight = form
-    ? (form.mode === 'compact' ? 9 : (form.mode.startsWith('mem-') ? 7 : 4))
+    ? (form.mode === 'compact' ? 9 : (form.mode === 'effort' ? 8 : (form.mode.startsWith('mem-') ? 7 : 4)))
     : 0;
   const bottomAreaHeight = form ? formHeight : inputAreaHeight;
   const fixedHeight = headerHeight + headerMargin + bottomAreaHeight + footerHeight + (paletteOn ? slashMenuHeight(matches.length) : 0) + commandOutputHeight;
@@ -1370,7 +1373,7 @@ function App({ mascot }) {
     { flexDirection: 'column', width: terminalWidth, height: terminalHeight },
 
     h(Box, { flexShrink: 0, flexDirection: 'column', marginBottom: headerMargin },
-      h(Header, { mascot: isCompact ? null : mascot, compact: isCompact })
+      h(Header, { mascot: isCompact ? null : mascot, compact: isCompact, effortName: effort.name })
     ),
 
     h(Box, {
@@ -1460,6 +1463,17 @@ function App({ mascot }) {
                   setMessages(s ? [{ role: 'agent', text: '[recap] ' + s }, ...msgs] : msgs);
                   setScrollOffset(0);
                   setForm(null);
+                },
+                onCancel: () => setForm(null)
+              })
+            : form.mode === 'effort'
+            ? h(EffortPicker, {
+                current: effort,
+                onPick: (picked) => {
+                  setEffort(picked.id);
+                  setEffortState(picked);
+                  setForm(null);
+                  setCommandOutput({ kind: 'text', text: `Effort set to ${picked.label} — ${picked.description}` });
                 },
                 onCancel: () => setForm(null)
               })

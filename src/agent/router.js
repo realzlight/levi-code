@@ -3,6 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { chat } from './client.js';
 import { recordUsage } from './usage.js';
+import { getEffort } from './effort.js';
 
 function getMcpNames() {
   try {
@@ -97,6 +98,13 @@ export async function route(query, { recentUser = [], forceAgent = false, sessio
   else if (/^(remember|note that|from now on|btw|fyi)\b|\bi (always|never|usually|prefer|like|love|hate|enjoy|use|play|work (as|at|on)|live in) |\bmy (name is|favou?rite|setup is)/i.test(q)) r = { route: 'conversation', tools: 'memory', mcp: false, insight: 'durable fact or preference: save with remember' };
   else if (TASK_VIEW.test(q)) r = { route: 'light', tools: 'tasks', mcp: false, insight: 'show or update task clusters' };
   else r = await classify(q, recent, sessionId, signal);
+
+  const effort = getEffort();
+  if (effort.id === 'eternal' && r.route === 'agent') {
+    // Eternal (low) uses light mode with low effort or conversational mode
+    r.route = 'light';
+    r.insight = (r.insight ? r.insight + ' · ' : '') + 'eternal: light mode';
+  }
 
   lastRoute = r.route;
   return { route: r.route, tools: r.tools || 'all', mcp: r.mcp || false, query: q, recentMessages: recent, insight: r.insight };
