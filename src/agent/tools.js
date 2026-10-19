@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { spawn } from 'node:child_process';
 import { execa } from 'execa';
 import { currentSessionId, setProject, searchSessions, readSessionOverview, isSoloOnly, getProject } from './session.js';
 import { retrieve } from './retrieval.js';
@@ -84,10 +85,13 @@ export const toolDefs = [
     type: 'function',
     function: {
       name: 'bash',
-      description: 'Run a shell command.',
+      description: 'Run a shell command. Set background: true for servers, watchers, dev servers, or long background jobs (e.g. python3 -m http.server, npm start, vite) to run them detached without blocking.',
       parameters: {
         type: 'object',
-        properties: { command: { type: 'string' } },
+        properties: {
+          command: { type: 'string', description: 'The shell command to run' },
+          background: { type: 'boolean', description: 'Set true to run in background (for servers, watchers, long processes). Returns PID and initial output immediately without blocking.' }
+        },
         required: ['command']
       }
     }
@@ -864,14 +868,78 @@ if (name === 'mcp_search') {
     }
 
     if (name === 'bash') {
-      const r = await execa(args.command, {
+      const rawCmd = String(args?.command || '').trim();
+      const isExplicitBg = Boolean(args?.background) || rawCmd.endsWith('&');
+      const isServer = /(?:python\d*\s+-m\s+(?:http\.server|SimpleHTTPServer)|\b(?:vite|live-server|http-server|caddy run|nginx|flask run|uvicorn|fastapi run|gunicorn)\b|\b(?:npm|pnpm|yarn|bun)\s+(?:start|run dev|run serve|run start)\b|\bnode\s+[\w\-./]*(?:server|app|index|main|listen)\.js\b|\bpython\d*\s+[\w\-./]*(?:server|app|main)\.py\b|\bphp\s+-S\b|\bnpx\s+(?:serve|http-server|live-server)\b)/i.test(rawCmd);
+
+      if (isExplicitBg || isServer) {
+        const logDir = path.join(os.homedir(), '.levi', 'logs');
+        fs.mkdirSync(logDir, { recursive: true });
+        const cleanCmd = rawCmd.replace(/\s*&\s*$/, '');
+        const ts = Date.now();
+        const logFile = path.join(logDir, `proc_${ts}.log`);
+        const outFd = fs.openSync(logFile, 'a');
+
+        const child = spawn(cleanCmd, {
+          shell: true,
+          detached: true,
+          stdio: ['ignore', outFd, outFd],
+          env: {
+            ...process.env,
+            CI: 'true',
+            DEBIAN_FRONTEND: 'noninteractive',
+            GIT_TERMINAL_PROMPT: '0',
+            PYTHONUNBUFFERED: '1',
+            NODE_ENV: process.env.NODE_ENV || 'development'
+          }
+        });
+
+        child.unref();
+        fs.closeSync(outFd);
+
+        // Wait 1200ms to observe startup banner or fast failure
+        await new Promise((resolve) => setTimeout(resolve, 1200));
+
+        let output = '';
+        try {
+          if (fs.existsSync(logFile)) {
+            output = fs.readFileSync(logFile, 'utf-8').trim();
+          }
+        } catch {}
+
+        let isDead = false;
+        try {
+          process.kill(child.pid, 0);
+        } catch {
+          isDead = true;
+        }
+
+        if (isDead) {
+          return `[Process started with PID ${child.pid} but exited immediately with error]\n${output ? 'Output:\n' + output + '\n' : ''}Log: ${logFile}`;
+        }
+
+        try {
+          const procsFile = path.join(os.homedir(), '.levi', 'processes.json');
+          let procs = [];
+          try { procs = JSON.parse(fs.readFileSync(procsFile, 'utf-8')); } catch {}
+          procs = procs.filter((p) => {
+            try { process.kill(p.pid, 0); return true; } catch { return false; }
+          });
+          procs.push({ pid: child.pid, cmd: cleanCmd, at: new Date().toISOString(), log: logFile });
+          fs.writeFileSync(procsFile, JSON.stringify(procs, null, 2));
+        } catch {}
+
+        return `[Process running in background with PID ${child.pid}]\n${output ? 'Initial output:\n' + output + '\n' : ''}Log file: ${logFile}\n(To stop later, run bash("kill -9 -${child.pid}") or bash("kill -9 ${child.pid}"))`;
+      }
+
+      const r = await execa(rawCmd, {
         shell: true,
         reject: false,
         all: true,
         timeout: 60_000,
-        env: { ...process.env, CI: 'true', DEBIAN_FRONTEND: 'noninteractive', GIT_TERMINAL_PROMPT: '0' }
+        env: { ...process.env, CI: 'true', DEBIAN_FRONTEND: 'noninteractive', GIT_TERMINAL_PROMPT: '0', PYTHONUNBUFFERED: '1' }
       });
-      if (r.timedOut) return `Error: command timed out after 60 seconds. The command was killed. If the command needs more time, break it into smaller steps or run it in the background with &.`;
+      if (r.timedOut) return `Error: command timed out after 60 seconds. The command was killed. For servers, watchers, or long-running commands, set background: true or append & to run in background.`;
       return r.all || `(exit ${r.exitCode}, no output)`;
     }
 
