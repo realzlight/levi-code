@@ -12,6 +12,54 @@ import { readMemoryDigest } from './memory.js';
 import { CONVO_PROMPT, LIGHT_PROMPT, agentPrompt, buildContext, litePrompt, loopPrompt } from './prompts.js';
 import { getEffort } from './effort.js';
 
+// Strip ANSI escape codes, carriage returns, progress bars, and collapse whitespace from CLI output
+function cleanCliOutput(raw) {
+  if (typeof raw !== 'string' || raw.length < 80) return raw;
+  return raw
+    .replace(/\x1B\[[0-9;]*[a-zA-Z]/g, '')   // ANSI escape sequences
+    .replace(/\x1B\][^\x07]*\x07/g, '')       // OSC sequences
+    .replace(/\r+/g, '')                       // carriage returns
+    .replace(/^.*\[([=#>]+ *| *[=#>]+)\].*$/gm, '')  // progress bars like [=====>  ]
+    .replace(/\n{3,}/g, '\n\n')                // collapse 3+ newlines to 2
+    .trim();
+}
+
+// After a write_file/edit_file, collapse any earlier read_file result for the same path
+// to a short summary. Saves 2,000–5,000 tokens on multi-step turns.
+function compactSupersededReads(messages, writtenPath) {
+  if (!writtenPath) return;
+  for (let i = 0; i < messages.length; i++) {
+    const m = messages[i];
+    // Find assistant messages with tool_calls that read this path
+    if (m.role === 'assistant' && m.tool_calls) {
+      for (const tc of m.tool_calls) {
+        const fn = tc.function?.name || tc.name;
+        if (fn === 'read_file') {
+          const p = tc.function?.arguments ? JSON.parse(tc.function.arguments || '{}').path : tc.args?.path;
+          if (p && (p === writtenPath || p.endsWith('/' + writtenPath.split('/').pop()))) {
+            // Find the matching tool result message and compact it
+            const toolId = tc.id;
+            for (let j = i + 1; j < messages.length; j++) {
+              if (messages[j].role === 'tool' && messages[j].tool_call_id === toolId) {
+                const content = String(messages[j].content);
+                if (content.length > 200) {
+                  const lines = content.split('\n').length;
+                  messages[j] = { ...messages[j], content: `[read ${writtenPath} (${lines} lines) — now superseded by edit, content omitted to save tokens]` };
+                }
+                break;
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+// Minimal tool set for pure coding steps (step > 0 in coding loops).
+// Strips ~400 tokens of unused tool schemas per step.
+const CODING_ONLY_NAMES = new Set(['bash', 'read_file', 'write_file', 'edit_file', 'list_dir', 'find', 'read_lines', 'grep_search', 'ask']);
+
 const TRIVIAL = new Set(['bash', 'read_file', 'write_file', 'edit_file', 'find', 'list_dir', 'read_lines', 'grep_search']);
 
 const BASE_TOOLS = [
@@ -112,8 +160,13 @@ async function runLite(routed, sessionId, onStep, system, { signal } = {}) {
   let liteTokens = 0;
   let expanded = false;
   const mcpToolNames = routed.mcp ? ['mcp_search', 'mcp_list'] : [];
-  const pickLite = () => {
+  const pickLite = (step, hasCodingContext) => {
     let names = LITE_GROUPS[routed.tools] || LITE_GROUPS.all;
+    // JIT tool stripping: after step 0, if we've been doing file/shell work,
+    // strip to bare essentials (~400 tokens saved per step)
+    if (step > 0 && hasCodingContext && ['shell', 'all'].includes(routed.tools) && !routed.mcp && !expanded) {
+      names = names.filter(n => CODING_ONLY_NAMES.has(n));
+    }
     if (expanded) names = [...new Set([...names, ...PLAYWRIGHT_WEB_TOOLS, ...DESKTOP_TOOLS])];
     if (routed.mcp) names = [...new Set([...names, ...mcpToolNames])];
     let tools = LITE_TOOLS.filter((t) => names.includes(t.function.name));
@@ -139,7 +192,8 @@ async function runLite(routed, sessionId, onStep, system, { signal } = {}) {
     let text = '', toolCalls = [], message = {}, usage = {};
       try {
         const activeSystem = step === 0 ? litePrompt(system, expanded ? 'all' : routed.tools) : buildLoopSystem();
-        const res = await chatWithTools(messages, { system: activeSystem, tools: pickLite(), maxTokens: 8192, signal });
+        const hasCodingContext = messages.some(m => m.role === 'tool');
+        const res = await chatWithTools(messages, { system: activeSystem, tools: pickLite(step, hasCodingContext), maxTokens: 8192, signal });
         text = res.text;
         toolCalls = res.toolCalls;
         message = res.message;
@@ -187,8 +241,13 @@ async function runLite(routed, sessionId, onStep, system, { signal } = {}) {
       }
       if (WEB_NAMES.includes(call.name)) webCalls++;
       result = String(result);
+      if (call.name === 'bash') result = cleanCliOutput(result);
       const cap = call.name === 'read_file' ? 65000 : call.name === 'bash' ? 12000 : RESULT_CAP;
       if (result.length > cap) result = result.slice(0, cap) + '\n...[output shortened to save tokens; the file is intact. use grep -n or sed -n to read other parts]';
+      // Compact earlier read_file results for paths we just wrote/edited
+      if ((call.name === 'write_file' || call.name === 'edit_file') && call.args?.path) {
+        compactSupersededReads(messages, call.args.path);
+      }
       onStep?.('tool_result', { call, result });
       messages.push({ role: 'tool', tool_call_id: call.id, content: String(result) });
       if (signal?.aborted) return '[Interrupted]';
@@ -477,6 +536,11 @@ export async function runAgent(userMessage, { onStep, maxSteps, forceAgent, sign
       }
       const lc = call.name === 'list_tools' ? [null, String(call.args?.category || '').toLowerCase()] : call.name.match(/^list_(\w+)_commands$/);
       if (lc) for (const n of CATEGORIES[lc[1] === 'task' ? 'tasks' : lc[1]] || []) unlocked.add(n);
+      if (call.name === 'bash') result = cleanCliOutput(String(result));
+      // Compact earlier read_file results for paths we just wrote/edited
+      if ((call.name === 'write_file' || call.name === 'edit_file') && call.args?.path) {
+        compactSupersededReads(messages, call.args.path);
+      }
       onStep?.('tool_result', { call, result });
       messages.push({ role: 'tool', tool_call_id: call.id, content: String(result) });
       if (signal?.aborted) return '[Interrupted]';

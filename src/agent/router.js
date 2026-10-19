@@ -5,6 +5,28 @@ import { chat } from './client.js';
 import { recordUsage } from './usage.js';
 import { getEffort } from './effort.js';
 
+// Generate a compact directory tree preview (max ~50 tokens) to skip find/list_dir calls
+function dirPreview(dirPath) {
+  try {
+    const resolved = dirPath.startsWith('~') ? path.join(os.homedir(), dirPath.slice(1)) : path.resolve(dirPath);
+    const stat = fs.statSync(resolved);
+    if (!stat.isDirectory()) return null;
+    const IGNORE = new Set(['.git', 'node_modules', '.cache', '.npm', '.next', 'dist', 'build', '.levi']);
+    const entries = fs.readdirSync(resolved, { withFileTypes: true })
+      .filter(e => !IGNORE.has(e.name) && !e.name.startsWith('.'))
+      .slice(0, 20);
+    if (!entries.length) return `[${path.basename(resolved)}/ is empty]`;
+    const items = entries.map(e => {
+      if (e.isDirectory()) return `${e.name}/`;
+      try {
+        const s = fs.statSync(path.join(resolved, e.name)).size;
+        const sz = s < 1024 ? `${s} B` : s < 1048576 ? `${(s/1024).toFixed(1)} KB` : `${(s/1048576).toFixed(1)} MB`;
+        return `${e.name} (${sz})`;
+      } catch { return e.name; }
+    });
+    return `[${path.basename(resolved)}/ contains: ${items.join(', ')}]`;
+  } catch { return null; }
+}
 function getMcpNames() {
   try {
     const c = JSON.parse(fs.readFileSync(path.join(os.homedir(), '.levi', 'mcp.json'), 'utf-8'));
@@ -97,6 +119,12 @@ export async function route(query, { recentUser = [], forceAgent = false, sessio
   else if (/^git\s+(status|diff|log|branch|checkout|add|commit|pull|push|stash)\b/i.test(q)) r = { route: 'light', tools: 'shell', mcp: false, insight: 'fast-path: git command' };
   else if (/^(ls|pwd|cat|cd|mkdir|touch|grep|find|rm|mv|cp|which|where|head|tail|sed|awk|echo|curl)\b/i.test(q)) r = { route: 'light', tools: 'shell', mcp: false, insight: 'fast-path: shell utility' };
   else if (/^(read|view|show|check|cat|inspect|open)\s+([a-zA-Z0-9_\-./~]+\.[a-zA-Z0-9]+)$/i.test(q)) r = { route: 'light', tools: 'shell', mcp: false, insight: 'fast-path: read single file' };
+  else if (/^(go to|open|check|show|cd|look at|work on)\s+([~/a-zA-Z0-9_\-. ]+)$/i.test(q)) {
+    const m = q.match(/^(?:go to|open|check|show|cd|look at|work on)\s+(.+)$/i);
+    const target = m ? m[1].trim() : q;
+    const preview = dirPreview(target);
+    if (preview) r = { route: 'light', tools: 'shell', mcp: false, insight: 'fast-path: directory entry — ' + preview };
+  }
   else if (/^(search|google|lookup)\s+(about|for|how|what|why|who)\b/i.test(q)) r = { route: 'light', tools: 'web', mcp: false, insight: 'fast-path: web lookup' };
   else if (FILE_HINT.test(q)) r = { route: 'agent', insight: 'mentions code or file paths' };
   else if (/^(remember|note that|from now on|btw|fyi)\b|\bi (always|never|usually|prefer|like|love|hate|enjoy|use|play|work (as|at|on)|live in) |\bmy (name is|favou?rite|setup is)/i.test(q)) r = { route: 'conversation', tools: 'memory', mcp: false, insight: 'durable fact or preference: save with remember' };
@@ -108,6 +136,15 @@ export async function route(query, { recentUser = [], forceAgent = false, sessio
     // Eternal (low) uses light mode with low effort or conversational mode
     r.route = 'light';
     r.insight = (r.insight ? r.insight + ' · ' : '') + 'eternal: light mode';
+  }
+
+  // Auto-attach directory preview when query mentions a recognizable path
+  if (!r.insight?.includes('directory entry') && !r.insight?.includes('fast-path')) {
+    const pathMatch = q.match(/(?:^|\s)(~\/[\w\-./]+|\.\/[\w\-./]+|\/[\w\-./]+)/i);
+    if (pathMatch) {
+      const preview = dirPreview(pathMatch[1]);
+      if (preview) r.insight = (r.insight || '') + ' · ' + preview;
+    }
   }
 
   lastRoute = r.route;
