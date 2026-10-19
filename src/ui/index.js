@@ -133,7 +133,7 @@ function Message({ role, text, tool, arg, result, status, todos, width }) {
   }
   if (role === 'narrate') {
     return h(Box, { marginBottom: 1, paddingLeft: 2 },
-      h(Text, { color: '#c8c8c8' }, text)
+      h(Text, { color: 'white' }, text || ' ')
     );
   }
 
