@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
+import { getEmbedding, cosineSimilarity, vectorToBuffer, bufferToVector } from './embedding.js';
 
 const HOME = path.join(os.homedir(), '.levi');
 const DB_PATH = path.join(HOME, 'INDEX.db');
@@ -21,6 +22,7 @@ async function openDb() {
   db.exec(`
     CREATE TABLE IF NOT EXISTS files (path TEXT PRIMARY KEY, sig TEXT, kind TEXT);
     CREATE VIRTUAL TABLE IF NOT EXISTS chunks USING fts5(text, path UNINDEXED, kind UNINDEXED, session UNINDEXED, role UNINDEXED, tokenize = 'porter unicode61');
+    CREATE TABLE IF NOT EXISTS vectors (path TEXT, chunk_idx INTEGER, vector BLOB, PRIMARY KEY (path, chunk_idx));
   `);
   return db;
 }
@@ -51,7 +53,7 @@ function listSources() {
     for (const d of dirs) {
       const m = /^SESSION-(\d+)$/.exec(d);
       if (!m) continue;
-      for (const f of ['BUFFER.MD', 'TITLE.TXT', 'PROJECT.TXT']) {
+      for (const f of ['BUFFER.MD', 'TITLE.TXT', 'PROJECT.TXT', 'TASK.md']) {
         const p = path.join(root, d, f);
         if (fs.existsSync(p)) out.push({ path: p, kind: 'session', session: m[1] });
       }
@@ -182,6 +184,27 @@ export async function retrieve({ query, session, path: file, limit } = {}) {
     };
     let rows = run('and');
     if (!rows.length) rows = run('or');
+    if (!rows.length && query) {
+      try {
+        const qVec = await getEmbedding(query);
+        if (qVec) {
+          const candSql = "SELECT text, path, kind, session, role FROM chunks WHERE kind IN ('memory', 'project') OR (kind = 'session' AND role = 'summary') LIMIT 60";
+          const cands = db.prepare(candSql).all();
+          const scored = [];
+          for (const cand of cands) {
+            const candVec = await getEmbedding(cand.text);
+            if (candVec) {
+              const sim = cosineSimilarity(qVec, candVec);
+              if (sim > 0.32) {
+                scored.push({ ...cand, s: cand.text.slice(0, 180), sim });
+              }
+            }
+          }
+          scored.sort((a, b) => b.sim - a.sim);
+          rows = scored.slice(0, lim);
+        }
+      } catch {}
+    }
     if (!rows.length) return 'No matches. Try different keywords.';
     const home = os.homedir();
     const lines = [];

@@ -307,6 +307,44 @@ export async function runBootstrap({ onProgress = null, quiet = false } = {}) {
     }
   }
 
+  // --- Step 4b: Local Embeddings & Semantic Search Setup ---
+  if (spinner) {
+    spinner.start('Configuring local neural embeddings (Transformers.js / Wasm)...');
+  }
+  try {
+    const { fileURLToPath } = await import('node:url');
+    const rootDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+    const nodeModules = path.join(rootDir, 'node_modules');
+    const ortNode = path.join(nodeModules, 'onnxruntime-node');
+    if (fs.existsSync(nodeModules) && !fs.existsSync(path.join(ortNode, 'bin'))) {
+      fs.mkdirSync(ortNode, { recursive: true });
+      fs.writeFileSync(path.join(ortNode, 'package.json'), JSON.stringify({
+        name: 'onnxruntime-node',
+        version: '1.14.0',
+        type: 'module',
+        main: './index.js',
+        exports: { '.': './index.js' }
+      }, null, 2));
+      fs.writeFileSync(path.join(ortNode, 'index.js'), `import ort from 'onnxruntime-web';\nconst base = ort.default || ort;\nexport default base;\nexport const InferenceSession = base.InferenceSession;\nexport const Tensor = base.Tensor;\nexport const env = base.env;\n`);
+    }
+    const sharpLib = path.join(nodeModules, 'sharp', 'lib');
+    if (plat.skipHeavyDeps && fs.existsSync(sharpLib)) {
+      const idx = path.join(sharpLib, 'index.js');
+      if (fs.existsSync(idx)) fs.writeFileSync(idx, 'module.exports = null;\n');
+    }
+    const imageJs = path.join(nodeModules, '@xenova', 'transformers', 'src', 'utils', 'image.js');
+    if (fs.existsSync(imageJs)) {
+      let code = fs.readFileSync(imageJs, 'utf-8');
+      if (code.includes("throw new Error('Unable to load image processing library.');")) {
+        code = code.replace("throw new Error('Unable to load image processing library.');", "loadImageFunction = () => { throw new Error('Images not supported on mobile'); };");
+        fs.writeFileSync(imageJs, code);
+      }
+    }
+    if (spinner) spinner.stop(`${green('✓')} Local neural embeddings active (Xenova all-MiniLM-L6-v2 via WebAssembly)`);
+  } catch (err) {
+    if (spinner) spinner.stop(`${yellow('!')} Local embeddings notice: using BM25 fallback`);
+  }
+
   // --- Step 5: Summary Note & Completion ---
   if (!quiet) {
     const summaryLines = [

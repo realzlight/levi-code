@@ -94,6 +94,10 @@ export async function route(query, { recentUser = [], forceAgent = false, sessio
   let r;
   if (forceAgent) r = { route: 'agent', insight: 'agent mode forced' };
   else if (GREETING.test(q)) r = { route: 'conversation', tools: 'none', mcp: false, insight: 'greeting or thanks' };
+  else if (/^git\s+(status|diff|log|branch|checkout|add|commit|pull|push|stash)\b/i.test(q)) r = { route: 'light', tools: 'shell', mcp: false, insight: 'fast-path: git command' };
+  else if (/^(ls|pwd|cat|cd|mkdir|touch|grep|find|rm|mv|cp|which|where|head|tail|sed|awk|echo|curl)\b/i.test(q)) r = { route: 'light', tools: 'shell', mcp: false, insight: 'fast-path: shell utility' };
+  else if (/^(read|view|show|check|cat|inspect|open)\s+([a-zA-Z0-9_\-./~]+\.[a-zA-Z0-9]+)$/i.test(q)) r = { route: 'light', tools: 'shell', mcp: false, insight: 'fast-path: read single file' };
+  else if (/^(search|google|lookup)\s+(about|for|how|what|why|who)\b/i.test(q)) r = { route: 'light', tools: 'web', mcp: false, insight: 'fast-path: web lookup' };
   else if (FILE_HINT.test(q)) r = { route: 'agent', insight: 'mentions code or file paths' };
   else if (/^(remember|note that|from now on|btw|fyi)\b|\bi (always|never|usually|prefer|like|love|hate|enjoy|use|play|work (as|at|on)|live in) |\bmy (name is|favou?rite|setup is)/i.test(q)) r = { route: 'conversation', tools: 'memory', mcp: false, insight: 'durable fact or preference: save with remember' };
   else if (TASK_VIEW.test(q)) r = { route: 'light', tools: 'tasks', mcp: false, insight: 'show or update task clusters' };
