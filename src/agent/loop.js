@@ -9,13 +9,14 @@ import { getTasks } from './tasks.js';
 import { startTurn, recordUsage } from './usage.js';
 import { route } from './router.js';
 import { readMemoryDigest } from './memory.js';
-import { CONVO_PROMPT, LIGHT_PROMPT, agentPrompt, buildContext, litePrompt } from './prompts.js';
+import { CONVO_PROMPT, LIGHT_PROMPT, agentPrompt, buildContext, litePrompt, loopPrompt } from './prompts.js';
 
-const LIST_COMMANDS = ['list_commands','list_fs_commands','list_web_commands','list_desktop_commands','list_task_commands','list_memory_commands','list_meta_commands','list_subagent_commands','list_mcp_commands'];
-const TRIVIAL = new Set(['bash','read_file','write_file','edit_file','find','list_dir','read_lines','grep_search',...LIST_COMMANDS]);
+const TRIVIAL = new Set(['bash', 'read_file', 'write_file', 'edit_file', 'find', 'list_dir', 'read_lines', 'grep_search']);
 
-
-const BASE_TOOLS = [...toolDefs.filter((t) => TRIVIAL.has(t.function.name) || ['ask', 'remember', 'list_tools', 'set_project', 'retrieve'].includes(t.function.name)), thinkToolDef(toolDefs[0])];
+const BASE_TOOLS = [
+  ...toolDefs.filter((t) => TRIVIAL.has(t.function.name) || ['ask', 'remember', 'list_tools', 'set_project', 'retrieve', 'set_task_done', 'get_tasks'].includes(t.function.name)),
+  thinkToolDef(toolDefs[0])
+];
 
 function currentUserName() {
   try {
@@ -29,6 +30,10 @@ function currentUserName() {
 
 function buildSystem() {
   return agentPrompt(isSoloOnly());
+}
+
+function buildLoopSystem() {
+  return loopPrompt(isSoloOnly());
 }
 
 const PLAYWRIGHT_WEB_TOOLS = [
@@ -127,7 +132,8 @@ async function runLite(routed, sessionId, onStep, system, { signal } = {}) {
     }
     let text = '', toolCalls = [], message = {}, usage = {};
       try {
-        const res = await chatWithTools(messages, { system: litePrompt(system, expanded ? 'all' : routed.tools), tools: pickLite(), signal });
+        const activeSystem = step === 0 ? litePrompt(system, expanded ? 'all' : routed.tools) : buildLoopSystem();
+        const res = await chatWithTools(messages, { system: activeSystem, tools: pickLite(), signal });
         text = res.text;
         toolCalls = res.toolCalls;
         message = res.message;
@@ -245,6 +251,7 @@ export async function runAgent(userMessage, { onStep, maxSteps, forceAgent, sign
   const effectiveMaxSteps = maxSteps || Math.max(pendingTasks * 4 + 10, 30);
   let tokenBudget = 50000 + pendingTasks * 10000;
   const system = buildSystem();
+  const loopSystem = buildLoopSystem();
   const SUB = ['spawn_subagent', 'list_subagents', 'message_subagent'];
   const unlocked = new Set([
     ...(routed.tools === 'web' || routed.tools === 'all' ? CATEGORIES.web : []),
@@ -317,7 +324,8 @@ export async function runAgent(userMessage, { onStep, maxSteps, forceAgent, sign
     }
     let text = '', toolCalls = [], message = {}, usage = {};
     try {
-      const res = await chatWithTools(messages, { system, tools: pickTools(), signal });
+      const activeSystem = step === 0 ? system : loopSystem;
+      const res = await chatWithTools(messages, { system: activeSystem, tools: pickTools(), signal });
       text = res.text;
       toolCalls = res.toolCalls;
       message = res.message;
