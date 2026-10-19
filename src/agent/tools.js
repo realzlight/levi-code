@@ -864,7 +864,14 @@ if (name === 'mcp_search') {
     }
 
     if (name === 'bash') {
-      const r = await execa(args.command, { shell: true, reject: false, all: true });
+      const r = await execa(args.command, {
+        shell: true,
+        reject: false,
+        all: true,
+        timeout: 60_000,
+        env: { ...process.env, CI: 'true', DEBIAN_FRONTEND: 'noninteractive', GIT_TERMINAL_PROMPT: '0' }
+      });
+      if (r.timedOut) return `Error: command timed out after 60 seconds. The command was killed. If the command needs more time, break it into smaller steps or run it in the background with &.`;
       return r.all || `(exit ${r.exitCode}, no output)`;
     }
 

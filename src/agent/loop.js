@@ -68,7 +68,7 @@ const MORE_TOOL = { type: 'function', function: { name: 'more_tools', descriptio
 const WEB_NAMES = ['google_search', 'fetch'];
 const WEB_BUDGET = 3;
 const RESULT_CAP = 1500;
-const LITE_TOKEN_BUDGET = 45000;
+const LITE_TOKEN_BUDGET = 80000;
 const AGENT_WEB_BUDGET = 6;
 const AGENT_WEB_CAP = 3000;
 const AGENT_OUTPUT_CAP = 8000;
@@ -78,7 +78,7 @@ async function runToolGuarded(call, state) {
   if (!WEB_NAMES.includes(call.name)) {
     const out = await runTool(call.name, call.args);
     const toolCap = call.name === 'read_file' ? 65000 : AGENT_OUTPUT_CAP;
-    if ((OUTPUT_TOOLS.includes(call.name) || !toolDefs.some((t) => t.function.name === call.name)) && s.length > toolCap) return s.slice(0, toolCap) + '\n...[truncated ' + (s.length - toolCap) + ' chars shortened to save tokens; the file is intact. use grep -n, sed -n or wc to read other parts]';
+    if ((OUTPUT_TOOLS.includes(call.name) || !toolDefs.some((t) => t.function.name === call.name)) && out.length > toolCap) return String(out).slice(0, toolCap) + '\n...[truncated ' + (out.length - toolCap) + ' chars shortened to save tokens; the file is intact. use grep -n, sed -n or wc to read other parts]';
     return out;
   }
   if (state.web >= AGENT_WEB_BUDGET) return 'Error: web budget used up for this message. Answer with what you have and say plainly what you could not confirm.';
@@ -149,7 +149,7 @@ async function runLite(routed, sessionId, onStep, system, { signal } = {}) {
         return `API error: ${err.message}. Please try again.`;
       }
     if (signal?.aborted) return '[Interrupted]';
-    liteTokens += (usage && usage.inputTokens) || 0;
+    liteTokens += (usage && (usage.inputTokens + usage.outputTokens)) || 0;
     if (sessionId) recordUsage(sessionId, usage);
     if (!toolCalls.length) {
       const out = (text || '').trim();
@@ -373,7 +373,7 @@ export async function runAgent(userMessage, { onStep, maxSteps, forceAgent, sign
       return errMsg;
     }
     if (signal?.aborted) return '[Interrupted]';
-    webState.tokens += (usage && usage.inputTokens) || 0;
+    webState.tokens += (usage && (usage.inputTokens + usage.outputTokens)) || 0;
     if (webState.tokens >= tokenBudget) webState.over = true;
     if (sessionId) recordUsage(sessionId, usage);
 

@@ -67,12 +67,29 @@ export async function chat(messages, { system, maxTokens = 4096, signal } = {}) 
   let res = null;
   for (let attempt = 0; attempt < 3; attempt++) {
     if (signal?.aborted) throw new Error('Interrupted');
-    const response = await fetch(`${base}/chat/completions`, {
-      method: 'POST',
-      signal,
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${m.api_key}` },
-      body: JSON.stringify(payload)
-    });
+    // Combine user interrupt signal with a 90s network timeout so we never hang forever
+    const timeout = AbortSignal.timeout(90_000);
+    const combined = signal ? AbortSignal.any([signal, timeout]) : timeout;
+    let response;
+    try {
+      response = await fetch(`${base}/chat/completions`, {
+        method: 'POST',
+        signal: combined,
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${m.api_key}` },
+        body: JSON.stringify(payload)
+      });
+    } catch (fetchErr) {
+      if (signal?.aborted) throw new Error('Interrupted');
+      // Network timeout or connection error — retry
+      if (attempt < 2) {
+        await new Promise((resolve, reject) => {
+          const t = setTimeout(resolve, 2000 * (attempt + 1));
+          signal?.addEventListener('abort', () => { clearTimeout(t); reject(new Error('Interrupted')); }, { once: true });
+        });
+        continue;
+      }
+      throw new Error(`API request failed after 3 attempts: ${fetchErr.message}`);
+    }
     res = await response.json();
     const err = res?.error || (Array.isArray(res) && res[0]?.error);
     if (err) {
@@ -146,12 +163,27 @@ export async function chatWithTools(messages, { system, tools = [], maxTokens = 
   let res = null;
   for (let attempt = 0; attempt < 3; attempt++) {
     if (signal?.aborted) throw new Error('Interrupted');
-    const response = await fetch(`${base}/chat/completions`, {
-      method: 'POST',
-      signal,
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${m.api_key}` },
-      body: JSON.stringify(payload)
-    });
+    const timeout = AbortSignal.timeout(90_000);
+    const combined = signal ? AbortSignal.any([signal, timeout]) : timeout;
+    let response;
+    try {
+      response = await fetch(`${base}/chat/completions`, {
+        method: 'POST',
+        signal: combined,
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${m.api_key}` },
+        body: JSON.stringify(payload)
+      });
+    } catch (fetchErr) {
+      if (signal?.aborted) throw new Error('Interrupted');
+      if (attempt < 2) {
+        await new Promise((resolve, reject) => {
+          const t = setTimeout(resolve, 2000 * (attempt + 1));
+          signal?.addEventListener('abort', () => { clearTimeout(t); reject(new Error('Interrupted')); }, { once: true });
+        });
+        continue;
+      }
+      throw new Error(`API request failed after 3 attempts: ${fetchErr.message}`);
+    }
     res = await response.json();
     const err = res?.error || (Array.isArray(res) && res[0]?.error);
     if (err) {
@@ -169,8 +201,24 @@ export async function chatWithTools(messages, { system, tools = [], maxTokens = 
     break;
   }
 
-  const msg = res.choices?.[0]?.message || {};
+  const choice = res.choices?.[0] || {};
+  const msg = choice.message || {};
   const text = msg.content || '';
+  const finishReason = choice.finish_reason;
+
+  // Gemini sometimes returns finish_reason:"length" with empty content when it
+  // runs out of output tokens mid-generation (especially mid-tool-call JSON).
+  // Detect this and return a synthetic text response so the loop doesn't stall.
+  if (finishReason === 'length' && !text && !(msg.tool_calls || []).length) {
+    return {
+      text: '(output token limit reached mid-generation — answer was cut off. Continuing with shorter response.)',
+      toolCalls: [],
+      message: { role: 'assistant', content: '(output token limit reached mid-generation)' },
+      raw: res,
+      usage: extractUsage(res, 'openai')
+    };
+  }
+
   const toolCalls = (msg.tool_calls || []).map((c) => ({
     id: c.id,
     name: c.function.name,
