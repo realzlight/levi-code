@@ -11,6 +11,7 @@ import { route } from './router.js';
 import { readMemoryDigest } from './memory.js';
 import { CONVO_PROMPT, LIGHT_PROMPT, agentPrompt, buildContext, litePrompt, loopPrompt } from './prompts.js';
 import { getEffort } from './effort.js';
+import { autoLearnIfEligible } from './skills.js';
 
 // Strip ANSI escape codes, carriage returns, progress bars, and collapse whitespace from CLI output
 function cleanCliOutput(raw) {
@@ -84,6 +85,7 @@ function synthNarration(calls) {
       case 'raw_memory_search': return `searching raw memory for "${c.args?.query || ''}"`;
       case 'read_raw_memory': return `reading raw memory ${c.args?.type || ''} ${c.args?.name || (c.args?.session_id ? '#' + c.args?.session_id : '')}`.trim();
       case 'diary': return c.args?.read ? `reading session diary` : `writing note to diary`;
+      case 'learn_skill': return `saving learned skill "${c.args?.name || ''}"`;
       case 'spawn_subagent': return `spawning sub-agent "${c.args?.role || 'worker'}"`;
       case 'message_subagent': return `messaging sub-agent`;
       default: return `calling ${c.name}`;
@@ -93,7 +95,7 @@ function synthNarration(calls) {
 }
 
 // Detect and extract pseudo tool calls written as text, e.g. [find: query: foo] or [read_file(bar)]
-const PSEUDO_TOOL_NAMES = 'find|read_file|code_search|grep_search|list_dir|read_lines|bash|write_file|edit_file|google_search|fetch|retrieve|raw_memory_search|read_raw_memory|diary';
+const PSEUDO_TOOL_NAMES = 'find|read_file|code_search|grep_search|list_dir|read_lines|bash|write_file|edit_file|google_search|fetch|retrieve|raw_memory_search|read_raw_memory|diary|learn_skill';
 
 function extractPseudoToolCall(str) {
   if (!str || typeof str !== 'string') return null;
@@ -194,15 +196,15 @@ const DESKTOP_TOOLS = [
 
 // messages = [{ role: 'user'|'assistant', content: string }]
 // onStep(kind, data) — optional progress callback: 'tool_call' | 'tool_result' | 'done' | 'thought'
-const LITE_NAMES = ['bash', 'read_file', 'write_file', 'edit_file', 'find', 'list_dir', 'read_lines', 'grep_search', 'code_search', 'google_search', 'fetch', ...PLAYWRIGHT_WEB_TOOLS, ...DESKTOP_TOOLS, 'ask', 'remember', 'retrieve', 'raw_memory_search', 'read_raw_memory', 'diary', 'get_tasks', 'set_task_done', 'add_task_cluster', 'mcp_search', 'mcp_list'];
+const LITE_NAMES = ['bash', 'read_file', 'write_file', 'edit_file', 'find', 'list_dir', 'read_lines', 'grep_search', 'code_search', 'google_search', 'fetch', ...PLAYWRIGHT_WEB_TOOLS, ...DESKTOP_TOOLS, 'ask', 'remember', 'retrieve', 'raw_memory_search', 'read_raw_memory', 'diary', 'learn_skill', 'get_tasks', 'set_task_done', 'add_task_cluster', 'mcp_search', 'mcp_list'];
 const LITE_TOOLS = toolDefs.filter((t) => LITE_NAMES.includes(t.function.name));
 const LITE_GROUPS = {
   none: [],
-  memory: ['remember', 'retrieve', 'raw_memory_search', 'read_raw_memory', 'diary'],
+  memory: ['remember', 'retrieve', 'raw_memory_search', 'read_raw_memory', 'diary', 'learn_skill'],
   web: ['google_search', 'fetch', ...PLAYWRIGHT_WEB_TOOLS],
   desktop: [...DESKTOP_TOOLS],
   shell: ['bash', 'read_file', 'write_file', 'edit_file', 'find', 'list_dir', 'read_lines', 'grep_search', 'code_search', 'ask', 'diary'],
-  all: ['bash', 'read_file', 'write_file', 'edit_file', 'find', 'list_dir', 'read_lines', 'grep_search', 'code_search', 'google_search', 'fetch', 'ask', 'remember', 'retrieve', 'raw_memory_search', 'read_raw_memory', 'diary', 'get_tasks', 'set_task_done'],
+  all: ['bash', 'read_file', 'write_file', 'edit_file', 'find', 'list_dir', 'read_lines', 'grep_search', 'code_search', 'google_search', 'fetch', 'ask', 'remember', 'retrieve', 'raw_memory_search', 'read_raw_memory', 'diary', 'learn_skill', 'get_tasks', 'set_task_done'],
   tasks: ['get_tasks', 'set_task_done', 'add_task_cluster'],
   mcp: ['mcp_search', 'mcp_list', 'bash', 'read_file', 'write_file', 'edit_file', 'find', 'list_dir', 'read_lines', 'grep_search', 'code_search', 'ask', 'diary']
 };
@@ -284,6 +286,7 @@ async function runLite(routed, sessionId, onStep, system, { signal } = {}) {
   let lastText = '';
   let lastEditedPath = null;
   let earlyStop = false;
+  const turnToolCalls = [];
   for (let step = 0; step < maxLiteSteps; step++) {
     if (signal?.aborted) return '[Interrupted]';
     if (liteTokens > liteTokenBudget) return 'Stopped: light-mode token budget (' + liteTokenBudget + ') reached for this message. Send another message to continue from here.';
@@ -335,6 +338,9 @@ async function runLite(routed, sessionId, onStep, system, { signal } = {}) {
           messages.push({ role: 'assistant', content: out });
           messages.push({ role: 'user', content: '(you announced or narrated doing this, but made no tool call. Call the relevant tool now using function calling to execute the action. Do not stop with only narration.)' });
           continue;
+        }
+        if (out && !out.includes('[[AGENT]]')) {
+          autoLearnIfEligible({ userQuery: routed.query, toolCalls: turnToolCalls, resultText: out, onStep });
         }
         return !out || out.includes('[[AGENT]]') ? null : out;
       }
@@ -390,6 +396,7 @@ async function runLite(routed, sessionId, onStep, system, { signal } = {}) {
       if (call.name === 'bash' && lastEditedPath && typeof result === 'string' && !result.includes('Error') && !result.includes('error') && !result.match(/exit.*[1-9]/)) {
         earlyStop = true;
       }
+      turnToolCalls.push({ name: call.name, args: call.args, result });
       onStep?.('tool_result', { call, result });
       messages.push({ role: 'tool', tool_call_id: call.id, content: String(result) });
       if (signal?.aborted) return '[Interrupted]';
@@ -400,6 +407,9 @@ async function runLite(routed, sessionId, onStep, system, { signal } = {}) {
       earlyStop = false;
       const nextRes = await chatWithTools(messages, { system: '(Final reply only. State what was done in 1-2 casual lines. No tool calls.)', tools: [], maxTokens: 256, signal });
       const finalText = nextRes.text?.trim() || lastText?.trim() || 'done.';
+      if (finalText) {
+        autoLearnIfEligible({ userQuery: routed.query, toolCalls: turnToolCalls, resultText: finalText, onStep });
+      }
       onStep?.('done', finalText);
       return finalText;
     }
@@ -412,7 +422,11 @@ async function runLite(routed, sessionId, onStep, system, { signal } = {}) {
       return breakMsg;
     }
   }
-  return (lastText || '').trim() || `Completed ${maxLiteSteps} steps in light mode. Check the updated files, or let me know if you want me to keep going.`;
+  const endReply = (lastText || '').trim() || `Completed ${maxLiteSteps} steps in light mode. Check the updated files, or let me know if you want me to keep going.`;
+  if (endReply) {
+    autoLearnIfEligible({ userQuery: routed.query, toolCalls: turnToolCalls, resultText: endReply, onStep });
+  }
+  return endReply;
 }
 
 function buildExchange(stored) {
@@ -545,6 +559,7 @@ export async function runAgent(userMessage, { onStep, maxSteps, forceAgent, sign
   const webState = { web: 0, tokens: 0, over: false, noted: false, overSteps: 0 };
   const callCounts = new Map();
   let listDirCount = 0;
+  const turnToolCalls = [];
 
   for (let step = 0; step < effectiveMaxSteps; step++) {
     if (signal?.aborted) return '[Interrupted]';
@@ -660,6 +675,9 @@ export async function runAgent(userMessage, { onStep, maxSteps, forceAgent, sign
         messages.push({ role: 'user', content: '(you announced a plan or narrated doing this, but made no tool call. The instruction was clear, so execute it now using your tools. Do not stop with only narration.)' });
         continue;
       }
+      if (text) {
+        autoLearnIfEligible({ userQuery: userMessage, toolCalls: turnToolCalls, resultText: text, onStep });
+      }
       onStep?.('done', text);
       return text;
     }
@@ -712,6 +730,7 @@ export async function runAgent(userMessage, { onStep, maxSteps, forceAgent, sign
       if ((call.name === 'write_file' || call.name === 'edit_file') && call.args?.path) {
         compactSupersededReads(messages, call.args.path);
       }
+      turnToolCalls.push({ name: call.name, args: call.args, result });
       onStep?.('tool_result', { call, result });
       messages.push({ role: 'tool', tool_call_id: call.id, content: String(result) });
       if (signal?.aborted) return '[Interrupted]';

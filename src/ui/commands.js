@@ -778,6 +778,34 @@ defineCommand({
 });
 
 defineCommand({
+  name: 'learn',
+  description: 'Distill recent conversation actions into a reusable skill in ~/.levi/SKILLS/',
+  args: [{ name: 'name', required: false, description: 'Optional custom skill slug name' }],
+  run: async ({ name }, ctx) => {
+    const { distillLastSessionSkill } = await import('../agent/skills.js');
+    const { currentSessionId } = await import('../agent/session.js');
+    const sid = currentSessionId();
+    ctx.print('Analyzing recent actions and distilling reusable skill...');
+    const res = await distillLastSessionSkill(sid, name);
+    if (!res || !res.ok) {
+      return ctx.print(res?.error || 'No sufficiently complex or reusable workflow found in recent messages to distill.');
+    }
+    if (ctx.printPanel) {
+      return ctx.printPanel({
+        title: `✦ Learned Skill: ${res.name}`,
+        fields: [
+          { label: 'Title', value: res.title, color: '#22d3ee' },
+          { label: 'Trigger', value: res.summary, color: '#4ade80' },
+          { label: 'File', value: `~/.levi/SKILLS/${res.name}.md`, color: '#c0caf5' },
+          { label: 'Status', value: 'Active (automatically injected into context)', color: '#ffd700' }
+        ]
+      });
+    }
+    ctx.print(`✓ Learned skill "${res.name}" (${res.title}). Saved to ~/.levi/SKILLS/${res.name}.md.`);
+  }
+});
+
+defineCommand({
   name: 'effort',
   description: 'Select reasoning effort: Eternal (low), Empyrean (medium), Abyssal (high), Seraphic (max)',
   args: [{ name: 'level', required: false, description: 'Optional effort name or level' }],

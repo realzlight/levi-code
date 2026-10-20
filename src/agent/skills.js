@@ -295,3 +295,147 @@ export function getSkillsPromptList() {
     };
   });
 }
+
+// Save a learned skill directly to ~/.levi/SKILLS/<name>.md and update meta
+export function saveLearnedSkill({ name: rawName, title, when_to_use, recipe }) {
+  const name = sanitizeSkillName(rawName);
+  if (!name) return { ok: false, error: 'Invalid skill name.' };
+  ensureSkillsDir();
+  const filePath = path.join(SKILLS_DIR, `${name}.md`);
+
+  const cleanTitle = (title || name).trim().replace(/[\r\n]+/g, ' ');
+  const cleanSummary = (when_to_use || `Instructions for ${cleanTitle}`).trim().replace(/[\r\n]+/g, ' ');
+
+  const content = `# ${cleanTitle}
+
+> ${cleanSummary}
+
+## When to use
+${cleanSummary}
+
+## Recipe & Playbook
+${(recipe || '').trim()}
+`;
+
+  fs.writeFileSync(filePath, content, 'utf-8');
+  const meta = readSkillsMeta();
+  meta.skills[name] = {
+    name,
+    title: cleanTitle,
+    summary: cleanSummary,
+    disabled: false,
+    createdAt: meta.skills[name]?.createdAt || new Date().toISOString(),
+    updatedAt: new Date().toISOString()
+  };
+  writeSkillsMeta(meta);
+  return { ok: true, name, title: cleanTitle, summary: cleanSummary, path: filePath };
+}
+
+// Distill a reusable skill from a completed task's execution trace
+export async function distillSkillFromExchange({ userQuery, toolCalls, resultText, requestedName }) {
+  if (!toolCalls || toolCalls.length < 2) return null;
+
+  const trace = toolCalls.map((c) => {
+    const fn = c.name;
+    const a = JSON.stringify(c.args || {});
+    return `${fn}(${a.slice(0, 150)})`;
+  }).join(' -> ');
+
+  const prompt = `You are a self-learning skill distillation engine for Levi, an AI coding assistant.
+Analyze this completed, successful task and determine if it represents a REUSABLE skill, recipe, or non-obvious workaround that would save time and tokens if encountered again.
+
+Task: "${userQuery}"
+Actions taken: ${trace}
+Outcome: "${(resultText || '').slice(0, 300)}"
+${requestedName ? `Requested skill name: "${requestedName}"` : ''}
+
+Rules:
+1. ONLY distill if this is a generalizable, non-trivial recipe, bug fix, configuration, or CLI workflow (e.g. setting up a server, solving an obscure library bug, automating a workflow).
+2. If this is a one-off edit, trivial question, simple file read, or project-specific code that cannot be reused elsewhere, return {"should_learn": false}.
+3. If it IS reusable, return:
+{
+  "should_learn": true,
+  "name": "${requestedName ? sanitizeSkillName(requestedName) : 'kebab-case-slug'}",
+  "title": "Short Descriptive Title",
+  "when_to_use": "Clear 1-line condition for when to activate this skill (max 20 words)",
+  "recipe": "Concise step-by-step markdown recipe with exact commands and gotchas"
+}
+
+Output strictly valid JSON:`;
+
+  try {
+    const res = await chat([{ role: 'user', content: prompt }], { maxTokens: 450 });
+    const raw = res?.text?.trim()?.replace(/^```(?:json)?\s*/i, '')?.replace(/\s*```$/i, '') || '';
+    const parsed = JSON.parse(raw);
+    if (parsed.should_learn && parsed.name && parsed.recipe) {
+      return saveLearnedSkill({
+        name: parsed.name,
+        title: parsed.title,
+        when_to_use: parsed.when_to_use,
+        recipe: parsed.recipe
+      });
+    }
+  } catch {}
+  return null;
+}
+
+// Distill skill from the last session turns (for /learn command)
+export async function distillLastSessionSkill(sessionId, requestedName) {
+  if (!sessionId) return { ok: false, error: 'No active session.' };
+  try {
+    const sessionDir = path.join(LEVI_HOME, 'SESSIONS', sessionId);
+    const msgsFile = path.join(sessionDir, 'messages.json');
+    if (!fs.existsSync(msgsFile)) return { ok: false, error: 'No message history found for this session.' };
+    const messages = JSON.parse(fs.readFileSync(msgsFile, 'utf-8'));
+    if (!messages.length) return { ok: false, error: 'Session has no messages.' };
+
+    const lastUser = [...messages].reverse().find((m) => m.role === 'user');
+    const lastAgent = [...messages].reverse().find((m) => m.role === 'agent');
+    if (!lastUser) return { ok: false, error: 'No user query found.' };
+
+    const toolCalls = [];
+    for (const m of messages.slice(-10)) {
+      if (m.tool_calls) {
+        for (const tc of m.tool_calls) {
+          toolCalls.push({ name: tc.function?.name || tc.name, args: typeof tc.function?.arguments === 'string' ? JSON.parse(tc.function.arguments || '{}') : tc.args });
+        }
+      }
+    }
+
+    if (toolCalls.length < 1) {
+      return { ok: false, error: 'Recent turn did not perform any tool actions to distill into a skill.' };
+    }
+
+    const res = await distillSkillFromExchange({
+      userQuery: lastUser.text || lastUser.content || '',
+      toolCalls,
+      resultText: lastAgent?.text || lastAgent?.content || '',
+      requestedName
+    });
+
+    if (res && res.ok) return res;
+    return { ok: false, error: 'The recent task was too simple or project-specific to extract a generalizable skill.' };
+  } catch (err) {
+    return { ok: false, error: err.message };
+  }
+}
+
+// Background auto-learner hook triggered after a successful multi-step turn
+export async function autoLearnIfEligible({ userQuery, toolCalls, resultText, onStep }) {
+  // Eligibility: at least 3 tool calls, modifying action succeeded, no errors
+  if (!toolCalls || toolCalls.length < 3) return;
+  const hasModifier = toolCalls.some((c) => ['write_file', 'edit_file', 'bash'].includes(c.name));
+  if (!hasModifier) return;
+  if (!resultText || resultText.includes('API error') || resultText.includes('Interrupted')) return;
+
+  // Run in next tick / background
+  setTimeout(async () => {
+    try {
+      const res = await distillSkillFromExchange({ userQuery, toolCalls, resultText });
+      if (res && res.ok) {
+        onStep?.('narrate', `✦ Distilled new skill: "${res.name}" (~/.levi/SKILLS/${res.name}.md)`);
+      }
+    } catch {}
+  }, 100);
+}
+

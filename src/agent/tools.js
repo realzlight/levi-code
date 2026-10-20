@@ -28,7 +28,7 @@ export const CATEGORIES = {
   web: ['web_launch','web_close','web_new_tab','web_goto','web_back','web_reload','web_click','web_dblclick','web_fill','web_press','web_hover','web_drag','web_scroll','web_screenshot','web_get_text','web_get_url','web_wait'],
   desktop: ['desktop_click','desktop_type','desktop_press','desktop_scroll','desktop_drag','desktop_screenshot','desktop_get_window_state','desktop_list_apps','desktop_launch_app'],
   tasks: ['add_task_cluster','get_tasks','set_task_done','edit_task','delete_task','delete_cluster','add_task_to_cluster'],
-  memory: ['retrieve','raw_memory_search','read_raw_memory','diary','set_project','search_sessions','read_session'],
+  memory: ['retrieve','raw_memory_search','read_raw_memory','diary','set_project','search_sessions','read_session','learn_skill'],
   meta: ['list_commands','list_fs_commands','list_web_commands','list_desktop_commands','list_task_commands','list_memory_commands','list_meta_commands','list_subagent_commands','list_mcp_commands','ask'],
   subagent: ['spawn_subagent','list_subagents','message_subagent'],
   mcp: ['mcp_search','mcp_list']
@@ -192,6 +192,23 @@ export const toolDefs = [
         type: 'object',
         properties: { name: { type: 'string', description: 'Short lowercase name' } },
         required: ['name']
+      }
+    }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'learn_skill',
+      description: 'Save a reusable, battle-tested recipe, workaround, or workflow into ~/.levi/SKILLS/<name>.md so you and future sessions can use it automatically. Use when you solve a non-trivial problem, figure out tricky configs, or build a working multi-step recipe.',
+      parameters: {
+        type: 'object',
+        properties: {
+          name: { type: 'string', description: 'Short kebab-case slug (e.g. "termux-caddy-ssl", "vite-port-fix")' },
+          title: { type: 'string', description: 'Short descriptive title (2-5 words)' },
+          when_to_use: { type: 'string', description: 'Clear 1-line condition for when to activate this skill (max 20 words)' },
+          recipe: { type: 'string', description: 'Step-by-step markdown recipe with exact commands, configs, and gotchas to avoid' }
+        },
+        required: ['name', 'when_to_use', 'recipe']
       }
     }
   },
@@ -952,6 +969,13 @@ if (name === 'mcp_search') {
 
   return `Tools [${name}] now loaded, call them directly:\n${tools}`;
 }
+    if (name === 'learn_skill') {
+      const { saveLearnedSkill } = await import('./skills.js');
+      const res = saveLearnedSkill(args || {});
+      if (!res.ok) return `Error saving skill: ${res.error}`;
+      return `Successfully learned skill "${res.name}" (${res.title}). It is saved to ~/.levi/SKILLS/${res.name}.md and active in context.`;
+    }
+
     if (name === 'remember') {
       const kind = String(args.kind || '').toLowerCase();
       const fact = String(args.fact || '').replace(/\s+/g, ' ').trim().slice(0, 240);
