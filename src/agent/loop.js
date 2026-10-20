@@ -254,6 +254,10 @@ async function runLite(routed, sessionId, onStep, system, { signal } = {}) {
   let liteTokens = 0;
   let expanded = false;
   const mcpToolNames = routed.mcp ? ['mcp_search', 'mcp_list'] : [];
+  // Detect direct-action mode: if router insight says [action] or request is clearly a mutation
+  const ACTION_INSIGHT = /\[action\]|\bedit_file\b|\bwrite_file\b|\bfix\b|\bupdate\b|\bchange\b|\badd\b|\bremove\b/i;
+  const isActionMode = ACTION_INSIGHT.test(routed.insight || '') || /^(fix|update|change|add|remove|edit|delete|rename|refactor|rewrite|improve)\b/i.test(routed.query || '');
+
   const pickLite = (step, hasCodingContext) => {
     let names = LITE_GROUPS[routed.tools] || LITE_GROUPS.all;
     // JIT tool stripping: after step 0, if we've been doing file/shell work,
@@ -264,6 +268,8 @@ async function runLite(routed, sessionId, onStep, system, { signal } = {}) {
     if (expanded) names = [...new Set([...names, ...LITE_GROUPS.all, ...PLAYWRIGHT_WEB_TOOLS, ...DESKTOP_TOOLS])];
     if (routed.mcp) names = [...new Set([...names, ...mcpToolNames])];
     if (!isDiaryEnabled()) names = names.filter(n => n !== 'diary');
+    // Direct-action mode: suppress list_dir at step 0 to force surgical edits
+    if (step === 0 && isActionMode) names = names.filter(n => n !== 'list_dir');
     let tools = LITE_TOOLS.filter((t) => names.includes(t.function.name));
     if (!isDiaryEnabled()) tools = tools.filter(t => (t.function?.name || t.name) !== 'diary');
     if (mcpMod) tools = [...tools, ...mcpMod.getLoadedMcpDefs()];
@@ -276,6 +282,8 @@ async function runLite(routed, sessionId, onStep, system, { signal } = {}) {
   const callCounts = new Map();
   let listDirCount = 0;
   let lastText = '';
+  let lastEditedPath = null;
+  let earlyStop = false;
   for (let step = 0; step < maxLiteSteps; step++) {
     if (signal?.aborted) return '[Interrupted]';
     if (liteTokens > liteTokenBudget) return 'Stopped: light-mode token budget (' + liteTokenBudget + ') reached for this message. Send another message to continue from here.';
@@ -375,12 +383,25 @@ async function runLite(routed, sessionId, onStep, system, { signal } = {}) {
       // Compact earlier read_file results for paths we just wrote/edited
       if ((call.name === 'write_file' || call.name === 'edit_file') && call.args?.path) {
         compactSupersededReads(messages, call.args.path);
+        lastEditedPath = call.args.path;
+      }
+      // Early stop: if bash verify passes (exit 0) after a write/edit, we're done
+      if (call.name === 'bash' && lastEditedPath && typeof result === 'string' && !result.includes('Error') && !result.includes('error') && !result.match(/exit.*[1-9]/)) {
+        earlyStop = true;
       }
       onStep?.('tool_result', { call, result });
       messages.push({ role: 'tool', tool_call_id: call.id, content: String(result) });
       if (signal?.aborted) return '[Interrupted]';
     }
 
+    // Early stop: edit/write succeeded and bash verify passed — terminate cleanly
+    if (earlyStop) {
+      earlyStop = false;
+      const nextRes = await chatWithTools(messages, { system: '(Final reply only. State what was done in 1-2 casual lines. No tool calls.)', tools: [], maxTokens: 256, signal });
+      const finalText = nextRes.text?.trim() || lastText?.trim() || 'done.';
+      onStep?.('done', finalText);
+      return finalText;
+    }
     // Dead-loop detection: if we've accumulated too many duplicate read-only calls, we're stuck
     const totalDupes = [...callCounts.values()].reduce((sum, v) => sum + Math.max(0, v - 1), 0);
     if (totalDupes >= 3) {

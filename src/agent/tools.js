@@ -837,6 +837,21 @@ export async function runTool(name, args, opts = {}) {
     if (name === 'read_file') {
       const p = resolve(args.path);
       if (fs.existsSync(p) && fs.statSync(p).isDirectory()) return `Error: ${p} is a directory, not a file`;
+      if (!fs.existsSync(p)) {
+        // Auto-find: scan cwd for a file with the same basename
+        const base = path.basename(p);
+        const searchDir = process.cwd();
+        try {
+          const { execSync } = await import('node:child_process');
+          const found = execSync(`find "${searchDir}" -name "${base}" -not -path '*/node_modules/*' -not -path '*/.git/*' 2>/dev/null`, { encoding: 'utf-8', timeout: 3000 }).trim().split('\n').filter(Boolean);
+          if (found.length === 1) {
+            const content = fs.readFileSync(found[0], 'utf-8');
+            return `Notice: "${p}" not found — auto-resolved to "${found[0]}"\n\n${content}`;
+          }
+          if (found.length > 1) return `Error: "${p}" not found. Multiple files named "${base}" exist:\n${found.slice(0, 5).join('\n')}\nBe more specific.`;
+        } catch { /* fall through to original error */ }
+        throw new Error(`ENOENT: no such file or directory, open '${p}'`);
+      }
       return fs.readFileSync(p, 'utf-8');
     }
 
@@ -855,10 +870,31 @@ export async function runTool(name, args, opts = {}) {
       if (fs.existsSync(p) && fs.statSync(p).isDirectory()) return `Error: ${p} is a directory, not a file`;
       const content = fs.readFileSync(p, 'utf-8');
       const count = content.split(args.old_str).length - 1;
-      if (count === 0) return `Error: old_str not found in ${p}`;
       if (count > 1) return `Error: old_str matches ${count} times in ${p}, must be unique`;
-      fs.writeFileSync(p, content.replace(args.old_str, args.new_str));
-      return `Edited ${p}`;
+      if (count === 1) {
+        fs.writeFileSync(p, content.replace(args.old_str, args.new_str));
+        return `Edited ${p}`;
+      }
+      // Exact match failed — try whitespace-normalized fuzzy match
+      const normalize = (s) => s.replace(/[ \t]+/g, ' ').replace(/\r\n/g, '\n').trim();
+      const normOld = normalize(args.old_str);
+      const lines = content.split('\n');
+      const oldLines = args.old_str.split('\n');
+      const len = oldLines.length;
+      let matchStart = -1;
+      for (let i = 0; i <= lines.length - len; i++) {
+        const slice = lines.slice(i, i + len).join('\n');
+        if (normalize(slice) === normOld) {
+          if (matchStart !== -1) return `Error: old_str not found as exact match in ${p}; fuzzy match found multiple candidates — be more specific`;
+          matchStart = i;
+        }
+      }
+      if (matchStart === -1) return `Error: old_str not found in ${p} (tried exact and whitespace-normalized match)`;
+      const leading = lines[matchStart].match(/^([ \t]*)/)?.[1] || '';
+      const newLines = args.new_str.split('\n').map((l, i) => i === 0 ? l : leading + l.trimStart());
+      lines.splice(matchStart, len, ...newLines);
+      fs.writeFileSync(p, lines.join('\n'));
+      return `Edited ${p} (whitespace-normalized match at line ${matchStart + 1})`;
     }
 
 if (name === 'mcp_search') {
