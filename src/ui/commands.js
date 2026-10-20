@@ -695,7 +695,7 @@ defineCommand({
       title: 'Skills (~/.levi/SKILLS/)',
       fields: skills.map((s) => ({
         label: (s.disabled ? '❌ ' : '🟢 ') + s.name,
-        value: `${s.title ? s.title + ' — ' : ''}${s.summary || 'No summary'} (${s.disabled ? 'disabled' : 'active'})`
+        value: `${s.title ? s.title + ' — ' : ''}${s.summary || 'No summary'} (${s.disabled ? 'disabled' : s.usedCount ? `active · used ${s.usedCount}x` : 'active'})`
       }))
     });
   }
@@ -712,7 +712,7 @@ defineCommand({
       title: 'Skills (~/.levi/SKILLS/)',
       fields: skills.map((s) => ({
         label: (s.disabled ? '❌ ' : '🟢 ') + s.name,
-        value: `${s.title ? s.title + ' — ' : ''}${s.summary || 'No summary'} (${s.disabled ? 'disabled' : 'active'})`
+        value: `${s.title ? s.title + ' — ' : ''}${s.summary || 'No summary'} (${s.disabled ? 'disabled' : s.usedCount ? `active · used ${s.usedCount}x` : 'active'})`
       }))
     });
   }
