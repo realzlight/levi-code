@@ -562,6 +562,41 @@ defineCommand({
 });
 
 defineCommand({
+  name: 'mem:search',
+  description: 'Search memory & session index from index.db (auto-rebuilds index)',
+  args: [{ name: 'query', required: true, rest: true }],
+  run: async ({ query }, ctx) => {
+    const q = Array.isArray(query) ? query.join(' ') : String(query || '').trim();
+    if (!q) return ctx.print('Usage: /mem:search <query>');
+    const { rebuildIndex, retrieve } = await import('../agent/retrieval.js');
+    await rebuildIndex();
+    const res = await retrieve({ query: q, rebuild: false });
+    ctx.print(res);
+  }
+});
+
+defineCommand({
+  name: 'cs',
+  description: 'Search code with SQLite FTS5: /cs <path> <query> or /cs <query>',
+  args: [{ name: 'path_or_query', required: true }, { name: 'query', rest: true }],
+  run: async ({ path_or_query, query }, ctx) => {
+    let targetPath;
+    let targetQuery;
+    if (query !== undefined) {
+      targetPath = String(path_or_query);
+      targetQuery = Array.isArray(query) ? query.join(' ') : String(query).trim();
+    } else {
+      targetPath = process.cwd();
+      targetQuery = Array.isArray(path_or_query) ? path_or_query.join(' ') : String(path_or_query).trim();
+    }
+    if (!targetQuery) return ctx.print('Usage: /cs <path> <query> or /cs <query>');
+    const { searchCode } = await import('../agent/codeSearch.js');
+    const res = await searchCode({ path: targetPath, query: targetQuery });
+    ctx.print(res);
+  }
+});
+
+defineCommand({
   name: 'changelog',
   description: 'View the Levi changelog (fullscreen, Esc to close)',
   run: async (_, ctx) => {

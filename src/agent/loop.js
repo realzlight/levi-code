@@ -81,6 +81,8 @@ function synthNarration(calls) {
       case 'fetch': return `fetching a URL`;
       case 'remember': return `saving a note`;
       case 'retrieve': return `looking up memory`;
+      case 'raw_memory_search': return `searching raw memory for "${c.args?.query || ''}"`;
+      case 'read_raw_memory': return `reading raw memory ${c.args?.type || ''} ${c.args?.name || (c.args?.session_id ? '#' + c.args?.session_id : '')}`.trim();
       case 'spawn_subagent': return `spawning sub-agent "${c.args?.role || 'worker'}"`;
       case 'message_subagent': return `messaging sub-agent`;
       default: return `calling ${c.name}`;
@@ -172,15 +174,15 @@ const DESKTOP_TOOLS = [
 
 // messages = [{ role: 'user'|'assistant', content: string }]
 // onStep(kind, data) — optional progress callback: 'tool_call' | 'tool_result' | 'done' | 'thought'
-const LITE_NAMES = ['bash', 'read_file', 'write_file', 'edit_file', 'find', 'list_dir', 'read_lines', 'grep_search', 'code_search', 'google_search', 'fetch', ...PLAYWRIGHT_WEB_TOOLS, ...DESKTOP_TOOLS, 'ask', 'remember', 'retrieve', 'get_tasks', 'set_task_done', 'add_task_cluster', 'mcp_search', 'mcp_list'];
+const LITE_NAMES = ['bash', 'read_file', 'write_file', 'edit_file', 'find', 'list_dir', 'read_lines', 'grep_search', 'code_search', 'google_search', 'fetch', ...PLAYWRIGHT_WEB_TOOLS, ...DESKTOP_TOOLS, 'ask', 'remember', 'retrieve', 'raw_memory_search', 'read_raw_memory', 'get_tasks', 'set_task_done', 'add_task_cluster', 'mcp_search', 'mcp_list'];
 const LITE_TOOLS = toolDefs.filter((t) => LITE_NAMES.includes(t.function.name));
 const LITE_GROUPS = {
   none: [],
-  memory: ['remember', 'retrieve'],
+  memory: ['remember', 'retrieve', 'raw_memory_search', 'read_raw_memory'],
   web: ['google_search', 'fetch', ...PLAYWRIGHT_WEB_TOOLS],
   desktop: [...DESKTOP_TOOLS],
   shell: ['bash', 'read_file', 'write_file', 'edit_file', 'find', 'list_dir', 'read_lines', 'grep_search', 'code_search', 'ask'],
-  all: ['bash', 'read_file', 'write_file', 'edit_file', 'find', 'list_dir', 'read_lines', 'grep_search', 'code_search', 'google_search', 'fetch', 'ask', 'remember', 'retrieve', 'get_tasks', 'set_task_done'],
+  all: ['bash', 'read_file', 'write_file', 'edit_file', 'find', 'list_dir', 'read_lines', 'grep_search', 'code_search', 'google_search', 'fetch', 'ask', 'remember', 'retrieve', 'raw_memory_search', 'read_raw_memory', 'get_tasks', 'set_task_done'],
   tasks: ['get_tasks', 'set_task_done', 'add_task_cluster'],
   mcp: ['mcp_search', 'mcp_list', 'bash', 'read_file', 'write_file', 'edit_file', 'find', 'list_dir', 'read_lines', 'grep_search', 'code_search', 'ask']
 };
@@ -192,7 +194,7 @@ const LITE_TOKEN_BUDGET = 80000;
 const AGENT_WEB_BUDGET = 6;
 const AGENT_WEB_CAP = 3000;
 const AGENT_OUTPUT_CAP = 8000;
-const OUTPUT_TOOLS = ['read_file', 'bash', 'find', 'list_dir', 'read_lines', 'grep_search', 'code_search', 'web_get_text', 'web_screenshot', 'web_get_url', 'desktop_screenshot', 'desktop_get_window_state', 'desktop_list_apps'];
+const OUTPUT_TOOLS = ['read_file', 'bash', 'find', 'list_dir', 'read_lines', 'grep_search', 'code_search', 'raw_memory_search', 'read_raw_memory', 'web_get_text', 'web_screenshot', 'web_get_url', 'desktop_screenshot', 'desktop_get_window_state', 'desktop_list_apps'];
 async function runToolGuarded(call, state, opts = {}) {
   if (state.over) return 'Error: token budget for this message is used up. Answer now with what you have and say what you would check next.';
   if (!WEB_NAMES.includes(call.name)) {
@@ -321,7 +323,7 @@ async function runLite(routed, sessionId, onStep, system, { signal } = {}) {
     for (const call of toolCalls) {
       if (signal?.aborted) return '[Interrupted]';
       onStep?.('tool_call', call);
-      const isReadOnly = ['read_file', 'list_dir', 'find', 'read_lines', 'grep_search', 'code_search', 'retrieve'].includes(call.name);
+      const isReadOnly = ['read_file', 'list_dir', 'find', 'read_lines', 'grep_search', 'code_search', 'retrieve', 'raw_memory_search', 'read_raw_memory'].includes(call.name);
       const callKey = `${call.name}:${JSON.stringify(call.args || {})}`;
       const seenCount = callCounts.get(callKey) || 0;
       let result;
@@ -625,7 +627,7 @@ export async function runAgent(userMessage, { onStep, maxSteps, forceAgent, sign
     for (const call of toolCalls) {
       if (signal?.aborted) return '[Interrupted]';
       onStep?.('tool_call', call);
-      const isReadOnly = ['read_file', 'list_dir', 'find', 'read_lines', 'grep_search', 'code_search', 'retrieve'].includes(call.name);
+      const isReadOnly = ['read_file', 'list_dir', 'find', 'read_lines', 'grep_search', 'code_search', 'retrieve', 'raw_memory_search', 'read_raw_memory'].includes(call.name);
       const callKey = `${call.name}:${JSON.stringify(call.args || {})}`;
       const seenCount = callCounts.get(callKey) || 0;
       let result;

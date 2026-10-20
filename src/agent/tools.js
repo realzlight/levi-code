@@ -11,6 +11,7 @@ import { recordUsage } from './usage.js';
 import { RULES } from './prompts.js';
 import { addCluster, setTaskDone, getTasks, editTask, deleteTask, deleteCluster, addTaskToCluster } from './tasks.js';
 import { searchCode } from './codeSearch.js';
+import { searchRawMemory, readRawMemory } from './rawMemory.js';
 
 function resolve(p) {
   if (!p) return p;
@@ -25,7 +26,7 @@ export const CATEGORIES = {
   web: ['web_launch','web_close','web_new_tab','web_goto','web_back','web_reload','web_click','web_dblclick','web_fill','web_press','web_hover','web_drag','web_scroll','web_screenshot','web_get_text','web_get_url','web_wait'],
   desktop: ['desktop_click','desktop_type','desktop_press','desktop_scroll','desktop_drag','desktop_screenshot','desktop_get_window_state','desktop_list_apps','desktop_launch_app'],
   tasks: ['add_task_cluster','get_tasks','set_task_done','edit_task','delete_task','delete_cluster','add_task_to_cluster'],
-  memory: ['retrieve','set_project','search_sessions','read_session'],
+  memory: ['retrieve','raw_memory_search','read_raw_memory','set_project','search_sessions','read_session'],
   meta: ['list_commands','list_fs_commands','list_web_commands','list_desktop_commands','list_task_commands','list_memory_commands','list_meta_commands','list_subagent_commands','list_mcp_commands','ask'],
   subagent: ['spawn_subagent','list_subagents','message_subagent'],
   mcp: ['mcp_search','mcp_list']
@@ -301,6 +302,40 @@ export const toolDefs = [
           path: { type: 'string', description: 'File path' },
           limit: { type: 'number', description: 'Max results' }
         }
+      }
+    }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'raw_memory_search',
+      description: 'Search raw unindexed memory files (session buffers, user .md notes, project .md files) directly from disk. Use this for fresh ground-truth data without relying on index.db.',
+      parameters: {
+        type: 'object',
+        properties: {
+          query: { type: 'string', description: 'Search term to look for across raw memory files' },
+          scope: { type: 'string', enum: ['all', 'sessions', 'user', 'projects'], description: 'Scope to search within (default "all")' },
+          limit: { type: 'number', description: 'Max matching lines (default 8)' }
+        },
+        required: ['query']
+      }
+    }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'read_raw_memory',
+      description: 'Read raw unindexed markdown files or session buffers directly from disk (~/.levi/MEMORY, PROJECTS, or BUFFER.MD). Bypasses SQLite index.',
+      parameters: {
+        type: 'object',
+        properties: {
+          type: { type: 'string', enum: ['user', 'project', 'session'], description: 'Memory type: "user" for ~/.levi/MEMORY/*.md, "project" for PROJECTS/*/*.md, "session" for session buffers' },
+          name: { type: 'string', description: 'File name (e.g. USER, PREFERENCE, PATTERNS) or project folder name' },
+          session_id: { type: 'number', description: 'Session number if type is "session"' },
+          lines: { type: 'number', description: 'Number of lines to read (default 40)' },
+          tail: { type: 'boolean', description: 'Read last N lines instead of first N lines (useful for active session buffers)' }
+        },
+        required: ['type']
       }
     }
   },
@@ -1316,6 +1351,14 @@ if (name === 'mcp_search') {
         path: args?.path,
         limit: args?.limit
       });
+    }
+
+    if (name === 'raw_memory_search') {
+      return await searchRawMemory(args);
+    }
+
+    if (name === 'read_raw_memory') {
+      return await readRawMemory(args);
     }
 
     if (name === 'search_sessions') {

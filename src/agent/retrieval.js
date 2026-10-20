@@ -51,7 +51,7 @@ function listSources() {
     let dirs = [];
     try { dirs = fs.readdirSync(root); } catch { continue; }
     for (const d of dirs) {
-      const m = /^SESSION-(\d+)$/.exec(d);
+      const m = /^SESSION-(\d+)(?:_.*)?$/.exec(d);
       if (!m) continue;
       for (const f of ['BUFFER.MD', 'TITLE.TXT', 'PROJECT.TXT', 'TASK.md']) {
         const p = path.join(root, d, f);
@@ -137,9 +137,18 @@ function ftsQuery(q, mode) {
 }
 
 function sessionFile(id, name) {
-  for (const bucket of ['ACTIVE-BUFFER', 'ENDED-BUFFER']) {
-    const p = path.join(HOME, bucket, 'SESSION-' + id, name);
-    if (fs.existsSync(p)) return p;
+  const active = path.join(HOME, 'ACTIVE-BUFFER', 'SESSION-' + id, name);
+  if (fs.existsSync(active)) return active;
+  const endedRoot = path.join(HOME, 'ENDED-BUFFER');
+  if (fs.existsSync(endedRoot)) {
+    try {
+      const entries = fs.readdirSync(endedRoot);
+      const found = entries.find((e) => new RegExp('^SESSION-' + id + '(?:_.*)?$').test(e));
+      if (found) {
+        const p = path.join(endedRoot, found, name);
+        if (fs.existsSync(p)) return p;
+      }
+    } catch {}
   }
   return null;
 }
@@ -159,8 +168,11 @@ function sessionOverview(id) {
 
 const resolveHome = (p) => (p.startsWith('~') ? path.join(os.homedir(), p.slice(1)) : path.resolve(p));
 
-export async function retrieve({ query, session, path: file, limit } = {}) {
+export async function retrieve({ query, session, path: file, limit, rebuild = true } = {}) {
   if (session && !query && !file) return sessionOverview(session);
+  if (rebuild) {
+    try { await rebuildIndex(); } catch {}
+  }
   let db;
   try { db = await openDb(); } catch (e) { return 'Error: search index unavailable (' + String((e && e.message) || e).slice(0, 80) + '). It needs Node 22.13 or newer with node:sqlite.'; }
   try {

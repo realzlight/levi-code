@@ -683,6 +683,12 @@ function formatToolArg(name, args) {
     const loc = args.folder || args.path || '.';
     return `"${args.query || ''}" in ${loc}`;
   }
+  if (name === 'raw_memory_search') {
+    return `"${args.query || ''}"${args.scope ? ' in ' + args.scope : ''}`;
+  }
+  if (name === 'read_raw_memory') {
+    return args.name || (args.session_id ? `session #${args.session_id}` : args.type || '');
+  }
   const keys = Object.keys(args);
   if (keys.length === 1 && typeof args[keys[0]] === 'string') {
     return args[keys[0]];
