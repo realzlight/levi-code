@@ -689,6 +689,9 @@ function formatToolArg(name, args) {
   if (name === 'read_raw_memory') {
     return args.name || (args.session_id ? `session #${args.session_id}` : args.type || '');
   }
+  if (name === 'diary') {
+    return args.read ? 'read notes' : `"${args.text || args.note || ''}"`;
+  }
   const keys = Object.keys(args);
   if (keys.length === 1 && typeof args[keys[0]] === 'string') {
     return args[keys[0]];

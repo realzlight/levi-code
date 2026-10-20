@@ -309,6 +309,28 @@ defineCommand({
   }
 });
 
+defineCommand({
+  name: 'diary',
+  description: 'Toggle session scratchpad (diary) feature for agent',
+  args: [{ name: 'setting' }],
+  run: async ({ setting }, ctx) => {
+    const { isDiaryEnabled, setDiaryEnabled } = await sessionMod();
+    let next;
+    const s = String(setting || '').trim().toLowerCase();
+    if (s === 'on' || s === 'enable' || s === 'true') {
+      next = setDiaryEnabled(true);
+    } else if (s === 'off' || s === 'disable' || s === 'false') {
+      next = setDiaryEnabled(false);
+    } else {
+      next = setDiaryEnabled(!isDiaryEnabled());
+    }
+    ctx.printPanel({
+      title: 'Diary Scratchpad',
+      fields: [{ label: 'Status', value: next ? 'ON — Levi can use session diary scratchpad' : 'OFF — Diary tool disabled (no tool def sent to agent)', color: next ? '#4ade80' : '#f87171' }]
+    });
+  }
+});
+
 const memMod = () => import('../commands/mem.js');
 
 defineCommand({

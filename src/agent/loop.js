@@ -4,7 +4,7 @@ import path from 'node:path';
 import { chatWithTools } from './client.js';
 import { toolDefs, runTool, CATEGORIES } from './tools.js';
 import { think, readProjectContext, thinkToolDef } from './thought.js';
-import { currentSessionId, getProject, loadMessages, isSoloOnly } from './session.js';
+import { currentSessionId, getProject, loadMessages, isSoloOnly, isDiaryEnabled } from './session.js';
 import { getTasks } from './tasks.js';
 import { startTurn, recordUsage } from './usage.js';
 import { route } from './router.js';
@@ -83,6 +83,7 @@ function synthNarration(calls) {
       case 'retrieve': return `looking up memory`;
       case 'raw_memory_search': return `searching raw memory for "${c.args?.query || ''}"`;
       case 'read_raw_memory': return `reading raw memory ${c.args?.type || ''} ${c.args?.name || (c.args?.session_id ? '#' + c.args?.session_id : '')}`.trim();
+      case 'diary': return c.args?.read ? `reading session diary` : `writing note to diary`;
       case 'spawn_subagent': return `spawning sub-agent "${c.args?.role || 'worker'}"`;
       case 'message_subagent': return `messaging sub-agent`;
       default: return `calling ${c.name}`;
@@ -137,7 +138,7 @@ function extractPseudoToolCall(str) {
 const TRIVIAL = new Set(['bash', 'read_file', 'write_file', 'edit_file', 'find', 'list_dir', 'read_lines', 'grep_search', 'code_search']);
 
 const BASE_TOOLS = [
-  ...toolDefs.filter((t) => TRIVIAL.has(t.function.name) || ['ask', 'remember', 'list_tools', 'set_project', 'retrieve', 'set_task_done', 'get_tasks'].includes(t.function.name)),
+  ...toolDefs.filter((t) => TRIVIAL.has(t.function.name) || ['ask', 'remember', 'list_tools', 'set_project', 'retrieve', 'diary', 'set_task_done', 'get_tasks'].includes(t.function.name)),
   thinkToolDef(toolDefs[0])
 ];
 
@@ -174,17 +175,17 @@ const DESKTOP_TOOLS = [
 
 // messages = [{ role: 'user'|'assistant', content: string }]
 // onStep(kind, data) — optional progress callback: 'tool_call' | 'tool_result' | 'done' | 'thought'
-const LITE_NAMES = ['bash', 'read_file', 'write_file', 'edit_file', 'find', 'list_dir', 'read_lines', 'grep_search', 'code_search', 'google_search', 'fetch', ...PLAYWRIGHT_WEB_TOOLS, ...DESKTOP_TOOLS, 'ask', 'remember', 'retrieve', 'raw_memory_search', 'read_raw_memory', 'get_tasks', 'set_task_done', 'add_task_cluster', 'mcp_search', 'mcp_list'];
+const LITE_NAMES = ['bash', 'read_file', 'write_file', 'edit_file', 'find', 'list_dir', 'read_lines', 'grep_search', 'code_search', 'google_search', 'fetch', ...PLAYWRIGHT_WEB_TOOLS, ...DESKTOP_TOOLS, 'ask', 'remember', 'retrieve', 'raw_memory_search', 'read_raw_memory', 'diary', 'get_tasks', 'set_task_done', 'add_task_cluster', 'mcp_search', 'mcp_list'];
 const LITE_TOOLS = toolDefs.filter((t) => LITE_NAMES.includes(t.function.name));
 const LITE_GROUPS = {
   none: [],
-  memory: ['remember', 'retrieve', 'raw_memory_search', 'read_raw_memory'],
+  memory: ['remember', 'retrieve', 'raw_memory_search', 'read_raw_memory', 'diary'],
   web: ['google_search', 'fetch', ...PLAYWRIGHT_WEB_TOOLS],
   desktop: [...DESKTOP_TOOLS],
-  shell: ['bash', 'read_file', 'write_file', 'edit_file', 'find', 'list_dir', 'read_lines', 'grep_search', 'code_search', 'ask'],
-  all: ['bash', 'read_file', 'write_file', 'edit_file', 'find', 'list_dir', 'read_lines', 'grep_search', 'code_search', 'google_search', 'fetch', 'ask', 'remember', 'retrieve', 'raw_memory_search', 'read_raw_memory', 'get_tasks', 'set_task_done'],
+  shell: ['bash', 'read_file', 'write_file', 'edit_file', 'find', 'list_dir', 'read_lines', 'grep_search', 'code_search', 'ask', 'diary'],
+  all: ['bash', 'read_file', 'write_file', 'edit_file', 'find', 'list_dir', 'read_lines', 'grep_search', 'code_search', 'google_search', 'fetch', 'ask', 'remember', 'retrieve', 'raw_memory_search', 'read_raw_memory', 'diary', 'get_tasks', 'set_task_done'],
   tasks: ['get_tasks', 'set_task_done', 'add_task_cluster'],
-  mcp: ['mcp_search', 'mcp_list', 'bash', 'read_file', 'write_file', 'edit_file', 'find', 'list_dir', 'read_lines', 'grep_search', 'code_search', 'ask']
+  mcp: ['mcp_search', 'mcp_list', 'bash', 'read_file', 'write_file', 'edit_file', 'find', 'list_dir', 'read_lines', 'grep_search', 'code_search', 'ask', 'diary']
 };
 const MORE_TOOL = { type: 'function', function: { name: 'more_tools', description: 'Load browser automation and desktop tools when web browser or GUI automation is needed.', parameters: { type: 'object', properties: {} } } };
 const WEB_NAMES = ['google_search', 'fetch'];
@@ -194,7 +195,7 @@ const LITE_TOKEN_BUDGET = 80000;
 const AGENT_WEB_BUDGET = 6;
 const AGENT_WEB_CAP = 3000;
 const AGENT_OUTPUT_CAP = 8000;
-const OUTPUT_TOOLS = ['read_file', 'bash', 'find', 'list_dir', 'read_lines', 'grep_search', 'code_search', 'raw_memory_search', 'read_raw_memory', 'web_get_text', 'web_screenshot', 'web_get_url', 'desktop_screenshot', 'desktop_get_window_state', 'desktop_list_apps'];
+const OUTPUT_TOOLS = ['read_file', 'bash', 'find', 'list_dir', 'read_lines', 'grep_search', 'code_search', 'raw_memory_search', 'read_raw_memory', 'diary', 'web_get_text', 'web_screenshot', 'web_get_url', 'desktop_screenshot', 'desktop_get_window_state', 'desktop_list_apps'];
 async function runToolGuarded(call, state, opts = {}) {
   if (state.over) return 'Error: token budget for this message is used up. Answer now with what you have and say what you would check next.';
   if (!WEB_NAMES.includes(call.name)) {
@@ -243,7 +244,9 @@ async function runLite(routed, sessionId, onStep, system, { signal } = {}) {
     }
     if (expanded) names = [...new Set([...names, ...LITE_GROUPS.all, ...PLAYWRIGHT_WEB_TOOLS, ...DESKTOP_TOOLS])];
     if (routed.mcp) names = [...new Set([...names, ...mcpToolNames])];
+    if (!isDiaryEnabled()) names = names.filter(n => n !== 'diary');
     let tools = LITE_TOOLS.filter((t) => names.includes(t.function.name));
+    if (!isDiaryEnabled()) tools = tools.filter(t => (t.function?.name || t.name) !== 'diary');
     if (mcpMod) tools = [...tools, ...mcpMod.getLoadedMcpDefs()];
     if (!expanded && !['web', 'desktop'].includes(routed.tools)) tools = [...tools, MORE_TOOL];
     return webCalls >= WEB_BUDGET ? tools.filter((t) => !WEB_NAMES.includes(t.function.name)) : tools;
@@ -456,8 +459,10 @@ export async function runAgent(userMessage, { onStep, maxSteps, forceAgent, sign
     }
   }
   const pickTools = () => {
-    const all = [...BASE_TOOLS, ...toolDefs.filter((t) => unlocked.has(t.function.name) && !BASE_TOOLS.includes(t)), ...(customMcp ? toolDefs.filter((t) => t.function.name === 'mcp_search' || t.function.name === 'mcp_list') : []), ...(mcpMod ? mcpMod.getLoadedMcpDefs() : [])];
-    return isSoloOnly() ? all.filter((t) => !SUB.includes(t.function?.name || t.name)) : all;
+    let all = [...BASE_TOOLS, ...toolDefs.filter((t) => unlocked.has(t.function.name) && !BASE_TOOLS.includes(t)), ...(customMcp ? toolDefs.filter((t) => t.function.name === 'mcp_search' || t.function.name === 'mcp_list') : []), ...(mcpMod ? mcpMod.getLoadedMcpDefs() : [])];
+    if (isSoloOnly()) all = all.filter((t) => !SUB.includes(t.function?.name || t.name));
+    if (!isDiaryEnabled()) all = all.filter((t) => (t.function?.name || t.name) !== 'diary');
+    return all;
   };
   // give the tool-calling loop real conversation history, not just a hint via
   // the system prompt — this is what lets it resolve "it"/"that"/pronouns

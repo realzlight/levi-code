@@ -242,6 +242,21 @@ export function setSoloOnly(value) {
   return value;
 }
 
+export function isDiaryEnabled() {
+  try {
+    return !!readConfig().diaryEnabled;
+  } catch {
+    return false;
+  }
+}
+
+export function setDiaryEnabled(value) {
+  const config = readConfig();
+  config.diaryEnabled = Boolean(value);
+  writeConfig(config);
+  return config.diaryEnabled;
+}
+
 // Permanently removes one session folder. Guards: id must be a positive integer and the
 // folder must be SESSION-<id> directly inside ACTIVE-BUFFER. Clears currentSession if it was this one.
 export function deleteSession(id) {

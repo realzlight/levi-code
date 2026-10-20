@@ -12,6 +12,8 @@ import { RULES } from './prompts.js';
 import { addCluster, setTaskDone, getTasks, editTask, deleteTask, deleteCluster, addTaskToCluster } from './tasks.js';
 import { searchCode } from './codeSearch.js';
 import { searchRawMemory, readRawMemory } from './rawMemory.js';
+import { handleDiary } from './diary.js';
+import { isDiaryEnabled } from './session.js';
 
 function resolve(p) {
   if (!p) return p;
@@ -26,7 +28,7 @@ export const CATEGORIES = {
   web: ['web_launch','web_close','web_new_tab','web_goto','web_back','web_reload','web_click','web_dblclick','web_fill','web_press','web_hover','web_drag','web_scroll','web_screenshot','web_get_text','web_get_url','web_wait'],
   desktop: ['desktop_click','desktop_type','desktop_press','desktop_scroll','desktop_drag','desktop_screenshot','desktop_get_window_state','desktop_list_apps','desktop_launch_app'],
   tasks: ['add_task_cluster','get_tasks','set_task_done','edit_task','delete_task','delete_cluster','add_task_to_cluster'],
-  memory: ['retrieve','raw_memory_search','read_raw_memory','set_project','search_sessions','read_session'],
+  memory: ['retrieve','raw_memory_search','read_raw_memory','diary','set_project','search_sessions','read_session'],
   meta: ['list_commands','list_fs_commands','list_web_commands','list_desktop_commands','list_task_commands','list_memory_commands','list_meta_commands','list_subagent_commands','list_mcp_commands','ask'],
   subagent: ['spawn_subagent','list_subagents','message_subagent'],
   mcp: ['mcp_search','mcp_list']
@@ -336,6 +338,20 @@ export const toolDefs = [
           tail: { type: 'boolean', description: 'Read last N lines instead of first N lines (useful for active session buffers)' }
         },
         required: ['type']
+      }
+    }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'diary',
+      description: 'Session scratchpad for working notes. Append note or read existing.',
+      parameters: {
+        type: 'object',
+        properties: {
+          text: { type: 'string', description: 'Note to append (max 200 chars)' },
+          read: { type: 'boolean', description: 'Read back notes' }
+        }
       }
     }
   },
@@ -1359,6 +1375,11 @@ if (name === 'mcp_search') {
 
     if (name === 'read_raw_memory') {
       return await readRawMemory(args);
+    }
+
+    if (name === 'diary') {
+      if (!isDiaryEnabled()) return 'Error: diary feature is disabled by user (/diary).';
+      return handleDiary(args, { sessionId: currentSessionId() });
     }
 
     if (name === 'search_sessions') {

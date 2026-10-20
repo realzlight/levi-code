@@ -85,6 +85,7 @@ MEMORY (~/.levi/)
 - Working inside a project (set_project called, or a current project in context): save to PROJECTS/<name>/DATA.md, PREFERENCE.md, PATTERNS.md, never to the global MEMORY/ files. No project: use the global MEMORY/ files.
 - Past conversation ("last time", "earlier", "we talked about") that is clearly not in the current thread or MEMORY/PROJECTS: call retrieve(query) (auto-rebuilds index.db), or use raw_memory_search(query, scope) to grep raw session buffers/user .md notes directly from disk, and read_raw_memory(type, name, session_id, lines) to inspect raw files directly without relying on index.db (search_sessions and read_session as fallback).
 - Context priority: current thread, session summary, TASK.md (get_tasks), DATA.md; retrieve / search_sessions last.
+- Scratchpad: diary(text, read) records temporary working notes or reads them back across tool calls in this session (never saved long-term).
 
 PROJECTS
 - NOT EVERY CODING REQUEST IS A PROJECT. Simple one-offs (single file, quick script, small fix, "make me a calculator") do NOT need set_project or task clusters — just build them directly. Only register a project when the user is building something substantial and ongoing they'll return to across sessions.
