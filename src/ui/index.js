@@ -517,7 +517,7 @@ const CSM_ACTIVE = '#afd7ff';    // light blue for selected row
 const CSM_INACTIVE = '#949494';  // gray for unselected rows
 const CSM_NAME_COLS = 20;        // padded command name column
 
-function ClaudeSlashMenu({ matches, active }) {
+function ClaudeSlashMenu({ matches, active, width = 80 }) {
   if (!matches.length) {
     return h(Box, { flexDirection: 'column', marginBottom: 0 },
       h(Text, { color: CSM_INACTIVE }, '  No matching commands')
@@ -529,17 +529,33 @@ function ClaudeSlashMenu({ matches, active }) {
   const visible = matches.slice(start, start + maxVisible);
   const counter = matches.length > maxVisible ? `  ${active + 1}/${matches.length}` : '';
 
-  return h(Box, { flexDirection: 'column', marginBottom: 0 },
+  const safeW = Math.max(30, width || 80);
+  const nameCol = Math.min(22, Math.max(15, Math.floor(safeW * 0.28)));
+  const prefixWidth = 2; // '❯ ' or '  '
+  const maxDescLen = Math.max(6, safeW - nameCol - prefixWidth - 3);
+
+  return h(Box, { flexDirection: 'column', marginBottom: 0, width: '100%' },
     visible.map((c, i) => {
       const isActive = start + i === active;
-      const name = ('/' + c.name).padEnd(CSM_NAME_COLS);
-      return h(Box, { key: c.name },
-        h(Text, { color: isActive ? CSM_ACTIVE : CSM_INACTIVE }, isActive ? '❯ ' : '  '),
-        h(Text, { color: isActive ? CSM_ACTIVE : CSM_INACTIVE, bold: isActive }, name),
-        h(Text, { color: isActive ? '#c4c4c4' : '#666666' }, c.description)
+      const rawName = '/' + c.name;
+      const name = rawName.length >= nameCol
+        ? rawName.slice(0, nameCol - 1) + ' '
+        : rawName.padEnd(nameCol, ' ');
+
+      let desc = c.description || '';
+      if (desc.length > maxDescLen) {
+        desc = desc.slice(0, Math.max(0, maxDescLen - 1)) + '…';
+      }
+
+      return h(Box, { key: c.name, flexDirection: 'row', width: '100%', overflow: 'hidden' },
+        h(Text, { color: isActive ? CSM_ACTIVE : CSM_INACTIVE, wrap: 'truncate-end' },
+          isActive ? '❯ ' : '  ',
+          h(Text, { bold: isActive }, name),
+          h(Text, { color: isActive ? '#c4c4c4' : '#666666' }, desc)
+        )
       );
     }),
-    h(Text, { color: '#666666' }, `  ↑↓ navigate · tab fill · enter run · esc close${counter}`)
+    h(Text, { color: '#666666', wrap: 'truncate-end' }, `  ↑↓ navigate · tab fill · enter run · esc close${counter}`)
   );
 }
 
@@ -1013,6 +1029,9 @@ function App({ mascot }) {
   const [effort, setEffortState] = useState(() => getEffort());
   const [form, setForm] = useState(null);
   const [commandOutput, setCommandOutput] = useState(null);
+  const [commandScroll, setCommandScroll] = useState(0);
+  const commandOutputRef = React.useRef(commandOutput);
+  commandOutputRef.current = commandOutput;
   const [closed, setClosed] = useState(false);
   const [compactTools, setCompactTools] = useState(false);
   const [activeSubagents, setActiveSubagents] = useState([]);
@@ -1036,7 +1055,7 @@ function App({ mascot }) {
   const paletteOn = input.startsWith('/') && !input.includes(' ') && !closed;
   const matches = paletteOn ? filterCommands(input.slice(1)) : [];
   const active = Math.min(sel, Math.max(matches.length - 1, 0));
-  useEffect(() => { setSel(0); setClosed(false); if (input.startsWith('/')) setCommandOutput(null); }, [input]);
+  useEffect(() => { setSel(0); setClosed(false); if (input.startsWith('/')) { setCommandOutput(null); setCommandScroll(0); } }, [input]);
   const fill = (cmd) => setInput('/' + cmd.name + ' ');
 
   async function runSlash(text) {
@@ -1055,6 +1074,7 @@ function App({ mascot }) {
         }
       }
     });
+    setCommandScroll(0);
     if (panel) setCommandOutput({ kind: 'panel', ...panel });
     else if (out) setCommandOutput({ kind: 'text', text: out });
   }
@@ -1063,6 +1083,7 @@ function App({ mascot }) {
     const text = raw.trim();
     if (!text) return;
     setCommandOutput(null);
+    setCommandScroll(0);
     setInput('');
     targetScrollRef.current = 0;
     setScrollOffset(0);
@@ -1311,6 +1332,7 @@ function App({ mascot }) {
       // 1. If a command output window is open, close it without interrupting the agent
       if (commandOutput) {
         setCommandOutput(null);
+        setCommandScroll(0);
         return;
       }
       // 2. If the slash command menu/palette is open, close it without interrupting the agent
@@ -1332,7 +1354,27 @@ function App({ mascot }) {
       }
       setClosed(true);
       setCommandOutput(null);
+      setCommandScroll(0);
       return;
+    }
+
+    if (commandOutput) {
+      if (key.pageUp) {
+        setCommandScroll((s) => Math.max(0, s - 6));
+        return;
+      }
+      if (key.pageDown) {
+        setCommandScroll((s) => s + 6);
+        return;
+      }
+      if (key.upArrow) {
+        setCommandScroll((s) => Math.max(0, s - 1));
+        return;
+      }
+      if (key.downArrow) {
+        setCommandScroll((s) => s + 1);
+        return;
+      }
     }
 
     if (key.pageUp) {
@@ -1389,8 +1431,20 @@ function App({ mascot }) {
   });
 
   useEffect(() => {
-    globalScrollUp = () => scrollTo(targetScrollRef.current + 2);
-    globalScrollDown = () => scrollTo(targetScrollRef.current - 2);
+    globalScrollUp = () => {
+      if (commandOutputRef.current) {
+        setCommandScroll((s) => Math.max(0, s - 2));
+      } else {
+        scrollTo(targetScrollRef.current + 2);
+      }
+    };
+    globalScrollDown = () => {
+      if (commandOutputRef.current) {
+        setCommandScroll((s) => s + 2);
+      } else {
+        scrollTo(targetScrollRef.current - 2);
+      }
+    };
 
     let tapTimer = null;
     globalTap = () => {
@@ -1428,8 +1482,13 @@ function App({ mascot }) {
       hiddenBelow ? h(Text, { color: GRAY }, '\u2193 swipe up to return to latest') : null
     ),
 
-    paletteOn ? h(ClaudeSlashMenu, { matches, active }) : null,
-    h(CommandBar, { output: commandOutput }),
+    paletteOn ? h(ClaudeSlashMenu, { matches, active, width: terminalWidth }) : null,
+    h(CommandBar, {
+      output: commandOutput,
+      scrollOffset: commandScroll,
+      width: terminalWidth,
+      height: terminalHeight
+    }),
     h(Box, { flexShrink: 0, flexDirection: 'column' },
       h(SubAgentBar, { subagents: activeSubagents, width: terminalWidth }),
       form

@@ -26,8 +26,14 @@ export function activeModel() {
   }
 }
 
+
+
 export default function Footer({ width, model }) {
-  const right = model ? `◆ ${model}` : '';
+  const cwd = process.cwd();
+  const home = os.homedir();
+  const shortCwd = cwd.startsWith(home) ? '~' + cwd.slice(home.length) : cwd;
+
+  const right = model ? `${shortCwd} · ◆ ${model}` : shortCwd;
   let used = right ? right.length + 3 : 0;
   const shown = [];
 
