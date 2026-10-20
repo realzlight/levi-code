@@ -104,7 +104,7 @@ export const toolDefs = [
     type: 'function',
     function: {
       name: 'find',
-      description: 'Find files and directories by name or substring. Fast, ignores node_modules/.git. Caps at 50 results.',
+      description: 'Find files and directories by name, extension, or substring across all subfolders. Fast, efficient, and preferred over multiple list_dir calls. Ignores node_modules/.git. Caps at 50 results.',
       parameters: {
         type: 'object',
         properties: {
@@ -119,12 +119,13 @@ export const toolDefs = [
     type: 'function',
     function: {
       name: 'list_dir',
-      description: 'List contents of a directory with file types, sizes, and item counts. Fast, ignores node_modules/.git.',
+      description: 'List contents of a directory with file types, sizes, and item counts. Shows only visible files by default (omits hidden dotfiles and node_modules/.git). To view hidden files, set show_hidden: true. For finding files across directories, ALWAYS use find(query, path) instead of chaining multiple list_dir calls.',
       parameters: {
         type: 'object',
         properties: {
           path: { type: 'string', description: 'Directory path to list (optional, defaults to current directory; ~ supported)' },
-          depth: { type: 'number', description: 'Recursion depth (optional, 1 for shallow listing, max 3; default 1)' }
+          depth: { type: 'number', description: 'Recursion depth (optional, 1 for shallow listing, max 3; default 1)' },
+          show_hidden: { type: 'boolean', description: 'Set true to include hidden dotfiles (files or folders starting with .). Default false (shows only visible files).' }
         }
       }
     }
@@ -1069,6 +1070,7 @@ if (name === 'mcp_search') {
       if (!stat.isDirectory()) return `Error: ${root} is not a directory`;
 
       const maxDepth = Math.min(Math.max(1, parseInt(args?.depth) || 1), 3);
+      const showHidden = Boolean(args?.show_hidden || args?.all);
       const IGNORE_DIRS = new Set(['.git', 'node_modules', '.cache']);
 
       function formatSize(bytes) {
@@ -1087,6 +1089,11 @@ if (name === 'mcp_search') {
         } catch (e) {
           lines.push(`${indent}[error reading directory: ${e.message}]`);
           return;
+        }
+
+        // Only show hidden files/folders if showHidden is true
+        if (!showHidden) {
+          entries = entries.filter((e) => !e.name.startsWith('.'));
         }
 
         entries.sort((a, b) => {
@@ -1119,7 +1126,7 @@ if (name === 'mcp_search') {
       }
 
       listLevel(root, 1, '');
-      if (!lines.length) return `Directory ${root} is empty.`;
+      if (!lines.length) return `Directory ${root} is empty${showHidden ? '' : ' (hidden dotfiles omitted; pass show_hidden: true to show)'}.`;
       return `Contents of ${root}:\n` + lines.join('\n');
     }
 

@@ -49,7 +49,7 @@ function routerSystem() {
     ? `mcp: the name of the MCP server if the request needs one, or false. Available MCP servers: ${names.join(', ')}. Examples: github = repos/PRs/issues/code search, cua-driver = desktop automation (mouse, keyboard, window, apps), serper = web search, fetch = read a URL, youtube = video info, playwright = browser automation. Return the server name string when the user wants to use one, false otherwise.`
     : `mcp: always false (no MCP servers configured).`;
 
-  cachedSystem = `Route a message for a coding assistant. Output ONLY JSON: {"route":"conversation"|"light"|"agent","tools":"none"|"memory"|"web"|"desktop"|"shell"|"tasks"|"all","mcp":"<server>"|false,"insight":"max 12 words"}
+  cachedSystem = `Route a message for a coding assistant. Output ONLY JSON: {"route":"conversation"|"light"|"agent","tools":"none"|"memory"|"web"|"desktop"|"shell"|"tasks"|"all","mcp":"<server>"|false,"insight":"max 16 words"}
 agent = a project or big job: building or scaffolding an app, big fixes or refactors across 3+ files, complex reasoning or debugging, git workflows, deep multi-source research, planning or reorganizing task plans, sub-agents, or continues agent work (e.g. "yes", "the second one" when last_route is agent).
 light = any other job that needs tools, up to about 10 tool calls: code reviews, small fixes and edits (1-2 files), running commands, web lookups, saving facts, recalling past sessions, notes, or conversations, task cluster views, using MCP tools. Mixed jobs: tools = all.
 conversation = plain casual chat, simple questions/explanations without tools, short follow-ups.
@@ -58,7 +58,11 @@ ${mcpLine}
 When unsure between light and agent, choose light unless a project, big refactor, or complex reasoning is involved.
 Recalling past sessions, notes, or past conversations passively must route light with tools=memory.
 CRITICAL: Continuing, finishing, completing, or building work (e.g. "continue", "finish it", "complete my request", "do it") must ALWAYS route with tools=all or tools=shell, NEVER tools=memory.
-we are in testing period so never router to agent mode for now.`;
+we are in testing period so never router to agent mode for now.
+INSIGHT INSTRUCTIONS (actionable directive, max 16 words):
+- For coding, fixes, UI, or file jobs: provide a direct action directive naming the target and tool approach (e.g. "Target: <file/folder>. Locate with find/code_search, make surgical edits with edit_file. Do not list_dir").
+- For running servers/commands: provide exact command or port check.
+- For lookups/memory: state exact query to search.`;
   return cachedSystem;
 }
 
@@ -142,12 +146,25 @@ export async function route(query, { recentUser = [], forceAgent = false, sessio
     r.insight = (r.insight ? r.insight + ' · ' : '') + 'eternal: light mode';
   }
 
-  // Auto-attach directory preview when query mentions a recognizable path
+  // Auto-attach directory preview when query mentions a recognizable path or home folder
   if (!r.insight?.includes('directory entry') && !r.insight?.includes('fast-path')) {
     const pathMatch = q.match(/(?:^|\s)(~\/[\w\-./]+|\.\/[\w\-./]+|\/[\w\-./]+)/i);
-    if (pathMatch) {
-      const preview = dirPreview(pathMatch[1]);
-      if (preview) r.insight = (r.insight || '') + ' · ' + preview;
+    let targetDir = pathMatch ? pathMatch[1] : null;
+    if (!targetDir) {
+      const homeFolderMatch = q.match(/(?:in|at|to)\s+([a-zA-Z0-9_\-]+)\s+(?:in\s+)?(?:homedir|home\b)/i)
+        || q.match(/(?:in|at|to)\s+(?:folder\s+|directory\s+)?([a-zA-Z0-9_\-]+)\b/i);
+      if (homeFolderMatch) {
+        const candidate = path.join(os.homedir(), homeFolderMatch[1]);
+        try {
+          if (fs.existsSync(candidate) && fs.statSync(candidate).isDirectory()) {
+            targetDir = candidate;
+          }
+        } catch {}
+      }
+    }
+    if (targetDir) {
+      const preview = dirPreview(targetDir);
+      if (preview) r.insight = (r.insight ? r.insight + ' · ' : '') + preview;
     }
   }
 

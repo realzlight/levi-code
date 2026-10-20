@@ -274,6 +274,7 @@ async function runLite(routed, sessionId, onStep, system, { signal } = {}) {
   const maxLiteSteps = effort?.maxLiteSteps || 12;
   const liteTokenBudget = Math.floor(LITE_TOKEN_BUDGET * (effort?.tokenBudgetMult || 1.0));
   const callCounts = new Map();
+  let listDirCount = 0;
   let lastText = '';
   for (let step = 0; step < maxLiteSteps; step++) {
     if (signal?.aborted) return '[Interrupted]';
@@ -351,11 +352,16 @@ async function runLite(routed, sessionId, onStep, system, { signal } = {}) {
       const callKey = `${call.name}:${JSON.stringify(call.args || {})}`;
       const seenCount = callCounts.get(callKey) || 0;
       let result;
+      if (call.name === 'list_dir') listDirCount++;
       if (isReadOnly && seenCount >= 1) {
         callCounts.set(callKey, seenCount + 1);
         result = seenCount === 1
-          ? 'Notice: You already called this exact tool with identical arguments earlier in this turn. See earlier result in conversation history. Do not repeat; proceed with your edit or answer.'
+          ? (call.name === 'list_dir'
+              ? 'Notice: You already listed this directory. To find specific files across subdirectories, use find(query, path) or code_search(query, path) instead of repeatedly listing directories.'
+              : 'Notice: You already called this exact tool with identical arguments earlier in this turn. See earlier result in conversation history. Do not repeat; proceed with your edit or answer.')
           : 'Error: Redundant call aborted to save tokens. Proceed with the data already retrieved.';
+      } else if (call.name === 'list_dir' && listDirCount > 2) {
+        result = 'Notice: Multiple list_dir calls detected in this turn. Do not wander directories with list_dir; use find(query, path) or code_search(query, path) to locate target files across all subfolders directly in 1 step, or proceed to edit_file/read_file.';
       } else {
         if (isReadOnly) callCounts.set(callKey, 1);
         const ok = LITE_NAMES.includes(call.name) || (mcpMod && mcpMod.isMcpTool(call.name));
@@ -516,6 +522,7 @@ export async function runAgent(userMessage, { onStep, maxSteps, forceAgent, sign
   let stallNudges = 0;
   const webState = { web: 0, tokens: 0, over: false, noted: false, overSteps: 0 };
   const callCounts = new Map();
+  let listDirCount = 0;
 
   for (let step = 0; step < effectiveMaxSteps; step++) {
     if (signal?.aborted) return '[Interrupted]';
@@ -659,11 +666,16 @@ export async function runAgent(userMessage, { onStep, maxSteps, forceAgent, sign
       const callKey = `${call.name}:${JSON.stringify(call.args || {})}`;
       const seenCount = callCounts.get(callKey) || 0;
       let result;
+      if (call.name === 'list_dir') listDirCount++;
       if (isReadOnly && seenCount >= 1) {
         callCounts.set(callKey, seenCount + 1);
         result = seenCount === 1
-          ? 'Notice: You already called this exact tool with identical arguments earlier in this turn. See earlier result in conversation history. Do not repeat; proceed with your edit or answer.'
+          ? (call.name === 'list_dir'
+              ? 'Notice: You already listed this directory. To find specific files across subdirectories, use find(query, path) or code_search(query, path) instead of repeatedly listing directories.'
+              : 'Notice: You already called this exact tool with identical arguments earlier in this turn. See earlier result in conversation history. Do not repeat; proceed with your edit or answer.')
           : 'Error: Redundant call aborted to save tokens. Proceed with the data already retrieved.';
+      } else if (call.name === 'list_dir' && listDirCount > 2) {
+        result = 'Notice: Multiple list_dir calls detected in this turn. Do not wander directories with list_dir; use find(query, path) or code_search(query, path) to locate target files across all subfolders directly in 1 step, or proceed to edit_file/read_file.';
       } else {
         if (isReadOnly) callCounts.set(callKey, 1);
           result = call.name === 'think'
