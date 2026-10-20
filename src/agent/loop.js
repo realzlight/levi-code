@@ -152,7 +152,7 @@ function extractPseudoToolCall(str) {
   return null;
 }
 
-const STALL_REGEX = /\b(i'll|i will|let me|lemme|going to|gonna|about to|setting (it )?up|inspecting|checking|examining|looking into|looking for|looking up|diving into|diving in|searching|fetching|running|scanning|investigating|reading|editing|writing|pulling up|digging into|gathering|on it|working on it|let's (dive|check|see|find|search|look|inspect)|hold on|hang on|give me a (sec|second|moment)|one sec)\b|\.{3,}$|…$/i;
+const STALL_REGEX = /\b(i'll|i will|let me|lemme|going to|gonna|about to|setting (it )?up|on it|working on it|let's (dive|check|see|find|search|look|inspect)|hold on|hang on|give me a (sec|second|moment)|one sec)\b|^(checking|inspecting|examining|looking into|looking for|looking up|diving into|searching|fetching|running|scanning|investigating|reading|editing|writing)\b.*(\.{3,}|…)$|\.{3,}$|…$/i;
 
 const TRIVIAL = new Set(['bash', 'read_file', 'write_file', 'edit_file', 'find', 'list_dir', 'read_lines', 'grep_search', 'code_search']);
 
@@ -328,8 +328,9 @@ async function runLite(routed, sessionId, onStep, system, { signal } = {}) {
           messages.push({ role: 'user', content: '(that came back empty. You already inspected the files above. Proceed directly to writing or editing them with write_file or edit_file now to fulfill the request. Do not stop blank.)' });
           continue;
         }
-        const isAnnouncement = STALL_REGEX.test(out) && !out.slice(-160).includes('?');
-        if (step < 3 && isAnnouncement && (out.length < 250 || !messages.some((m) => m.role === 'tool'))) {
+        const hasToolsRun = messages.some((m) => m.role === 'tool');
+        const isAnnouncement = !hasToolsRun && STALL_REGEX.test(out) && !out.slice(-160).includes('?');
+        if (step < 3 && isAnnouncement) {
           if (out.length > 8) onStep?.('narrate', out);
           messages.push({ role: 'assistant', content: out });
           messages.push({ role: 'user', content: '(you announced or narrated doing this, but made no tool call. Call the relevant tool now using function calling to execute the action. Do not stop with only narration.)' });
@@ -649,8 +650,9 @@ export async function runAgent(userMessage, { onStep, maxSteps, forceAgent, sign
         onStep?.('done', fallback);
         return fallback;
       }
-      const isAnnouncement = STALL_REGEX.test(text.trim()) && !text.trim().slice(-160).includes('?');
-      if (stallNudges < 3 && step < effectiveMaxSteps - 1 && isAnnouncement && (text.trim().length < 250 || !messages.some((m) => m.role === 'tool'))) {
+      const hasToolsRun = messages.some((m) => m.role === 'tool');
+      const isAnnouncement = !hasToolsRun && STALL_REGEX.test(text.trim()) && !text.trim().slice(-160).includes('?');
+      if (stallNudges < 3 && step < effectiveMaxSteps - 1 && isAnnouncement) {
         stallNudges++;
         onStep?.('stall_nudge', { attempt: stallNudges, step });
         if (text.trim().length > 8) onStep?.('narrate', text.trim());
