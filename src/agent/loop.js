@@ -93,22 +93,35 @@ function synthNarration(calls) {
 }
 
 // Detect and extract pseudo tool calls written as text, e.g. [find: query: foo] or [read_file(bar)]
+const PSEUDO_TOOL_NAMES = 'find|read_file|code_search|grep_search|list_dir|read_lines|bash|write_file|edit_file|google_search|fetch|retrieve|raw_memory_search|read_raw_memory|diary';
+
 function extractPseudoToolCall(str) {
   if (!str || typeof str !== 'string') return null;
 
   // Format 1: [tool_name: key: val, ...] or [tool_name: val]
-  const m1 = str.match(/\[(find|read_file|code_search|grep_search|list_dir|read_lines|bash|write_file|edit_file):\s*([^\]]+)\]/i);
+  const m1 = str.match(new RegExp(`\\[(${PSEUDO_TOOL_NAMES}):\\s*([^\\]]+)\\]`, 'i'));
   if (m1) {
     const name = m1[1].toLowerCase();
     const rawArgs = m1[2].trim();
     const args = {};
 
-    if (name === 'find' || name === 'grep_search' || name === 'code_search') {
+    if (name === 'google_search') {
+      const qm = rawArgs.match(/(?:q|query):\s*([^,\n]+)/i);
+      args.q = (qm ? qm[1] : rawArgs).replace(/^["']|["']$/g, '').trim();
+    } else if (name === 'fetch') {
+      const um = rawArgs.match(/url:\s*([^,\n]+)/i);
+      args.url = (um ? um[1] : rawArgs).replace(/^["']|["']$/g, '').trim();
+    } else if (name === 'retrieve' || name === 'raw_memory_search') {
+      const qm = rawArgs.match(/query:\s*([^,\n]+)/i);
+      args.query = (qm ? qm[1] : rawArgs).replace(/^["']|["']$/g, '').trim();
+    } else if (name === 'diary') {
+      args.text = rawArgs.replace(/^text:\s*/i, '').replace(/^["']|["']$/g, '').trim();
+    } else if (name === 'find' || name === 'grep_search' || name === 'code_search') {
       const qm = rawArgs.match(/query:\s*([^,\n]+)/i);
       args.query = (qm ? qm[1] : rawArgs).replace(/^["']|["']$/g, '').trim();
       const pm = rawArgs.match(/(?:path|folder):\s*([^,\n]+)/i);
       if (pm) args.path = pm[1].replace(/^["']|["']$/g, '').trim();
-    } else if (name === 'read_file' || name === 'list_dir') {
+    } else if (name === 'read_file' || name === 'list_dir' || name === 'read_raw_memory') {
       const pm = rawArgs.match(/path:\s*([^,\n]+)/i);
       args.path = (pm ? pm[1] : rawArgs).replace(/^["']|["']$/g, '').trim();
     } else if (name === 'bash') {
@@ -122,18 +135,24 @@ function extractPseudoToolCall(str) {
   }
 
   // Format 2: [tool_name(args)]
-  const m2 = str.match(/\[(find|read_file|code_search|grep_search|list_dir|read_lines|bash|write_file|edit_file)\(([^)]*)\)\]/i);
+  const m2 = str.match(new RegExp(`\\[(${PSEUDO_TOOL_NAMES})\\(([^)]*)\\)\\]`, 'i'));
   if (m2) {
     const name = m2[1].toLowerCase();
     const raw = m2[2].trim().replace(/^["']|["']$/g, '');
-    const args = (name === 'find' || name === 'grep_search' || name === 'code_search')
-      ? { query: raw }
-      : (name === 'bash' ? { command: raw } : { path: raw });
+    let args;
+    if (name === 'google_search') args = { q: raw };
+    else if (name === 'fetch') args = { url: raw };
+    else if (name === 'find' || name === 'grep_search' || name === 'code_search' || name === 'retrieve' || name === 'raw_memory_search') args = { query: raw };
+    else if (name === 'diary') args = { text: raw };
+    else if (name === 'bash') args = { command: raw };
+    else args = { path: raw };
     return { name, args, rawMatch: m2[0] };
   }
 
   return null;
 }
+
+const STALL_REGEX = /\b(i'll|i will|let me|lemme|going to|gonna|about to|setting (it )?up|inspecting|checking|examining|looking into|looking for|looking up|diving into|diving in|searching|fetching|running|scanning|investigating|reading|editing|writing|pulling up|digging into|gathering|on it|working on it|let's (dive|check|see|find|search|look|inspect)|hold on|hang on|give me a (sec|second|moment)|one sec)\b|\.{3,}$|…$/i;
 
 const TRIVIAL = new Set(['bash', 'read_file', 'write_file', 'edit_file', 'find', 'list_dir', 'read_lines', 'grep_search', 'code_search']);
 
@@ -300,9 +319,11 @@ async function runLite(routed, sessionId, onStep, system, { signal } = {}) {
           messages.push({ role: 'user', content: '(that came back empty. You already inspected the files above. Proceed directly to writing or editing them with write_file or edit_file now to fulfill the request. Do not stop blank.)' });
           continue;
         }
-        if (step < 2 && !messages.some((m) => m.role === 'tool') && !out.slice(-160).includes('?') && /\b(i'll|i will|let me|going to|gonna|about to|setting (it )?up|inspecting|checking|examining|looking into|diving into)\b/i.test(out)) {
+        const isAnnouncement = STALL_REGEX.test(out) && !out.slice(-160).includes('?');
+        if (step < 3 && isAnnouncement && (out.length < 250 || !messages.some((m) => m.role === 'tool'))) {
+          if (out.length > 8) onStep?.('narrate', out);
           messages.push({ role: 'assistant', content: out });
-          messages.push({ role: 'user', content: '(you announced you would inspect or do this, but made no tool call. Call the relevant tool now using your tools to inspect the files or run the command. Do not stop with only an announcement.)' });
+          messages.push({ role: 'user', content: '(you announced or narrated doing this, but made no tool call. Call the relevant tool now using function calling to execute the action. Do not stop with only narration.)' });
           continue;
         }
         return !out || out.includes('[[AGENT]]') ? null : out;
@@ -600,11 +621,13 @@ export async function runAgent(userMessage, { onStep, maxSteps, forceAgent, sign
         onStep?.('done', fallback);
         return fallback;
       }
-      if (stallNudges < 2 && step < effectiveMaxSteps - 1 && !messages.some((m) => m.role === 'tool') && !text.trim().slice(-160).includes('?') && /\b(i'll|i will|let me|going to|gonna|about to|setting (it )?up|inspecting|checking|examining|looking into|diving into)\b/i.test(text)) {
+      const isAnnouncement = STALL_REGEX.test(text.trim()) && !text.trim().slice(-160).includes('?');
+      if (stallNudges < 3 && step < effectiveMaxSteps - 1 && isAnnouncement && (text.trim().length < 250 || !messages.some((m) => m.role === 'tool'))) {
         stallNudges++;
         onStep?.('stall_nudge', { attempt: stallNudges, step });
+        if (text.trim().length > 8) onStep?.('narrate', text.trim());
         messages.push(message);
-        messages.push({ role: 'user', content: '(you announced a plan but made no tool call. the instruction was clear, so do it now with your tools. only ask if there is a real fork.)' });
+        messages.push({ role: 'user', content: '(you announced a plan or narrated doing this, but made no tool call. The instruction was clear, so execute it now using your tools. Do not stop with only narration.)' });
         continue;
       }
       onStep?.('done', text);
