@@ -869,6 +869,10 @@ export async function runTool(name, args, opts = {}) {
         } catch { /* fall through to original error */ }
         throw new Error(`ENOENT: no such file or directory, open '${p}'`);
       }
+      if (p.includes('.levi/SKILLS/') && p.endsWith('.md')) {
+        const skillName = path.basename(p, '.md');
+        import('./skills.js').then(({ recordSkillUsage }) => recordSkillUsage(skillName)).catch(() => {});
+      }
       return fs.readFileSync(p, 'utf-8');
     }
 
@@ -1075,15 +1079,35 @@ if (name === 'mcp_search') {
     }
 
     if (name === 'find') {
-      const q = String(args?.query || '').trim();
+      let q = String(args?.query || '').trim();
       if (!q) return 'Error: query required';
-      const root = resolve(args?.path || '.');
+
+      // Smart path auto-extraction: if query includes a folder path (e.g. "~/project/src" or "src/ui")
+      let targetPath = args?.path;
+      if (!targetPath && (q.startsWith('~') || q.startsWith('/') || q.startsWith('./') || (q.includes('/') && !q.includes('*')))) {
+        const resolvedQ = resolve(q);
+        try {
+          if (fs.existsSync(resolvedQ) && fs.statSync(resolvedQ).isDirectory()) {
+            targetPath = resolvedQ;
+            q = '*';
+          } else {
+            const dir = path.dirname(resolvedQ);
+            if (fs.existsSync(dir) && fs.statSync(dir).isDirectory()) {
+              targetPath = dir;
+              q = path.basename(resolvedQ);
+            }
+          }
+        } catch {}
+      }
+
+      const root = resolve(targetPath || '.');
       if (!fs.existsSync(root)) return `Error: path does not exist: ${root}`;
       const stat = fs.statSync(root);
       if (!stat.isDirectory()) return `Error: ${root} is not a directory`;
 
       const isWildcard = !q || q === '*' || q === '.' || q === '.*';
-      const qLower = q.toLowerCase();
+      const commaTerms = q.split(',').map((s) => s.trim().toLowerCase()).filter(Boolean);
+      const multiTerms = q.split(/\s+/).map((s) => s.trim().toLowerCase()).filter(Boolean);
       const results = [];
       const IGNORE_DIRS = new Set(['.git', 'node_modules', '.cache', '.npm', '.cargo', '.vscode', '.idea', 'dist', 'build', '.next', '.levi']);
 
@@ -1102,7 +1126,18 @@ if (name === 'mcp_search') {
           const nameLower = entry.name.toLowerCase();
           const relLower = relPath.toLowerCase();
 
-          if (isWildcard || nameLower.includes(qLower) || relLower.includes(qLower)) {
+          let matched = isWildcard;
+          if (!matched) {
+            if (commaTerms.length > 1) {
+              matched = commaTerms.some((term) => nameLower.includes(term) || relLower.includes(term));
+            } else if (multiTerms.length > 1) {
+              matched = multiTerms.every((term) => nameLower.includes(term) || relLower.includes(term));
+            } else {
+              matched = nameLower.includes(q.toLowerCase()) || relLower.includes(q.toLowerCase());
+            }
+          }
+
+          if (matched) {
             results.push(entry.isDirectory() ? relPath + '/' : relPath);
           }
 

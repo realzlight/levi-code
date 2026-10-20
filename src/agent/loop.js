@@ -16,13 +16,26 @@ import { autoLearnIfEligible } from './skills.js';
 // Strip ANSI escape codes, carriage returns, progress bars, and collapse whitespace from CLI output
 function cleanCliOutput(raw) {
   if (typeof raw !== 'string' || raw.length < 80) return raw;
-  return raw
+  let cleaned = raw
     .replace(/\x1B\[[0-9;]*[a-zA-Z]/g, '')   // ANSI escape sequences
     .replace(/\x1B\][^\x07]*\x07/g, '')       // OSC sequences
     .replace(/\r+/g, '')                       // carriage returns
     .replace(/^.*\[([=#>]+ *| *[=#>]+)\].*$/gm, '')  // progress bars like [=====>  ]
     .replace(/\n{3,}/g, '\n\n')                // collapse 3+ newlines to 2
     .trim();
+
+  // If noisy package manager output (npm, pip, yarn) succeeded without errors, keep the relevant summary lines
+  if (cleaned.length > 2000 && !cleaned.toLowerCase().includes('err') && !cleaned.toLowerCase().includes('failed')) {
+    const lines = cleaned.split('\n');
+    if (lines.length > 30 && (cleaned.includes('added ') || cleaned.includes('packages in') || cleaned.includes('Successfully installed') || cleaned.includes('Requirement already satisfied'))) {
+      const summaryLines = lines.filter((l) => /added \d+|packages in|audited \d+|Successfully installed|Requirement already satisfied|vulnerabilit/i.test(l));
+      if (summaryLines.length) {
+        cleaned = lines.slice(0, 3).join('\n') + `\n...[+${lines.length - 6} dependency lines collapsed to save tokens]...\n` + summaryLines.join('\n');
+      }
+    }
+  }
+
+  return cleaned;
 }
 
 // After a write_file/edit_file, collapse any earlier read_file result for the same path

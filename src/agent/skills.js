@@ -274,9 +274,42 @@ export function enableSkill(rawName) {
   return { ok: true, name };
 }
 
-export function getSkillsPromptList() {
+export function recordSkillUsage(rawName) {
+  const name = sanitizeSkillName(rawName);
+  if (!name) return;
+  const meta = readSkillsMeta();
+  if (meta.skills[name]) {
+    meta.skills[name].usedCount = (meta.skills[name].usedCount || 0) + 1;
+    meta.skills[name].lastUsedAt = new Date().toISOString();
+    writeSkillsMeta(meta);
+  }
+}
+
+export function getSkillsPromptList(query = '') {
   const skills = listSkills().filter((s) => !s.disabled);
-  return skills.map((s) => {
+  let selected = skills;
+
+  // If we have more than 8 skills and a query is available, select top 5 most relevant to save context tokens
+  if (skills.length > 8 && query && typeof query === 'string') {
+    const qTokens = query.toLowerCase().split(/\W+/).filter((t) => t.length > 2);
+    if (qTokens.length) {
+      const scored = skills.map((s) => {
+        const text = `${s.name} ${s.title || ''} ${s.summary || ''}`.toLowerCase();
+        let score = 0;
+        for (const t of qTokens) {
+          if (text.includes(t)) score += 1;
+        }
+        if (s.usedCount) score += Math.min(s.usedCount * 0.2, 1);
+        return { s, score };
+      });
+      scored.sort((a, b) => b.score - a.score);
+      // Take matching ones, or top 5 by usage
+      const matches = scored.filter((x) => x.score > 0).map((x) => x.s);
+      selected = matches.length ? matches.slice(0, 5) : scored.slice(0, 5).map((x) => x.s);
+    }
+  }
+
+  return selected.map((s) => {
     let desc = '';
     if (s.title && s.summary) {
       if (s.summary.toLowerCase().startsWith(s.title.toLowerCase())) {
@@ -287,11 +320,12 @@ export function getSkillsPromptList() {
     } else {
       desc = s.summary || s.title || `Custom skill for ${s.name}`;
     }
+    const usage = s.usedCount ? ` [used ${s.usedCount}x]` : '';
     return {
       name: s.name,
       title: s.title || s.name,
       summary: s.summary,
-      line: `- ${s.name}: ${desc}`
+      line: `- ${s.name}${usage}: ${desc}`
     };
   });
 }
@@ -306,7 +340,16 @@ export function saveLearnedSkill({ name: rawName, title, when_to_use, recipe }) 
   const cleanTitle = (title || name).trim().replace(/[\r\n]+/g, ' ');
   const cleanSummary = (when_to_use || `Instructions for ${cleanTitle}`).trim().replace(/[\r\n]+/g, ' ');
 
-  const content = `# ${cleanTitle}
+  const meta = readSkillsMeta();
+  let content;
+  const existing = fs.existsSync(filePath) ? fs.readFileSync(filePath, 'utf-8') : null;
+
+  if (existing && existing.length > 50) {
+    // Evolutionary update: append new playbook notes to existing skill
+    const dateStr = new Date().toISOString().slice(0, 10);
+    content = existing.trim() + `\n\n### Additional Playbook / Workaround (${dateStr})\n${(recipe || '').trim()}\n`;
+  } else {
+    content = `# ${cleanTitle}
 
 > ${cleanSummary}
 
@@ -316,14 +359,15 @@ ${cleanSummary}
 ## Recipe & Playbook
 ${(recipe || '').trim()}
 `;
+  }
 
   fs.writeFileSync(filePath, content, 'utf-8');
-  const meta = readSkillsMeta();
   meta.skills[name] = {
     name,
     title: cleanTitle,
     summary: cleanSummary,
     disabled: false,
+    usedCount: meta.skills[name]?.usedCount || 0,
     createdAt: meta.skills[name]?.createdAt || new Date().toISOString(),
     updatedAt: new Date().toISOString()
   };
