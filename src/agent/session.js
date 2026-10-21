@@ -24,7 +24,74 @@ function nextId() {
   return ids.length ? Math.max(...ids) + 1 : 1;
 }
 
+// Prunes empty ghost sessions and archives old inactive session buffers
+export function autoPruneSessions({ maxActive = 30, maxEnded = 60, pruneEmpty = true } = {}) {
+  const current = currentSessionId();
+  let prunedEmpty = 0;
+  let archivedActive = 0;
+  let prunedEnded = 0;
+
+  // 1. Prune ghost/empty sessions from ACTIVE-BUFFER
+  if (pruneEmpty && fs.existsSync(BUFFER_ROOT)) {
+    const entries = fs.readdirSync(BUFFER_ROOT);
+    for (const entry of entries) {
+      const m = /^SESSION-(\d+)$/.exec(entry);
+      if (!m) continue;
+      const id = Number(m[1]);
+      if (id === current) continue;
+      const sDir = sessionDir(id);
+      try {
+        const bufFile = path.join(sDir, 'BUFFER.MD');
+        const titleFile = path.join(sDir, 'TITLE.TXT');
+        const taskFile = path.join(sDir, 'TASK.md');
+        const buf = fs.existsSync(bufFile) ? fs.readFileSync(bufFile, 'utf-8').trim() : '';
+        const title = fs.existsSync(titleFile) ? fs.readFileSync(titleFile, 'utf-8').trim() : '';
+        const tasks = fs.existsSync(taskFile) ? fs.readFileSync(taskFile, 'utf-8').trim() : '';
+        const isEmpty = (!title && !tasks && (!buf || buf === 'summary: (empty session)'));
+        if (isEmpty) {
+          fs.rmSync(sDir, { recursive: true, force: true });
+          prunedEmpty++;
+        }
+      } catch {}
+    }
+  }
+
+  // 2. Auto-archive oldest active sessions if over maxActive
+  if (fs.existsSync(BUFFER_ROOT)) {
+    const activeList = listSessions();
+    if (activeList.length > maxActive) {
+      const excess = activeList.length - maxActive;
+      const candidates = activeList.filter((s) => s.id !== current);
+      for (let i = 0; i < Math.min(excess, candidates.length); i++) {
+        endSession(candidates[i].id);
+        archivedActive++;
+      }
+    }
+  }
+
+  // 3. Auto-prune oldest ended sessions if over maxEnded
+  if (fs.existsSync(ENDED_ROOT)) {
+    const endedList = listEndedSessions();
+    if (endedList.length > maxEnded) {
+      const toDelete = endedList.slice(maxEnded);
+      for (const item of toDelete) {
+        try {
+          fs.rmSync(path.join(ENDED_ROOT, item.dirName), { recursive: true, force: true });
+          prunedEnded++;
+        } catch {}
+      }
+    }
+  }
+
+  if (prunedEmpty > 0 || archivedActive > 0 || prunedEnded > 0) {
+    import('./retrieval.js').then((m) => m.rebuildIndex()).catch(() => {});
+  }
+
+  return { prunedEmpty, archivedActive, prunedEnded };
+}
+
 export function createSession() {
+  try { autoPruneSessions(); } catch {}
   const id = nextId();
   const dir = sessionDir(id);
   fs.mkdirSync(dir, { recursive: true });
