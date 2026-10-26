@@ -35,7 +35,7 @@ function parse(raw) {
   const summary = summaryMatch ? summaryMatch[1].trim() : '';
   const body = summaryMatch ? raw.slice(summaryMatch[0].length) : raw;
 
-  const parts = body.split(/^@@(user|agent)\n/m).slice(1);
+  const parts = body.split(/^@@(user|agent|tool)\n/m).slice(1);
   const messages = [];
   for (let i = 0; i < parts.length; i += 2) {
     const role = parts[i];

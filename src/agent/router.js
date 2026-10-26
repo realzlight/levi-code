@@ -123,7 +123,15 @@ export async function route(query, { recentUser = [], forceAgent = false, sessio
   let r;
   if (forceAgent) r = { route: 'agent', insight: 'agent mode forced' };
   else if (GREETING.test(q)) r = { route: 'conversation', tools: 'none', mcp: false, insight: 'greeting or thanks' };
-  else if (/^(continue|keep going|finish(\s+\w+)?|complete(\s+\w+)?|com0lete(\s+\w+)?|proceed|go ahead|do it|next)\b/i.test(q)) r = { route: 'light', tools: 'all', mcp: false, insight: 'fast-path: continue/complete request' };
+  else if (/^(continue|keep going|finish(\s+\w+)?|complete(\s+\w+)?|com0lete(\s+\w+)?|proceed|go ahead|do it|next)\b/i.test(q)) {
+    const prevMsg = recent.length ? recent[recent.length - 1] : '';
+    r = {
+      route: 'light',
+      tools: 'all',
+      mcp: false,
+      insight: `fast-path: continue previous work${prevMsg ? ` ("${prevMsg.slice(0, 50)}")` : ''}. Do NOT recreate existing directories or rewrite finished files; continue from next step.`
+    };
+  }
   else if (/^git\s+(status|diff|log|branch|checkout|add|commit|pull|push|stash)\b/i.test(q)) r = { route: 'light', tools: 'shell', mcp: false, insight: 'fast-path: git command' };
   else if (/^(ls|pwd|cat|cd|mkdir|touch|grep|find|rm|mv|cp|which|where|head|tail|sed|awk|echo|curl)\b/i.test(q)) r = { route: 'light', tools: 'shell', mcp: false, insight: 'fast-path: shell utility' };
   else if (/^(read|view|show|check|cat|inspect|open)\s+([a-zA-Z0-9_\-./~]+\.[a-zA-Z0-9]+)$/i.test(q)) r = { route: 'light', tools: 'shell', mcp: false, insight: 'fast-path: read single file' };

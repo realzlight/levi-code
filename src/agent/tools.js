@@ -1071,10 +1071,9 @@ if (name === 'mcp_search') {
         shell: true,
         reject: false,
         all: true,
-        timeout: 60_000,
+        timeout: 0,
         env: { ...process.env, CI: 'true', DEBIAN_FRONTEND: 'noninteractive', GIT_TERMINAL_PROMPT: '0', PYTHONUNBUFFERED: '1' }
       });
-      if (r.timedOut) return `Error: command timed out after 60 seconds. The command was killed. For servers, watchers, or long-running commands, set background: true or append & to run in background.`;
       return r.all || `(exit ${r.exitCode}, no output)`;
     }
 

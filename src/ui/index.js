@@ -931,17 +931,15 @@ function buildDisplayLines(messages, width, compactTools = false) {
       return;
     }
 
-    // Narration — white prose between tool calls, with tag parsing and ▸ prefix
+    // Narration — prose between tool calls, rendered cleanly without arrow glyph
     if (msg.role === 'narrate') {
       const text = typeof msg.text === 'string' ? msg.text : '';
-      const textWidth = Math.max(10, safeWidth - 5);
+      const textWidth = Math.max(10, safeWidth - 4);
       const wrapped = wrapAgentLines(text, textWidth);
       wrapped.forEach((chunk, lineIdx) => {
-        const isFirst = lineIdx === 0;
         lines.push({
           key: `msg-${msgIdx}-nar-${lineIdx}`,
           node: h(Box, { key: `msg-${msgIdx}-nar-${lineIdx}`, paddingLeft: 2, height: 1, overflow: 'hidden' },
-            h(Text, { color: isFirst ? '#afd7ff' : 'transparent' }, isFirst ? '▸ ' : '  '),
             h(Box, null, ...parseLineToNodes(chunk, textWidth))
           )
         });
@@ -949,6 +947,22 @@ function buildDisplayLines(messages, width, compactTools = false) {
       lines.push({
         key: `msg-${msgIdx}-nar-sep`,
         node: h(Box, { key: `msg-${msgIdx}-nar-sep`, height: 1, overflow: 'hidden' }, h(Text, null, ' '))
+      });
+      return;
+    }
+
+    // Tool summary message (restored from session buffer)
+    if (msg.role === 'tool') {
+      const text = typeof msg.text === 'string' ? msg.text : '';
+      const textWidth = Math.max(10, safeWidth - 4);
+      const rawLines = text.split('\n');
+      rawLines.forEach((tLine, lineIdx) => {
+        lines.push({
+          key: `msg-${msgIdx}-tool-${lineIdx}`,
+          node: h(Box, { key: `msg-${msgIdx}-tool-${lineIdx}`, paddingLeft: 2, height: 1, overflow: 'hidden' },
+            h(Text, { color: '#6e7681' }, tLine.slice(0, textWidth))
+          )
+        });
       });
       return;
     }
@@ -1221,6 +1235,8 @@ function App({ mascot }) {
         }
       };
 
+      if (id) appendMessage(id, 'user', text);
+
       let reply;
       try {
         reply = await runAgent(text, { onStep, signal: abortController.signal });
@@ -1240,8 +1256,6 @@ function App({ mascot }) {
       if (abortController.signal.aborted && !reply) {
         reply = '[Interrupted]';
       }
-
-      appendMessage(id, 'user', text);
 
       if (reply && typeof reply === 'object' && reply.__ask) {
         appendMessage(id, 'agent', reply.question);

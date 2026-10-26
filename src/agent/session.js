@@ -196,7 +196,7 @@ export function loadMessages(id) {
     return [];
   }
   const body = raw.replace(/^summary:.*\n\n?/, '');
-  const parts = body.split(/^@@(user|agent)\n/m).slice(1);
+  const parts = body.split(/^@@(user|agent|tool)\n/m).slice(1);
   const messages = [];
   for (let i = 0; i < parts.length; i += 2) {
     const role = parts[i];

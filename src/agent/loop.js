@@ -4,7 +4,7 @@ import path from 'node:path';
 import { chatWithTools } from './client.js';
 import { toolDefs, runTool, CATEGORIES } from './tools.js';
 import { think, readProjectContext, thinkToolDef } from './thought.js';
-import { currentSessionId, getProject, loadMessages, isSoloOnly, isDiaryEnabled } from './session.js';
+import { currentSessionId, getProject, loadMessages, isSoloOnly, isDiaryEnabled, appendMessage } from './session.js';
 import { getTasks } from './tasks.js';
 import { startTurn, recordUsage } from './usage.js';
 import { route } from './router.js';
@@ -74,37 +74,108 @@ function compactSupersededReads(messages, writtenPath) {
 // Strips ~400 tokens of unused tool schemas per step.
 const CODING_ONLY_NAMES = new Set(['bash', 'read_file', 'write_file', 'edit_file', 'list_dir', 'find', 'read_lines', 'grep_search', 'code_search', 'ask']);
 
-// Generate a brief, human-readable narration from a tool call when the model
-// doesn't provide its own text alongside tool_calls (common with Gemini).
+// Generate 1-2 fluent, meaningful Claude-style narration lines from tool calls
+// when the model doesn't provide its own prose alongside tool_calls.
 function synthNarration(calls) {
   if (!calls?.length) return null;
   const parts = calls.map(c => {
     const p = c.args?.path || c.args?.file || c.args?.folder || '';
     const base = p ? path.basename(p) : '';
     switch (c.name) {
-      case 'read_file': return `reading ${base || 'a file'}`;
-      case 'write_file': return `writing ${base || 'a file'}`;
-      case 'edit_file': return `editing ${base || 'a file'}`;
-      case 'bash': return `running \`${String(c.args?.command || '').slice(0, 40)}\``;
-      case 'list_dir': return `listing ${base || c.args?.path || 'directory'}`;
-      case 'find': return `searching for ${c.args?.query || 'files'}`;
-      case 'grep_search': return `searching for "${String(c.args?.query || '').slice(0, 30)}"`;
-      case 'code_search': return `searching code for "${String(c.args?.query || '').slice(0, 30)}"`;
-      case 'read_lines': return `reading lines from ${base || 'a file'}`;
-      case 'google_search': return `searching the web`;
-      case 'fetch': return `fetching a URL`;
-      case 'remember': return `saving a note`;
-      case 'retrieve': return `looking up memory`;
-      case 'raw_memory_search': return `searching raw memory for "${c.args?.query || ''}"`;
-      case 'read_raw_memory': return `reading raw memory ${c.args?.type || ''} ${c.args?.name || (c.args?.session_id ? '#' + c.args?.session_id : '')}`.trim();
-      case 'diary': return c.args?.read ? `reading session diary` : `writing note to diary`;
-      case 'learn_skill': return `saving learned skill "${c.args?.name || ''}"`;
-      case 'spawn_subagent': return `spawning sub-agent "${c.args?.role || 'worker'}"`;
-      case 'message_subagent': return `messaging sub-agent`;
-      default: return `calling ${c.name}`;
+      case 'read_file':
+        return `reading ${base ? `\`${base}\`` : 'the file'} to inspect its implementation`;
+      case 'write_file':
+        return `writing ${base ? `\`${base}\`` : 'the file'} with the updated code`;
+      case 'edit_file':
+        return `applying targeted edits to ${base ? `\`${base}\`` : 'the file'}`;
+      case 'bash': {
+        const cmd = String(c.args?.command || '').trim();
+        return `executing \`${cmd.slice(0, 50)}${cmd.length > 50 ? '...' : ''}\``;
+      }
+      case 'list_dir':
+        return `inspecting ${base ? `\`${base}\`` : (c.args?.path || 'workspace directory')}`;
+      case 'find':
+        return `searching for ${c.args?.query ? `\`${c.args.query}\`` : 'matching files'}`;
+      case 'grep_search':
+        return `searching codebase for "${String(c.args?.query || '').slice(0, 30)}"`;
+      case 'code_search':
+        return `searching code symbols for "${String(c.args?.query || '').slice(0, 30)}"`;
+      case 'read_lines':
+        return `reading specific lines from ${base ? `\`${base}\`` : 'the file'}`;
+      case 'google_search':
+        return `searching the web for "${c.args?.q || 'information'}"`;
+      case 'fetch':
+        return `fetching data from ${c.args?.url || 'the URL'}`;
+      case 'remember':
+        return `saving note to memory`;
+      case 'retrieve':
+        return `querying memory index for "${c.args?.query || ''}"`;
+      case 'raw_memory_search':
+        return `searching raw memory notes for "${c.args?.query || ''}"`;
+      case 'read_raw_memory':
+        return `reading memory document ${c.args?.name || ''}`.trim();
+      case 'diary':
+        return c.args?.read ? `reviewing working scratchpad` : `updating scratchpad notes`;
+      case 'learn_skill':
+        return `recording distilled skill "${c.args?.name || ''}" for future tasks`;
+      case 'spawn_subagent':
+        return `delegating task to sub-agent "${c.args?.role || 'worker'}"`;
+      case 'message_subagent':
+        return `communicating with sub-agent`;
+      default:
+        return `calling ${c.name}`;
     }
   });
-  return parts.join(', ') + '...';
+
+  if (parts.length === 1) {
+    const s = parts[0];
+    return s.charAt(0).toUpperCase() + s.slice(1) + '.';
+  }
+  const joined = parts.slice(0, 2).join(' and ');
+  return joined.charAt(0).toUpperCase() + joined.slice(1) + '.';
+}
+
+function summarizeTurnTools(toolCalls) {
+  if (!toolCalls || !toolCalls.length) return '';
+  const lines = [];
+  for (const tc of toolCalls) {
+    const name = tc.name;
+    const args = tc.args || {};
+    const res = String(tc.result || '').trim();
+
+    if (name === 'bash') {
+      const cmd = String(args.command || '').trim();
+      let out = res.replace(/\n+/g, ' ').slice(0, 100);
+      if (!out || out.includes('(exit 0')) out = 'exit 0';
+      lines.push(`bash(\`${cmd}\`): ${out}`);
+    } else if (name === 'write_file') {
+      lines.push(`write_file(\`${args.path}\`): written`);
+    } else if (name === 'edit_file') {
+      lines.push(`edit_file(\`${args.path}\`): edited`);
+    } else if (name === 'read_file') {
+      lines.push(`read_file(\`${args.path}\`): read`);
+    } else if (name === 'find') {
+      let out = res.replace(/\n+/g, ', ').slice(0, 80);
+      lines.push(`find(\`${args.query || args.path}\`): ${out}`);
+    } else if (name === 'grep_search' || name === 'code_search') {
+      let out = res.replace(/\n+/g, ' ').slice(0, 80);
+      lines.push(`${name}(\`${args.query}\`): ${out}`);
+    } else if (name === 'remember') {
+      lines.push(`remember: "${args.fact || ''}"`);
+    } else if (name === 'set_project') {
+      lines.push(`set_project: "${args.name || ''}"`);
+    } else if (name === 'learn_skill') {
+      lines.push(`learn_skill: "${args.name || ''}"`);
+    }
+  }
+  return lines.join('\n');
+}
+
+function recordTurnToolSummary(sessionId, turnToolCalls) {
+  if (sessionId && turnToolCalls && turnToolCalls.length) {
+    const summary = summarizeTurnTools(turnToolCalls);
+    if (summary) appendMessage(sessionId, 'tool', summary);
+  }
 }
 
 // Detect and extract pseudo tool calls written as text, e.g. [find: query: foo] or [read_file(bar)]
@@ -223,15 +294,15 @@ const LITE_GROUPS = {
 };
 const MORE_TOOL = { type: 'function', function: { name: 'more_tools', description: 'Load browser automation and desktop tools when web browser or GUI automation is needed.', parameters: { type: 'object', properties: {} } } };
 const WEB_NAMES = ['google_search', 'fetch'];
-const WEB_BUDGET = 3;
-const RESULT_CAP = 1500;
-const LITE_TOKEN_BUDGET = 80000;
-const AGENT_WEB_BUDGET = 6;
-const AGENT_WEB_CAP = 3000;
-const AGENT_OUTPUT_CAP = 8000;
+const WEB_BUDGET = 10;
+const RESULT_CAP = 4000;
+const LITE_TOKEN_BUDGET = 1000000;
+const AGENT_WEB_BUDGET = 15;
+const AGENT_WEB_CAP = 6000;
+const AGENT_OUTPUT_CAP = 16000;
 const OUTPUT_TOOLS = ['read_file', 'bash', 'find', 'list_dir', 'read_lines', 'grep_search', 'code_search', 'raw_memory_search', 'read_raw_memory', 'diary', 'web_get_text', 'web_screenshot', 'web_get_url', 'desktop_screenshot', 'desktop_get_window_state', 'desktop_list_apps'];
 async function runToolGuarded(call, state, opts = {}) {
-  if (state.over) return 'Error: token budget for this message is used up. Answer now with what you have and say what you would check next.';
+  if (state.over) return 'Error: token budget (1,000,000) for this message is used up. Answer now with what you have and say what you would check next.';
   if (!WEB_NAMES.includes(call.name)) {
     const out = await runTool(call.name, call.args, opts);
     const toolCap = call.name === 'read_file' ? 65000 : AGENT_OUTPUT_CAP;
@@ -291,9 +362,8 @@ async function runLite(routed, sessionId, onStep, system, { signal } = {}) {
     if (!expanded && !['web', 'desktop'].includes(routed.tools)) tools = [...tools, MORE_TOOL];
     return webCalls >= WEB_BUDGET ? tools.filter((t) => !WEB_NAMES.includes(t.function.name)) : tools;
   };
-  const effort = getEffort();
-  const maxLiteSteps = effort?.maxLiteSteps || 12;
-  const liteTokenBudget = Math.floor(LITE_TOKEN_BUDGET * (effort?.tokenBudgetMult || 1.0));
+  const maxLiteSteps = 500;
+  const liteTokenBudget = 1000000;
   const callCounts = new Map();
   let listDirCount = 0;
   let lastText = '';
@@ -302,7 +372,10 @@ async function runLite(routed, sessionId, onStep, system, { signal } = {}) {
   const turnToolCalls = [];
   for (let step = 0; step < maxLiteSteps; step++) {
     if (signal?.aborted) return '[Interrupted]';
-    if (liteTokens > liteTokenBudget) return 'Stopped: light-mode token budget (' + liteTokenBudget + ') reached for this message. Send another message to continue from here.';
+    if (liteTokens > liteTokenBudget) {
+      recordTurnToolSummary(sessionId, turnToolCalls);
+      return 'Stopped: token budget (1,000,000) reached for this message. Send another message to continue from here.';
+    }
     const liteResults = messages.map((m, i) => (m.role === 'tool' ? i : -1)).filter((i) => i >= 0);
     for (const i of liteResults.slice(0, -4)) {
       if (String(messages[i].content).length > 300) messages[i] = { ...messages[i], content: String(messages[i].content).slice(0, 300) + '\n...[older result trimmed]' };
@@ -355,6 +428,7 @@ async function runLite(routed, sessionId, onStep, system, { signal } = {}) {
         if (out && !out.includes('[[AGENT]]')) {
           autoLearnIfEligible({ userQuery: routed.query, toolCalls: turnToolCalls, resultText: out, onStep });
         }
+        recordTurnToolSummary(sessionId, turnToolCalls);
         return !out || out.includes('[[AGENT]]') ? null : out;
       }
     }
@@ -371,6 +445,7 @@ async function runLite(routed, sessionId, onStep, system, { signal } = {}) {
       onStep?.('tool_call', askCall);
       const result = await runTool(askCall.name, askCall.args);
       onStep?.('tool_result', { call: askCall, result });
+      recordTurnToolSummary(sessionId, turnToolCalls);
       return JSON.parse(result);
     }
     for (const call of toolCalls) {
@@ -423,6 +498,7 @@ async function runLite(routed, sessionId, onStep, system, { signal } = {}) {
       if (finalText) {
         autoLearnIfEligible({ userQuery: routed.query, toolCalls: turnToolCalls, resultText: finalText, onStep });
       }
+      recordTurnToolSummary(sessionId, turnToolCalls);
       onStep?.('done', finalText);
       return finalText;
     }
@@ -431,6 +507,7 @@ async function runLite(routed, sessionId, onStep, system, { signal } = {}) {
     if (totalDupes >= 3) {
       const dupeList = [...callCounts.entries()].filter(([, v]) => v > 1).map(([k, v]) => `${k.split(':')[0]} (${v}x)`).join(', ');
       const breakMsg = `alright, i'm going in circles — re-reading the same things (${dupeList}). what exactly should i do here? give me a specific instruction or path and i'll get it done.`;
+      recordTurnToolSummary(sessionId, turnToolCalls);
       onStep?.('done', breakMsg);
       return breakMsg;
     }
@@ -439,6 +516,7 @@ async function runLite(routed, sessionId, onStep, system, { signal } = {}) {
   if (endReply) {
     autoLearnIfEligible({ userQuery: routed.query, toolCalls: turnToolCalls, resultText: endReply, onStep });
   }
+  recordTurnToolSummary(sessionId, turnToolCalls);
   return endReply;
 }
 
@@ -446,9 +524,10 @@ function buildExchange(stored) {
   const idx = stored.map((m, i) => ({ m, i })).filter((x) => x.m && x.m.text && x.m.text !== '...');
   const us = idx.filter((x) => x.m.role === 'user').slice(-3);
   const as = idx.filter((x) => x.m.role === 'agent').slice(-3);
-  return [...us, ...as]
+  const ts = idx.filter((x) => x.m.role === 'tool').slice(-3);
+  return [...us, ...as, ...ts]
     .sort((p, q) => p.i - q.i)
-    .map((x) => ({ role: x.m.role, text: String(x.m.text).slice(0, x === as[as.length - 1] ? 900 : 350) }));
+    .map((x) => ({ role: x.m.role, text: String(x.m.text).slice(0, x.m.role === 'agent' && x === as[as.length - 1] ? 900 : 450) }));
 }
 
 let mcpMod = null;
@@ -515,9 +594,8 @@ export async function runAgent(userMessage, { onStep, maxSteps, forceAgent, sign
     pendingTasks = getTasks(sessionId).reduce((n, c) => n + (c.status === 'completed' ? 0 : c.tasks.filter((t) => !t.done).length), 0);
   }
   const effort = getEffort();
-  // a cap, not spend: agent mode is real work, scaled by active effort
-  const effectiveMaxSteps = maxSteps || Math.max(pendingTasks * 4 + 10, effort?.maxAgentSteps || 30);
-  let tokenBudget = Math.floor((50000 + pendingTasks * 10000) * (effort?.tokenBudgetMult || 1.0));
+  const effectiveMaxSteps = maxSteps || 500;
+  let tokenBudget = 1000000;
   const system = buildSystem();
   const loopSystem = buildLoopSystem();
   const SUB = ['spawn_subagent', 'list_subagents', 'message_subagent'];
@@ -540,15 +618,22 @@ export async function runAgent(userMessage, { onStep, maxSteps, forceAgent, sign
     if (!isDiaryEnabled()) all = all.filter((t) => (t.function?.name || t.name) !== 'diary');
     return all;
   };
-  // give the tool-calling loop real conversation history, not just a hint via
-  // the system prompt — this is what lets it resolve "it"/"that"/pronouns
-  // directly instead of guessing and going searching for something it already knows
+  // give the tool-calling loop real conversation history, including executed tools
   const history = [];
   for (const m of exchange) {
-    const role = m.role === 'agent' ? 'assistant' : 'user';
-    const prev = history[history.length - 1];
-    if (prev && prev.role === role) prev.content += '\n\n' + m.text;
-    else history.push({ role, content: m.text });
+    if (m.role === 'tool') {
+      const prev = history[history.length - 1];
+      if (prev && prev.role === 'assistant') {
+        prev.content = `[executed tools:\n${m.text}]\n\n` + prev.content;
+      } else {
+        history.push({ role: 'assistant', content: `[executed tools:\n${m.text}]` });
+      }
+    } else {
+      const role = m.role === 'agent' ? 'assistant' : 'user';
+      const prev = history[history.length - 1];
+      if (prev && prev.role === role) prev.content += '\n\n' + m.text;
+      else history.push({ role, content: m.text });
+    }
   }
   while (history.length && history[0].role === 'assistant') history.shift();
   const mcpNames = customMcp ? getMcpNames() : undefined;
@@ -676,6 +761,7 @@ export async function runAgent(userMessage, { onStep, maxSteps, forceAgent, sign
           }
         }
         onStep?.('done', fallback);
+        recordTurnToolSummary(sessionId, turnToolCalls);
         return fallback;
       }
       const hasToolsRun = messages.some((m) => m.role === 'tool');
@@ -691,6 +777,7 @@ export async function runAgent(userMessage, { onStep, maxSteps, forceAgent, sign
       if (text) {
         autoLearnIfEligible({ userQuery: userMessage, toolCalls: turnToolCalls, resultText: text, onStep });
       }
+      recordTurnToolSummary(sessionId, turnToolCalls);
       onStep?.('done', text);
       return text;
     }
@@ -709,6 +796,7 @@ export async function runAgent(userMessage, { onStep, maxSteps, forceAgent, sign
       const result = await runTool(askCall.name, askCall.args);
       onStep?.('tool_result', { call: askCall, result });
       const payload = JSON.parse(result);
+      recordTurnToolSummary(sessionId, turnToolCalls);
       onStep?.('done', payload);
       return payload;
     }
@@ -754,11 +842,13 @@ export async function runAgent(userMessage, { onStep, maxSteps, forceAgent, sign
     if (totalDupes >= 4) {
       const dupeList = [...callCounts.entries()].filter(([, v]) => v > 1).map(([k, v]) => `${k.split(':')[0]} (${v}x)`).join(', ');
       const breakMsg = `alright, i'm going in circles — re-reading the same things (${dupeList}). what exactly should i do here? give me a specific instruction or path and i'll get it done.`;
+      recordTurnToolSummary(sessionId, turnToolCalls);
       onStep?.('done', breakMsg);
       return breakMsg;
     }
   }
 
+  recordTurnToolSummary(sessionId, turnToolCalls);
   if (sessionId) {
     const clusters = getTasks(sessionId);
     const activeCluster = clusters.find((c) => c.status !== 'completed');
