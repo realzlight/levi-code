@@ -49,7 +49,7 @@ function routerSystem() {
     ? `mcp: the name of the MCP server if the request needs one, or false. Available MCP servers: ${names.join(', ')}. Examples: github = repos/PRs/issues/code search, cua-driver = desktop automation (mouse, keyboard, window, apps), serper = web search, fetch = read a URL, youtube = video info, playwright = browser automation. Return the server name string when the user wants to use one, false otherwise.`
     : `mcp: always false (no MCP servers configured).`;
 
-  cachedSystem = `Route a message for a coding assistant. Output ONLY JSON: {"route":"conversation"|"light"|"agent","tools":"none"|"memory"|"web"|"desktop"|"shell"|"tasks"|"all","mcp":"<server>"|false,"insight":"max 16 words"}
+  cachedSystem = `Route a message for a coding assistant. Output ONLY JSON: {"route":"conversation"|"light"|"agent","tools":"none"|"memory"|"web"|"desktop"|"shell"|"tasks"|"all","mcp":"<server>"|false,"insight":"<work plan>"}
 agent = a project or big job: building or scaffolding an app, big fixes or refactors across 3+ files, complex reasoning or debugging, git workflows, deep multi-source research, planning or reorganizing task plans, sub-agents, or continues agent work (e.g. "yes", "the second one" when last_route is agent).
 light = any other job that needs tools, up to about 10 tool calls: code reviews, small fixes and edits (1-2 files), running commands, web lookups, saving facts, recalling past sessions, notes, or conversations, task cluster views, using MCP tools. Mixed jobs: tools = all.
 conversation = plain casual chat, simple questions/explanations without tools, short follow-ups.
@@ -59,10 +59,12 @@ When unsure between light and agent, choose light unless a project, big refactor
 Recalling past sessions, notes, or past conversations passively must route light with tools=memory.
 CRITICAL: Continuing, finishing, completing, or building work (e.g. "continue", "finish it", "complete my request", "do it") must ALWAYS route with tools=all or tools=shell, NEVER tools=memory.
 we are in testing period so never router to agent mode for now.
-INSIGHT INSTRUCTIONS (actionable directive, max 16 words):
-- For coding, fixes, UI, or file jobs: provide a direct action directive naming the target and tool approach (e.g. "Target: <file/folder>. Locate with find/code_search, make surgical edits with edit_file. Do not list_dir").
-- For running servers/commands: provide exact command or port check.
-- For lookups/memory: state exact query to search.`;
+INSIGHT = a compact work plan the agent sees before step 1. Be specific — name file paths, exact commands, or query terms so the agent skips discovery calls.
+Format for code/file jobs: "Target: <exact file or folder path>. Action: <what to change/add>. Tool: <first tool to use> [then <next tool>]. Skip: list_dir."
+Format for commands/servers: "Run: <exact command>. Check: <what to verify after>."
+Format for lookups/memory: "Search: <exact query term>. Tool: retrieve or raw_memory_search."
+Format for web/info: "Query: <exact search string>. Tool: google_search or fetch."
+Keep insight under 60 words. Never vague. Name the actual file or folder when you know it from the query. If the dir preview is attached, use it to name the exact file to edit.`;
   return cachedSystem;
 }
 
@@ -91,7 +93,7 @@ recent user messages:
 ${recent.length ? recent.map((m) => `- ${m}`).join('\n') : '(none)'}
 current: ${query.slice(0, 600)}`;
   try {
-    const res = await chat([{ role: 'user', content: prompt }], { system: routerSystem(), signal });
+    const res = await chat([{ role: 'user', content: prompt }], { system: routerSystem(), maxTokens: 350, signal });
     if (sessionId) recordUsage(sessionId, res.usage);
     const data = JSON.parse(res.text.trim().replace(/^```json\s*|```\s*$/g, ''));
     const mcpServer = parseMcp(data.mcp);
@@ -105,7 +107,7 @@ current: ${query.slice(0, 600)}`;
       route,
       tools,
       mcp: mcpServer,
-      insight: String(data.insight || '').slice(0, 120)
+      insight: String(data.insight || '').slice(0, 400)
     };
   } catch (e) {
     if (signal?.aborted || e.name === 'AbortError' || e.message === 'Interrupted') throw e;

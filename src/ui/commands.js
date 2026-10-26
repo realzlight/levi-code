@@ -297,6 +297,23 @@ defineCommand({
 });
 
 defineCommand({
+  name: 'session:prune',
+  description: 'Prune empty/overflow sessions (auto-runs on startup)',
+  run: async (_, ctx) => {
+    const { autoPruneSessions } = await sessionMod();
+    const result = autoPruneSessions({ maxActive: 30, maxEnded: 60, pruneEmpty: true });
+    ctx.printPanel({
+      title: 'Session Prune',
+      fields: [
+        { label: 'Empty removed', value: String(result.prunedEmpty ?? 0) },
+        { label: 'Active archived', value: String(result.archivedActive ?? 0) },
+        { label: 'Ended deleted', value: String(result.prunedEnded ?? 0) }
+      ]
+    });
+  }
+});
+
+defineCommand({
   name: 'alone',
   description: 'Toggle solo mode',
   run: async (_, ctx) => {
