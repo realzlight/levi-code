@@ -401,7 +401,7 @@ export const toolDefs = [
     type: 'function',
     function: {
       name: 'spawn_subagent',
-      description: 'Delegate ONE concrete, self-contained task to a sub-agent (file/bash only; no memory, tasks, or questions). Give exact file(s), change, and what to report. Blocked in solo mode (/alone).',
+      description: 'Delegate ONE concrete, self-contained task to a sub-agent (file/bash only; no memory, tasks, or questions). Give exact file(s), change, and what to report. Blocked when subagents are disabled in /config.',
       parameters: {
         type: 'object',
         properties: {
@@ -1497,7 +1497,7 @@ if (name === 'mcp_search') {
     }
 
     if (name === 'spawn_subagent') {
-      if (isSoloOnly()) return 'Error: solo mode is on (/alone) — sub-agents are disabled. Do this work yourself.';
+      if (isSoloOnly()) return 'Error: sub-agents are disabled in /config (solo mode on). Do this work yourself.';
 
       const role = (args.role || 'subagent').trim();
       const id = currentSessionId();
@@ -1531,7 +1531,7 @@ if (name === 'mcp_search') {
     }
 
     if (name === 'message_subagent') {
-      if (isSoloOnly()) return 'Error: solo mode is on (/alone) — sub-agents are disabled.';
+      if (isSoloOnly()) return 'Error: sub-agents are disabled in /config (solo mode on).';
       const id = currentSessionId();
       if (!id) return 'Error: no active session';
 

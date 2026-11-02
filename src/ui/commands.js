@@ -313,17 +313,146 @@ defineCommand({
   }
 });
 
-defineCommand({
-  name: 'alone',
-  description: 'Toggle solo mode',
-  run: async (_, ctx) => {
-    const { isSoloOnly, setSoloOnly } = await sessionMod();
-    const next = setSoloOnly(!isSoloOnly());
-    ctx.printPanel({
-      title: 'Solo-only mode',
-      fields: [{ label: 'Status', value: next ? 'ON — Levi will never launch subagents' : 'OFF — Levi may launch subagents when needed', color: next ? 'yellow' : 'green' }]
-    });
+const runConfigCommand = async ({ key, value }, ctx) => {
+  const fs = await import('fs');
+  const path = await import('path');
+  const os = await import('os');
+  const configPath = path.join(os.homedir(), '.levi', 'config.json');
+  const readConfig = () => JSON.parse(fs.readFileSync(configPath, 'utf-8'));
+  const writeConfig = (c) => fs.writeFileSync(configPath, JSON.stringify(c, null, 2) + '\n');
+  const { getEffort, setEffort } = await import('../agent/effort.js');
+  const { isSoloOnly, setSoloOnly, isDiaryEnabled, setDiaryEnabled } = await sessionMod();
+
+  const k = String(key || '').toLowerCase().trim();
+  const v = String(value || '').trim();
+
+  if (k) {
+    if (k === 'name' || k === 'alias' || k === 'user') {
+      if (!v) return ctx.print('Usage: /config name <your-alias>');
+      const c = readConfig();
+      if (!c.auth) c.auth = {};
+      if (!c.auth.user) c.auth.user = {};
+      c.auth.user.name = v;
+      writeConfig(c);
+      return ctx.printPanel ? ctx.printPanel({
+        title: 'User Alias Attuned',
+        fields: [{ label: 'Alias', value: v, color: '#afd7ff' }]
+      }) : ctx.print(`User alias set to: ${v}`);
+    }
+
+    if (k === 'effort') {
+      if (!v) return ctx.print('Usage: /config effort <empyrean|oculus|abyssal|seraphic>');
+      try {
+        const eff = setEffort(v);
+        return ctx.printPanel ? ctx.printPanel({
+          title: 'Effort Attuned',
+          fields: [
+            { label: 'Effort', value: eff.label, color: '#ffd700' },
+            { label: 'Pacing', value: eff.pacing, color: '#afd7ff' },
+            { label: 'Role', value: eff.description, color: '#ffffff' }
+          ]
+        }) : ctx.print(`Effort set to: ${eff.label}`);
+      } catch (e) {
+        return ctx.print(`Error: ${e.message}`);
+      }
+    }
+
+    if (k === 'model') {
+      if (!v) return ctx.print('Usage: /config model <model-name>');
+      const c = readConfig();
+      c.active_model = v;
+      writeConfig(c);
+      return ctx.printPanel ? ctx.printPanel({
+        title: 'Active Model Set',
+        fields: [{ label: 'Model', value: v, color: '#afd7ff' }]
+      }) : ctx.print(`Active model set to: ${v}`);
+    }
+
+    if (k === 'subagents' || k === 'subagent' || k === 'solo') {
+      let next;
+      const lower = v.toLowerCase();
+      if (lower === 'on' || lower === 'enable' || lower === 'true') {
+        next = setSoloOnly(false);
+      } else if (lower === 'off' || lower === 'disable' || lower === 'false') {
+        next = setSoloOnly(true);
+      } else {
+        next = setSoloOnly(!isSoloOnly());
+      }
+      return ctx.printPanel ? ctx.printPanel({
+        title: 'Sub-agent Configuration',
+        fields: [{ label: 'Status', value: !next ? 'ON — Sub-agents enabled' : 'OFF — Solo only (sub-agents disabled)', color: !next ? '#4ade80' : '#f87171' }]
+      }) : ctx.print(`Sub-agents: ${!next ? 'ON' : 'OFF'}`);
+    }
+
+    if (k === 'diary') {
+      let next;
+      const lower = v.toLowerCase();
+      if (lower === 'on' || lower === 'enable' || lower === 'true') {
+        next = setDiaryEnabled(true);
+      } else if (lower === 'off' || lower === 'disable' || lower === 'false') {
+        next = setDiaryEnabled(false);
+      } else {
+        next = setDiaryEnabled(!isDiaryEnabled());
+      }
+      return ctx.printPanel ? ctx.printPanel({
+        title: 'Diary Scratchpad',
+        fields: [{ label: 'Status', value: next ? 'ON — Session diary enabled' : 'OFF — Diary tool disabled', color: next ? '#4ade80' : '#f87171' }]
+      }) : ctx.print(`Diary: ${next ? 'ON' : 'OFF'}`);
+    }
+
+    if (k === 'threshold') {
+      const n = parseInt(v, 10);
+      if (isNaN(n) || n < 1000) return ctx.print('Usage: /config threshold <tokens (min 1000)>');
+      const c = readConfig();
+      if (!c.compaction_threshold) c.compaction_threshold = {};
+      c.compaction_threshold.threshold = n;
+      writeConfig(c);
+      return ctx.printPanel ? ctx.printPanel({
+        title: 'Compaction Threshold Set',
+        fields: [{ label: 'Threshold', value: `${n} tokens`, color: '#afd7ff' }]
+      }) : ctx.print(`Threshold set to: ${n} tokens`);
+    }
   }
+
+  if (ctx.openForm) {
+    return ctx.openForm({ mode: 'config' });
+  }
+
+  const c = readConfig();
+  const curEffort = getEffort();
+  const curSolo = isSoloOnly();
+  const curDiary = isDiaryEnabled();
+  ctx.printPanel({
+    title: 'LEVI CONFIGURATION & SETTINGS',
+    fields: [
+      { label: 'Alias', value: c?.auth?.user?.name || '(not set)', color: '#afd7ff' },
+      { label: 'Effort', value: curEffort.label, color: '#ffd700' },
+      { label: 'Model', value: c.active_model || 'default', color: '#afd7ff' },
+      { label: 'Sub-agents', value: curSolo ? 'OFF (Solo only)' : 'ON (Enabled)', color: curSolo ? '#f87171' : '#4ade80' },
+      { label: 'Diary', value: curDiary ? 'ON' : 'OFF', color: curDiary ? '#4ade80' : '#f87171' },
+      { label: 'Threshold', value: `${c?.compaction_threshold?.threshold || 6000} tokens`, color: '#c4c4c4' }
+    ]
+  });
+};
+
+defineCommand({
+  name: 'config',
+  description: 'View or update configuration settings (alias, effort, model, sub-agents, diary)',
+  args: [
+    { name: 'key', required: false, description: 'Setting key: name, effort, model, subagents, diary, threshold' },
+    { name: 'value', required: false, description: 'Value to set' }
+  ],
+  run: runConfigCommand
+});
+
+defineCommand({
+  name: 'settings',
+  description: 'View or update configuration settings (alias, effort, model, sub-agents, diary)',
+  args: [
+    { name: 'key', required: false, description: 'Setting key: name, effort, model, subagents, diary, threshold' },
+    { name: 'value', required: false, description: 'Value to set' }
+  ],
+  run: runConfigCommand
 });
 
 defineCommand({
@@ -362,18 +491,6 @@ defineCommand({
   run: (_, ctx) => ctx.openForm({ mode: 'mem-sync-confirm1' })
 });
 
-defineCommand({
-  name: 'agent',
-  description: 'Toggle subagent mode',
-  run: async (_, ctx) => {
-    const { isSoloOnly, setSoloOnly } = await sessionMod();
-    const next = setSoloOnly(!isSoloOnly());
-    ctx.printPanel({
-      title: 'Sub-agent mode',
-      fields: [{ label: 'Status', value: next ? 'Solo-only ON — subagents disabled' : 'ON — Levi may launch subagents when useful', color: next ? 'yellow' : 'green' }]
-    });
-  }
-});
 
 defineCommand({
   name: 'context',
@@ -824,7 +941,7 @@ defineCommand({
 
 defineCommand({
   name: 'effort',
-  description: 'Select reasoning effort: Eternal (low), Empyrean (medium), Abyssal (high), Seraphic (max)',
+  description: 'Select reasoning effort: Empyrean (low), Oculus (medium), Abyssal (high), Seraphic (max)',
   args: [{ name: 'level', required: false, description: 'Optional effort name or level' }],
   run: async ({ level }, ctx) => {
     const { getEffort, setEffort, EFFORT_LIST } = await import('../agent/effort.js');

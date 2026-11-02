@@ -58,7 +58,6 @@ ${mcpLine}
 When unsure between light and agent, choose light unless a project, big refactor, or complex reasoning is involved.
 Recalling past sessions, notes, or past conversations passively must route light with tools=memory.
 CRITICAL: Continuing, finishing, completing, or building work (e.g. "continue", "finish it", "complete my request", "do it") must ALWAYS route with tools=all or tools=shell, NEVER tools=memory.
-we are in testing period so never router to agent mode for now.
 INSIGHT = a compact work plan the agent sees before step 1. Be specific — name file paths, exact commands, or query terms so the agent skips discovery calls.
 Format for code/file jobs: "Target: <exact file or folder path>. Action: <what to change/add>. Tool: <first tool to use> [then <next tool>]. Skip: list_dir."
 Format for commands/servers: "Run: <exact command>. Check: <what to verify after>."
@@ -147,13 +146,13 @@ export async function route(query, { recentUser = [], forceAgent = false, sessio
   else r = await classify(q, recent, sessionId, signal);
 
   if (!r) r = await classify(q, recent, sessionId, signal);
-  r = r || { route: 'light', tools: 'all', mcp: false, insight: 'fallback to light mode' };
+  r = r || { route: 'light', tools: 'all', mcp: false, insight: 'ready' };
 
   const effort = getEffort();
-  if (effort.id === 'eternal' && r.route === 'agent') {
-    // Eternal (low) uses light mode with low effort or conversational mode
+  // Empyrean (low) and Oculus (medium) always use light execution
+  // Abyssal (high) and Seraphic (max) can automatically switch between light and agent execution
+  if (['empyrean', 'oculus'].includes(effort.id) && r.route === 'agent') {
     r.route = 'light';
-    r.insight = (r.insight ? r.insight + ' · ' : '') + 'eternal: light mode';
   }
 
   // Auto-attach directory preview when query mentions a recognizable path or home folder

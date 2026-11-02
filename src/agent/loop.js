@@ -278,9 +278,11 @@ const DESKTOP_TOOLS = [
   'desktop_get_window_state', 'desktop_list_apps', 'desktop_launch_app'
 ];
 
+const SUB_TOOLS = ['spawn_subagent', 'list_subagents', 'message_subagent'];
+
 // messages = [{ role: 'user'|'assistant', content: string }]
 // onStep(kind, data) — optional progress callback: 'tool_call' | 'tool_result' | 'done' | 'thought'
-const LITE_NAMES = ['bash', 'read_file', 'write_file', 'edit_file', 'find', 'list_dir', 'read_lines', 'grep_search', 'code_search', 'google_search', 'fetch', ...PLAYWRIGHT_WEB_TOOLS, ...DESKTOP_TOOLS, 'ask', 'remember', 'retrieve', 'raw_memory_search', 'read_raw_memory', 'diary', 'learn_skill', 'get_tasks', 'set_task_done', 'add_task_cluster', 'mcp_search', 'mcp_list'];
+const LITE_NAMES = ['bash', 'read_file', 'write_file', 'edit_file', 'find', 'list_dir', 'read_lines', 'grep_search', 'code_search', 'google_search', 'fetch', ...PLAYWRIGHT_WEB_TOOLS, ...DESKTOP_TOOLS, ...SUB_TOOLS, 'ask', 'remember', 'retrieve', 'raw_memory_search', 'read_raw_memory', 'diary', 'learn_skill', 'get_tasks', 'set_task_done', 'add_task_cluster', 'mcp_search', 'mcp_list'];
 const LITE_TOOLS = toolDefs.filter((t) => LITE_NAMES.includes(t.function.name));
 const LITE_GROUPS = {
   none: [],
@@ -288,7 +290,7 @@ const LITE_GROUPS = {
   web: ['google_search', 'fetch', ...PLAYWRIGHT_WEB_TOOLS],
   desktop: [...DESKTOP_TOOLS],
   shell: ['bash', 'read_file', 'write_file', 'edit_file', 'find', 'list_dir', 'read_lines', 'grep_search', 'code_search', 'ask', 'diary'],
-  all: ['bash', 'read_file', 'write_file', 'edit_file', 'find', 'list_dir', 'read_lines', 'grep_search', 'code_search', 'google_search', 'fetch', 'ask', 'remember', 'retrieve', 'raw_memory_search', 'read_raw_memory', 'diary', 'learn_skill', 'get_tasks', 'set_task_done'],
+  all: ['bash', 'read_file', 'write_file', 'edit_file', 'find', 'list_dir', 'read_lines', 'grep_search', 'code_search', 'google_search', 'fetch', ...SUB_TOOLS, 'ask', 'remember', 'retrieve', 'raw_memory_search', 'read_raw_memory', 'diary', 'learn_skill', 'get_tasks', 'set_task_done'],
   tasks: ['get_tasks', 'set_task_done', 'add_task_cluster'],
   mcp: ['mcp_search', 'mcp_list', 'bash', 'read_file', 'write_file', 'edit_file', 'find', 'list_dir', 'read_lines', 'grep_search', 'code_search', 'ask', 'diary']
 };
@@ -353,10 +355,12 @@ async function runLite(routed, sessionId, onStep, system, { signal } = {}) {
     }
     if (expanded) names = [...new Set([...names, ...LITE_GROUPS.all, ...PLAYWRIGHT_WEB_TOOLS, ...DESKTOP_TOOLS])];
     if (routed.mcp) names = [...new Set([...names, ...mcpToolNames])];
+    if (isSoloOnly()) names = names.filter(n => !SUB_TOOLS.includes(n));
     if (!isDiaryEnabled()) names = names.filter(n => n !== 'diary');
     // Direct-action mode: suppress list_dir at step 0 to force surgical edits
     if (step === 0 && isActionMode) names = names.filter(n => n !== 'list_dir');
     let tools = LITE_TOOLS.filter((t) => names.includes(t.function.name));
+    if (isSoloOnly()) tools = tools.filter(t => !SUB_TOOLS.includes(t.function?.name || t.name));
     if (!isDiaryEnabled()) tools = tools.filter(t => (t.function?.name || t.name) !== 'diary');
     if (mcpMod) tools = [...tools, ...mcpMod.getLoadedMcpDefs()];
     if (!expanded && !['web', 'desktop'].includes(routed.tools)) tools = [...tools, MORE_TOOL];
@@ -512,7 +516,7 @@ async function runLite(routed, sessionId, onStep, system, { signal } = {}) {
       return breakMsg;
     }
   }
-  const endReply = (lastText || '').trim() || `Completed ${maxLiteSteps} steps in light mode. Check the updated files, or let me know if you want me to keep going.`;
+  const endReply = (lastText || '').trim() || `Completed ${maxLiteSteps} steps. Check the updated files, or let me know if you want me to keep going.`;
   if (endReply) {
     autoLearnIfEligible({ userQuery: routed.query, toolCalls: turnToolCalls, resultText: endReply, onStep });
   }
@@ -567,14 +571,26 @@ export async function runAgent(userMessage, { onStep, maxSteps, forceAgent, sign
   const exchange = buildExchange(stored);
   routed.exchange = exchange;
 
-  // conversation mode: tiny prompt, no tools, no thought step
+  const effort = getEffort();
+
+  // Empyrean and Oculus always run in light mode (never agent mode)
+  if (['empyrean', 'oculus'].includes(effort.id) && routed.route === 'agent') {
+    routed.route = 'light';
+  }
+
   if (routed.route === 'light') {
     const reply = await runLite(routed, sessionId, onStep, 'light', { signal });
     if (reply) {
       onStep?.('done', reply);
       return reply;
     }
-    routed.insight = 'escalated from light mode';
+    // Empyrean and Oculus never escalate to agent execution
+    if (['empyrean', 'oculus'].includes(effort.id)) {
+      const fallback = 'Task completed.';
+      onStep?.('done', fallback);
+      return fallback;
+    }
+    routed.insight = 'escalated for deep execution';
   }
 
   if (routed.route === 'conversation') {
@@ -583,7 +599,12 @@ export async function runAgent(userMessage, { onStep, maxSteps, forceAgent, sign
       onStep?.('done', reply);
       return reply;
     }
-    routed.insight = 'escalated from conversation mode';
+    if (['empyrean', 'oculus'].includes(effort.id)) {
+      const fallback = 'Done.';
+      onStep?.('done', fallback);
+      return fallback;
+    }
+    routed.insight = 'escalated for deep execution';
   }
 
   // agent mode: existing flow
@@ -593,7 +614,6 @@ export async function runAgent(userMessage, { onStep, maxSteps, forceAgent, sign
   if (sessionId) {
     pendingTasks = getTasks(sessionId).reduce((n, c) => n + (c.status === 'completed' ? 0 : c.tasks.filter((t) => !t.done).length), 0);
   }
-  const effort = getEffort();
   const effectiveMaxSteps = maxSteps || 500;
   let tokenBudget = 1000000;
   const system = buildSystem();

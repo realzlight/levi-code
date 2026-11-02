@@ -6,25 +6,27 @@ const LEVI_HOME = path.join(os.homedir(), '.levi');
 const CONFIG_PATH = path.join(LEVI_HOME, 'config.json');
 
 export const EFFORTS = {
-  eternal: {
-    id: 'eternal',
-    name: 'Eternal',
-    level: 'low',
-    label: 'Eternal (low)',
-    description: 'Instantaneous reflex. Swift, nimble, and lightweight for quick answers and brief checks.',
-    pacing: 'Blazing Fast · Minimal latency',
-    maxLiteSteps: 6,
-    maxAgentSteps: 12,
-    tokenBudgetMult: 0.6
-  },
   empyrean: {
     id: 'empyrean',
     name: 'Empyrean',
+    level: 'low',
+    label: 'Empyrean (low)',
+    description: 'Blazing fast reply and light works or chit chat.',
+    pacing: 'Blazing Fast · Minimal latency',
+    mode: 'light',
+    maxLiteSteps: 500,
+    maxAgentSteps: 12,
+    tokenBudgetMult: 1.0
+  },
+  oculus: {
+    id: 'oculus',
+    name: 'Oculus',
     level: 'medium',
-    label: 'Empyrean (medium)',
-    description: 'The golden standard. Harmonic balance of rapid speed, surgical precision, and ideal depth.',
-    pacing: 'Balanced · Standard cadence',
-    maxLiteSteps: 12,
+    label: 'Oculus (medium)',
+    description: 'For building (recommended). Harmonic balance of speed and precision.',
+    pacing: 'Balanced · Standard cadence (recommended)',
+    mode: 'light',
+    maxLiteSteps: 500,
     maxAgentSteps: 30,
     tokenBudgetMult: 1.0
   },
@@ -33,55 +35,68 @@ export const EFFORTS = {
     name: 'Abyssal',
     level: 'high',
     label: 'Abyssal (high)',
-    description: 'Oceanic contemplation. Meditates deeply through intricate logic, complex codebases, and subtle bugs.',
-    pacing: 'Deep Thinking · Extended contemplation',
-    maxLiteSteps: 18,
-    maxAgentSteps: 40,
-    tokenBudgetMult: 1.5
+    description: 'Leveling up oculus powers and doing more. Deep reasoning for complex tasks.',
+    pacing: 'Deep Thinking · Extended capability',
+    mode: 'auto',
+    maxLiteSteps: 500,
+    maxAgentSteps: 500,
+    tokenBudgetMult: 1.0
   },
   seraphic: {
     id: 'seraphic',
     name: 'Seraphic',
     level: 'max',
     label: 'Seraphic (max)',
-    description: 'Transcendent intensity. Exhaustive multi-layer reasoning and boundless resolve for the toughest challenges.',
+    description: 'Long thinking and complex tasks. Exhaustive reasoning and boundless resolve.',
     pacing: 'Maximum Depth · Boundless focus',
-    maxLiteSteps: 25,
-    maxAgentSteps: 60,
-    tokenBudgetMult: 2.0
+    mode: 'auto',
+    maxLiteSteps: 500,
+    maxAgentSteps: 500,
+    tokenBudgetMult: 1.0
   }
 };
 
 export const EFFORT_LIST = [
-  EFFORTS.eternal,
   EFFORTS.empyrean,
+  EFFORTS.oculus,
   EFFORTS.abyssal,
   EFFORTS.seraphic
 ];
 
+const ALIASES = {
+  eternal: 'empyrean',
+  low: 'empyrean',
+  oculus: 'oculus',
+  medium: 'oculus',
+  high: 'abyssal',
+  max: 'seraphic'
+};
+
 export function getEffort() {
   try {
-    if (!fs.existsSync(CONFIG_PATH)) return EFFORTS.empyrean;
+    if (!fs.existsSync(CONFIG_PATH)) return EFFORTS.oculus;
     const c = JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf-8'));
-    const id = (c.effort || 'empyrean').toLowerCase().trim();
+    const raw = (c.effort || 'oculus').toLowerCase().trim();
+    const id = ALIASES[raw] || raw;
     return (
       EFFORTS[id] ||
       Object.values(EFFORTS).find((e) => e.level === id || e.name.toLowerCase() === id) ||
-      EFFORTS.empyrean
+      EFFORTS.oculus
     );
   } catch {
-    return EFFORTS.empyrean;
+    return EFFORTS.oculus;
   }
 }
 
 export function setEffort(id) {
-  const norm = String(id || '').toLowerCase().trim();
+  const raw = String(id || '').toLowerCase().trim();
+  const norm = ALIASES[raw] || raw;
   const found =
     EFFORTS[norm] ||
     Object.values(EFFORTS).find((e) => e.level === norm || e.name.toLowerCase() === norm);
   if (!found) {
     throw new Error(
-      `Unknown effort: "${id}". Must be one of: eternal, empyrean, abyssal, seraphic (or low, medium, high, max).`
+      `Unknown effort: "${id}". Must be one of: empyrean, oculus, abyssal, seraphic (or low, medium, high, max).`
     );
   }
   let c = {};
@@ -95,3 +110,4 @@ export function setEffort(id) {
   fs.writeFileSync(CONFIG_PATH, JSON.stringify(c, null, 2) + '\n');
   return found;
 }
+

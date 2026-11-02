@@ -9,7 +9,7 @@ const GRAY = '#777777';
 const GOLD = '#ffd700';
 
 export default function EffortPicker({ current, onPick, onCancel }) {
-  const currentId = current?.id || current || 'empyrean';
+  const currentId = current?.id || current || 'oculus';
   const initialIndex = Math.max(0, EFFORT_LIST.findIndex((e) => e.id === currentId));
   const [sel, setSel] = useState(initialIndex);
 
@@ -27,7 +27,7 @@ export default function EffortPicker({ current, onPick, onCancel }) {
     { flexDirection: 'column', borderStyle: 'round', borderColor: CYAN, paddingX: 1 },
     h(Box, { justifyContent: 'space-between', marginBottom: 1, height: 1, overflow: 'hidden' },
       h(Text, { color: CYAN, bold: true }, '✦ EFFORT HARMONY'),
-      h(Text, { color: GRAY }, `[active: ${current?.name || 'Empyrean'}]`)
+      h(Text, { color: GRAY }, `[active: ${current?.name || 'Oculus'}]`)
     ),
     EFFORT_LIST.map((e, i) => {
       const isSel = i === sel;

@@ -10,6 +10,7 @@ import Footer, { activeModel } from './Footer.js';
 import ModelForm from './ModelForm.js';
 import SessionPicker from './SessionPicker.js';
 import EffortPicker from './EffortPicker.js';
+import ConfigForm from './ConfigForm.js';
 import AskPrompt from './AskPrompt.js';
 import MemSync from './MemSync.js';
 import Confirm from './Confirm.js';
@@ -97,7 +98,7 @@ function Rule() {
 
 const GREETING = getGreeting();
 
-function sessionLine(effortName = 'Empyrean') {
+function sessionLine(effortName = 'Oculus') {
   const id = currentSessionId();
   if (!id) return `${effortName} \u2022 /resume`;
   const title = getTitle(id);
@@ -1289,7 +1290,7 @@ function App({ mascot }) {
     : 0;
 
   const formHeight = form
-    ? (form.mode === 'compact' ? 9 : (form.mode === 'effort' ? 9 : (form.mode.startsWith('mem-') ? 7 : 4)))
+    ? (form.mode === 'compact' ? 9 : (form.mode === 'effort' ? 9 : (form.mode === 'config' || form.mode === 'settings' ? 11 : (form.mode.startsWith('mem-') ? 7 : 4))))
     : 0;
   const bottomAreaHeight = form ? formHeight : inputAreaHeight;
   const subagentsHeight = activeSubagents.length > 0 ? activeSubagents.length * 4 : 0;
@@ -1604,6 +1605,22 @@ function App({ mascot }) {
                       { label: 'Harmonics', value: picked.description, color: '#ffffff' }
                     ]
                   });
+                },
+                onCancel: () => setForm(null)
+              })
+            : (form.mode === 'config' || form.mode === 'settings')
+            ? h(ConfigForm, {
+                onDone: (saved) => {
+                  setForm(null);
+                  if (saved?.effort) setEffortState(saved.effort);
+                  if (saved?.fields) {
+                    setCommandOutput({
+                      kind: 'panel',
+                      title: 'CONFIGURATION ATTUNED',
+                      status: 'SAVED',
+                      fields: saved.fields
+                    });
+                  }
                 },
                 onCancel: () => setForm(null)
               })
