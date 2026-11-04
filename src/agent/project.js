@@ -26,3 +26,32 @@ export function detectProject(startDir = process.cwd()) {
     dir = parent;
   }
 }
+
+// Walks up from startDir looking for a user-created project playbook (LEVI.md or .levirules)
+export function readProjectPlaybook(startDir = process.cwd()) {
+  let dir = path.resolve(startDir);
+  const candidates = ['LEVI.md', '.levirules', 'levi.md'];
+
+  while (true) {
+    for (const file of candidates) {
+      const p = path.join(dir, file);
+      if (fs.existsSync(p)) {
+        try {
+          const content = fs.readFileSync(p, 'utf-8').trim();
+          if (content) {
+            return {
+              path: p,
+              content: content.slice(0, 3000)
+            };
+          }
+        } catch {}
+      }
+    }
+
+    if (fs.existsSync(path.join(dir, '.git'))) break;
+    const parent = path.dirname(dir);
+    if (parent === dir) break;
+    dir = parent;
+  }
+  return null;
+}

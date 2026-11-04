@@ -194,26 +194,47 @@ export async function retrieve({ query, session, path: file, limit, rebuild = tr
       params.push(lim);
       return db.prepare(sql).all(...params);
     };
-    let rows = run('and');
-    if (!rows.length) rows = run('or');
-    if (!rows.length && query) {
+    let bm25Rows = run('and');
+    if (!bm25Rows.length) bm25Rows = run('or');
+
+    // Hybrid Semantic Vector Search: Reciprocal Rank Fusion (BM25 + Cosine Similarity)
+    let rows = bm25Rows;
+    if (query) {
       try {
         const qVec = await getEmbedding(query);
         if (qVec) {
           const candSql = "SELECT text, path, kind, session, role FROM chunks WHERE kind IN ('memory', 'project') OR (kind = 'session' AND role = 'summary') LIMIT 60";
           const cands = db.prepare(candSql).all();
-          const scored = [];
+          const scoredMap = new Map();
+
+          // 1. Seed with BM25 rankings
+          bm25Rows.forEach((r, rank) => {
+            const key = `${r.path}:${r.s || r.text?.slice(0, 100)}`;
+            scoredMap.set(key, { ...r, score: 1.0 / (60 + rank) });
+          });
+
+          // 2. Score candidate chunks with local vector embeddings
           for (const cand of cands) {
             const candVec = await getEmbedding(cand.text);
             if (candVec) {
               const sim = cosineSimilarity(qVec, candVec);
-              if (sim > 0.32) {
-                scored.push({ ...cand, s: cand.text.slice(0, 180), sim });
+              if (sim > 0.28) {
+                const s = cand.text.slice(0, 180);
+                const key = `${cand.path}:${s.slice(0, 100)}`;
+                const existing = scoredMap.get(key);
+                if (existing) {
+                  existing.score += sim * 2.0; // Boost chunks that match BOTH keywords and semantic vector
+                } else {
+                  scoredMap.set(key, { ...cand, s, score: sim });
+                }
               }
             }
           }
-          scored.sort((a, b) => b.sim - a.sim);
-          rows = scored.slice(0, lim);
+
+          if (scoredMap.size > 0) {
+            const fused = [...scoredMap.values()].sort((a, b) => b.score - a.score);
+            rows = fused.slice(0, lim);
+          }
         }
       } catch {}
     }

@@ -172,7 +172,6 @@ export async function runBootstrap({ onProgress = null, quiet = false } = {}) {
         }
       }
     }, null, 2),
-    'LEVI.md': '# LEVI\n',
     'MEMORY/USER.md': '# USER\n',
     'MEMORY/PREFERENCE.md': '# PREFERENCES\n',
     'MEMORY/PATTERNS.md': 'summary:\nNo strong patterns yet.\n\n\n'

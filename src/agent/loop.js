@@ -12,6 +12,7 @@ import { readMemoryDigest } from './memory.js';
 import { CONVO_PROMPT, LIGHT_PROMPT, agentPrompt, buildContext, litePrompt, loopPrompt } from './prompts.js';
 import { getEffort } from './effort.js';
 import { autoLearnIfEligible } from './skills.js';
+import { startTurnSnapshot, commitTurnSnapshot } from './undo.js';
 
 // Strip ANSI escape codes, carriage returns, progress bars, and collapse whitespace from CLI output
 function cleanCliOutput(raw) {
@@ -452,45 +453,93 @@ async function runLite(routed, sessionId, onStep, system, { signal } = {}) {
       recordTurnToolSummary(sessionId, turnToolCalls);
       return JSON.parse(result);
     }
+    const batches = [];
+    let curBatch = [];
     for (const call of toolCalls) {
-      if (signal?.aborted) return '[Interrupted]';
-      onStep?.('tool_call', call);
       const isReadOnly = ['read_file', 'list_dir', 'find', 'read_lines', 'grep_search', 'code_search', 'retrieve', 'raw_memory_search', 'read_raw_memory'].includes(call.name);
-      const callKey = `${call.name}:${JSON.stringify(call.args || {})}`;
-      const seenCount = callCounts.get(callKey) || 0;
-      let result;
-      if (call.name === 'list_dir') listDirCount++;
-      if (isReadOnly && seenCount >= 1) {
-        callCounts.set(callKey, seenCount + 1);
-        result = seenCount === 1
-          ? (call.name === 'list_dir'
-              ? 'Notice: You already listed this directory. To find specific files across subdirectories, use find(query, path) or code_search(query, path) instead of repeatedly listing directories.'
-              : 'Notice: You already called this exact tool with identical arguments earlier in this turn. See earlier result in conversation history. Do not repeat; proceed with your edit or answer.')
-          : 'Error: Redundant call aborted to save tokens. Proceed with the data already retrieved.';
-      } else if (call.name === 'list_dir' && listDirCount > 2) {
-        result = 'Notice: Multiple list_dir calls detected in this turn. Do not wander directories with list_dir; use find(query, path) or code_search(query, path) to locate target files across all subfolders directly in 1 step, or proceed to edit_file/read_file.';
+      if (isReadOnly) {
+        curBatch.push(call);
       } else {
-        if (isReadOnly) callCounts.set(callKey, 1);
-        const ok = LITE_NAMES.includes(call.name) || (mcpMod && mcpMod.isMcpTool(call.name));
-        result = call.name === 'more_tools' ? (expanded = true, 'All light tools including file, shell, web and desktop are now available.') : ok ? await runTool(call.name, call.args) : 'Error: tool not available here';
+        if (curBatch.length) { batches.push({ parallel: true, calls: curBatch }); curBatch = []; }
+        batches.push({ parallel: false, calls: [call] });
       }
-      if (WEB_NAMES.includes(call.name)) webCalls++;
-      result = String(result);
-      if (call.name === 'bash') result = cleanCliOutput(result);
-      const cap = call.name === 'read_file' ? 65000 : call.name === 'bash' ? 12000 : RESULT_CAP;
-      if (result.length > cap) result = result.slice(0, cap) + '\n...[output shortened to save tokens; the file is intact. use grep -n or sed -n to read other parts]';
-      // Compact earlier read_file results for paths we just wrote/edited
-      if ((call.name === 'write_file' || call.name === 'edit_file') && call.args?.path) {
-        compactSupersededReads(messages, call.args.path);
-        lastEditedPath = call.args.path;
+    }
+    if (curBatch.length) batches.push({ parallel: true, calls: curBatch });
+
+    for (const batch of batches) {
+      if (signal?.aborted) return '[Interrupted]';
+      if (batch.parallel && batch.calls.length > 1) {
+        for (const call of batch.calls) onStep?.('tool_call', call);
+        const results = await Promise.all(batch.calls.map(async (call) => {
+          const callKey = `${call.name}:${JSON.stringify(call.args || {})}`;
+          const seenCount = callCounts.get(callKey) || 0;
+          let result;
+          if (call.name === 'list_dir') listDirCount++;
+          if (seenCount >= 1) {
+            callCounts.set(callKey, seenCount + 1);
+            result = seenCount === 1
+              ? (call.name === 'list_dir'
+                  ? 'Notice: You already listed this directory. To find specific files across subdirectories, use find(query, path) or code_search(query, path) instead of repeatedly listing directories.'
+                  : 'Notice: You already called this exact tool with identical arguments earlier in this turn. See earlier result in conversation history. Do not repeat; proceed with your edit or answer.')
+              : 'Error: Redundant call aborted to save tokens. Proceed with the data already retrieved.';
+          } else {
+            callCounts.set(callKey, 1);
+            const ok = LITE_NAMES.includes(call.name) || (mcpMod && mcpMod.isMcpTool(call.name));
+            result = ok ? await runTool(call.name, call.args) : 'Error: tool not available here';
+          }
+          result = String(result);
+          const cap = call.name === 'read_file' ? 65000 : RESULT_CAP;
+          if (result.length > cap) result = result.slice(0, cap) + '\n...[output shortened to save tokens; the file is intact. use grep -n or sed -n to read other parts]';
+          return result;
+        }));
+
+        for (let i = 0; i < batch.calls.length; i++) {
+          const call = batch.calls[i];
+          const result = results[i];
+          turnToolCalls.push({ name: call.name, args: call.args, result });
+          onStep?.('tool_result', { call, result });
+          messages.push({ role: 'tool', tool_call_id: call.id, content: result });
+        }
+      } else {
+        const call = batch.calls[0];
+        onStep?.('tool_call', call);
+        const isReadOnly = ['read_file', 'list_dir', 'find', 'read_lines', 'grep_search', 'code_search', 'retrieve', 'raw_memory_search', 'read_raw_memory'].includes(call.name);
+        const callKey = `${call.name}:${JSON.stringify(call.args || {})}`;
+        const seenCount = callCounts.get(callKey) || 0;
+        let result;
+        if (call.name === 'list_dir') listDirCount++;
+        if (isReadOnly && seenCount >= 1) {
+          callCounts.set(callKey, seenCount + 1);
+          result = seenCount === 1
+            ? (call.name === 'list_dir'
+                ? 'Notice: You already listed this directory. To find specific files across subdirectories, use find(query, path) or code_search(query, path) instead of repeatedly listing directories.'
+                : 'Notice: You already called this exact tool with identical arguments earlier in this turn. See earlier result in conversation history. Do not repeat; proceed with your edit or answer.')
+            : 'Error: Redundant call aborted to save tokens. Proceed with the data already retrieved.';
+        } else if (call.name === 'list_dir' && listDirCount > 2) {
+          result = 'Notice: Multiple list_dir calls detected in this turn. Do not wander directories with list_dir; use find(query, path) or code_search(query, path) to locate target files across all subfolders directly in 1 step, or proceed to edit_file/read_file.';
+        } else {
+          if (isReadOnly) callCounts.set(callKey, 1);
+          const ok = LITE_NAMES.includes(call.name) || (mcpMod && mcpMod.isMcpTool(call.name));
+          result = call.name === 'more_tools' ? (expanded = true, 'All light tools including file, shell, web and desktop are now available.') : ok ? await runTool(call.name, call.args) : 'Error: tool not available here';
+        }
+        if (WEB_NAMES.includes(call.name)) webCalls++;
+        result = String(result);
+        if (call.name === 'bash') result = cleanCliOutput(result);
+        const cap = call.name === 'read_file' ? 65000 : call.name === 'bash' ? 12000 : RESULT_CAP;
+        if (result.length > cap) result = result.slice(0, cap) + '\n...[output shortened to save tokens; the file is intact. use grep -n or sed -n to read other parts]';
+        // Compact earlier read_file results for paths we just wrote/edited
+        if ((call.name === 'write_file' || call.name === 'edit_file') && call.args?.path) {
+          compactSupersededReads(messages, call.args.path);
+          lastEditedPath = call.args.path;
+        }
+        // Early stop: if bash verify passes (exit 0) after a write/edit, we're done
+        if (call.name === 'bash' && lastEditedPath && typeof result === 'string' && !result.includes('Error') && !result.includes('error') && !result.match(/exit.*[1-9]/)) {
+          earlyStop = true;
+        }
+        turnToolCalls.push({ name: call.name, args: call.args, result });
+        onStep?.('tool_result', { call, result });
+        messages.push({ role: 'tool', tool_call_id: call.id, content: String(result) });
       }
-      // Early stop: if bash verify passes (exit 0) after a write/edit, we're done
-      if (call.name === 'bash' && lastEditedPath && typeof result === 'string' && !result.includes('Error') && !result.includes('error') && !result.match(/exit.*[1-9]/)) {
-        earlyStop = true;
-      }
-      turnToolCalls.push({ name: call.name, args: call.args, result });
-      onStep?.('tool_result', { call, result });
-      messages.push({ role: 'tool', tool_call_id: call.id, content: String(result) });
       if (signal?.aborted) return '[Interrupted]';
     }
 
@@ -551,7 +600,7 @@ function getMcpNames() {
   } catch { return []; }
 }
 
-export async function runAgent(userMessage, { onStep, maxSteps, forceAgent, signal } = {}) {
+async function runAgentInner(userMessage, { onStep, maxSteps, forceAgent, signal } = {}) {
   if (signal?.aborted) return '[Interrupted]';
   const sessionId = currentSessionId();
   if (sessionId) startTurn(sessionId);
@@ -821,39 +870,83 @@ export async function runAgent(userMessage, { onStep, maxSteps, forceAgent, sign
       return payload;
     }
 
+    const batches = [];
+    let curBatch = [];
     for (const call of toolCalls) {
-      if (signal?.aborted) return '[Interrupted]';
-      onStep?.('tool_call', call);
       const isReadOnly = ['read_file', 'list_dir', 'find', 'read_lines', 'grep_search', 'code_search', 'retrieve', 'raw_memory_search', 'read_raw_memory'].includes(call.name);
-      const callKey = `${call.name}:${JSON.stringify(call.args || {})}`;
-      const seenCount = callCounts.get(callKey) || 0;
-      let result;
-      if (call.name === 'list_dir') listDirCount++;
-      if (isReadOnly && seenCount >= 1) {
-        callCounts.set(callKey, seenCount + 1);
-        result = seenCount === 1
-          ? (call.name === 'list_dir'
-              ? 'Notice: You already listed this directory. To find specific files across subdirectories, use find(query, path) or code_search(query, path) instead of repeatedly listing directories.'
-              : 'Notice: You already called this exact tool with identical arguments earlier in this turn. See earlier result in conversation history. Do not repeat; proceed with your edit or answer.')
-          : 'Error: Redundant call aborted to save tokens. Proceed with the data already retrieved.';
-      } else if (call.name === 'list_dir' && listDirCount > 2) {
-        result = 'Notice: Multiple list_dir calls detected in this turn. Do not wander directories with list_dir; use find(query, path) or code_search(query, path) to locate target files across all subfolders directly in 1 step, or proceed to edit_file/read_file.';
+      if (isReadOnly) {
+        curBatch.push(call);
       } else {
-        if (isReadOnly) callCounts.set(callKey, 1);
+        if (curBatch.length) { batches.push({ parallel: true, calls: curBatch }); curBatch = []; }
+        batches.push({ parallel: false, calls: [call] });
+      }
+    }
+    if (curBatch.length) batches.push({ parallel: true, calls: curBatch });
+
+    for (const batch of batches) {
+      if (signal?.aborted) return '[Interrupted]';
+      if (batch.parallel && batch.calls.length > 1) {
+        for (const call of batch.calls) onStep?.('tool_call', call);
+        const results = await Promise.all(batch.calls.map(async (call) => {
+          const callKey = `${call.name}:${JSON.stringify(call.args || {})}`;
+          const seenCount = callCounts.get(callKey) || 0;
+          let result;
+          if (call.name === 'list_dir') listDirCount++;
+          if (seenCount >= 1) {
+            callCounts.set(callKey, seenCount + 1);
+            result = seenCount === 1
+              ? (call.name === 'list_dir'
+                  ? 'Notice: You already listed this directory. To find specific files across subdirectories, use find(query, path) or code_search(query, path) instead of repeatedly listing directories.'
+                  : 'Notice: You already called this exact tool with identical arguments earlier in this turn. See earlier result in conversation history. Do not repeat; proceed with your edit or answer.')
+              : 'Error: Redundant call aborted to save tokens. Proceed with the data already retrieved.';
+          } else {
+            callCounts.set(callKey, 1);
+            result = await runToolGuarded(call, webState, { onStep });
+          }
+          return String(result);
+        }));
+
+        for (let i = 0; i < batch.calls.length; i++) {
+          const call = batch.calls[i];
+          const result = results[i];
+          turnToolCalls.push({ name: call.name, args: call.args, result });
+          onStep?.('tool_result', { call, result });
+          messages.push({ role: 'tool', tool_call_id: call.id, content: result });
+        }
+      } else {
+        const call = batch.calls[0];
+        onStep?.('tool_call', call);
+        const isReadOnly = ['read_file', 'list_dir', 'find', 'read_lines', 'grep_search', 'code_search', 'retrieve', 'raw_memory_search', 'read_raw_memory'].includes(call.name);
+        const callKey = `${call.name}:${JSON.stringify(call.args || {})}`;
+        const seenCount = callCounts.get(callKey) || 0;
+        let result;
+        if (call.name === 'list_dir') listDirCount++;
+        if (isReadOnly && seenCount >= 1) {
+          callCounts.set(callKey, seenCount + 1);
+          result = seenCount === 1
+            ? (call.name === 'list_dir'
+                ? 'Notice: You already listed this directory. To find specific files across subdirectories, use find(query, path) or code_search(query, path) instead of repeatedly listing directories.'
+                : 'Notice: You already called this exact tool with identical arguments earlier in this turn. See earlier result in conversation history. Do not repeat; proceed with your edit or answer.')
+            : 'Error: Redundant call aborted to save tokens. Proceed with the data already retrieved.';
+        } else if (call.name === 'list_dir' && listDirCount > 2) {
+          result = 'Notice: Multiple list_dir calls detected in this turn. Do not wander directories with list_dir; use find(query, path) or code_search(query, path) to locate target files across all subfolders directly in 1 step, or proceed to edit_file/read_file.';
+        } else {
+          if (isReadOnly) callCounts.set(callKey, 1);
           result = call.name === 'think'
             ? await think(call.args, { projectName, sessionId })
             : await runToolGuarded(call, webState, { onStep });
+        }
+        const lc = call.name === 'list_tools' ? [null, String(call.args?.category || '').toLowerCase()] : call.name.match(/^list_(\w+)_commands$/);
+        if (lc) for (const n of CATEGORIES[lc[1] === 'task' ? 'tasks' : lc[1]] || []) unlocked.add(n);
+        if (call.name === 'bash') result = cleanCliOutput(String(result));
+        // Compact earlier read_file results for paths we just wrote/edited
+        if ((call.name === 'write_file' || call.name === 'edit_file') && call.args?.path) {
+          compactSupersededReads(messages, call.args.path);
+        }
+        turnToolCalls.push({ name: call.name, args: call.args, result });
+        onStep?.('tool_result', { call, result });
+        messages.push({ role: 'tool', tool_call_id: call.id, content: String(result) });
       }
-      const lc = call.name === 'list_tools' ? [null, String(call.args?.category || '').toLowerCase()] : call.name.match(/^list_(\w+)_commands$/);
-      if (lc) for (const n of CATEGORIES[lc[1] === 'task' ? 'tasks' : lc[1]] || []) unlocked.add(n);
-      if (call.name === 'bash') result = cleanCliOutput(String(result));
-      // Compact earlier read_file results for paths we just wrote/edited
-      if ((call.name === 'write_file' || call.name === 'edit_file') && call.args?.path) {
-        compactSupersededReads(messages, call.args.path);
-      }
-      turnToolCalls.push({ name: call.name, args: call.args, result });
-      onStep?.('tool_result', { call, result });
-      messages.push({ role: 'tool', tool_call_id: call.id, content: String(result) });
       if (signal?.aborted) return '[Interrupted]';
     }
 
@@ -879,6 +972,16 @@ export async function runAgent(userMessage, { onStep, maxSteps, forceAgent, sign
     }
   }
   return '(stopped: too many tool steps, no active task cluster to report progress from)';
+}
+
+export async function runAgent(userMessage, options = {}) {
+  startTurnSnapshot();
+  const sessionId = currentSessionId();
+  try {
+    return await runAgentInner(userMessage, options);
+  } finally {
+    commitTurnSnapshot(sessionId);
+  }
 }
 
 export { buildSystem };

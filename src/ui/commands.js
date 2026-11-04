@@ -972,3 +972,202 @@ defineCommand({
   }
 });
 
+defineCommand({
+  name: 'undo',
+  description: 'Undo and roll back file changes made in the last turn',
+  run: async (_, ctx) => {
+    const { undoLastTurn } = await import('../agent/undo.js');
+    const { currentSessionId } = await import('../agent/session.js');
+    const sid = currentSessionId();
+    const res = undoLastTurn(sid);
+    if (!res.ok) {
+      return ctx.print(`[Undo] ${res.error}`);
+    }
+    if (ctx.printPanel) {
+      return ctx.printPanel({
+        title: 'TURN UNDO COMPLETE',
+        status: 'RESTORED',
+        fields: [
+          { label: 'Timestamp', value: res.timestamp || 'just now', color: '#afd7ff' },
+          { label: 'Reverted Files', value: res.reverted.map(r => `• ${r.path} (${r.action})`).join('\n') || 'None', color: '#4ade80' }
+        ]
+      });
+    }
+    ctx.print(`✓ Reverted ${res.reverted.length} file(s):\n` + res.reverted.map(r => `• ${r.path} (${r.action})`).join('\n'));
+  }
+});
+
+defineCommand({
+  name: 'diff',
+  description: 'Open interactive fullscreen diff reviewer for git changes',
+  run: async (_, ctx) => {
+    const { shell } = await import('./commands.js');
+    const res = await shell('git diff HEAD');
+    const diffText = res.output?.trim();
+    if (!diffText) {
+      return ctx.print('Working tree clean — no uncommitted changes found.');
+    }
+    if (ctx.openForm) {
+      return ctx.openForm({ mode: 'diff', diffText });
+    }
+    ctx.print(diffText);
+  }
+});
+
+defineCommand({
+  name: 'commit',
+  description: 'Analyze git diff, generate conventional commit message, and commit (use --push to push)',
+  args: [
+    { name: 'flag', required: false, description: 'Pass --push or push to automatically push to remote' },
+    { name: 'message', required: false, description: 'Optional explicit commit message' }
+  ],
+  run: async ({ flag, message }, ctx) => {
+    const { shell } = await import('./commands.js');
+    const shouldPush = flag === '--push' || flag === 'push';
+
+    // Check git status
+    const st = await shell('git status --porcelain');
+    if (!st.output?.trim()) {
+      return ctx.print('Working tree clean — nothing to commit.');
+    }
+
+    let commitMsg = message;
+    if (!commitMsg) {
+      ctx.print('Analyzing git changes and crafting conventional commit message...');
+      const diffRes = await shell('git diff HEAD');
+      const diffSnippet = (diffRes.output || st.output).slice(0, 4000);
+      try {
+        const { chat } = await import('../agent/client.js');
+        const prompt = `Based on this git diff / status, generate a single-line conventional commit message (e.g. feat(scope): message, fix(scope): message, refactor: message). Output ONLY the commit message line, no backticks, no markdown, no quotes:\n\n${diffSnippet}`;
+        const res = await chat([{ role: 'user', content: prompt }], { maxTokens: 60 });
+        commitMsg = res.text?.trim().replace(/^["'`]|["'`]$/g, '').split('\n')[0];
+      } catch {}
+      if (!commitMsg) commitMsg = 'chore: update project files';
+    }
+
+    await shell('git add -A');
+    const commitRes = await shell(`git commit -m ${JSON.stringify(commitMsg)}`);
+    if (commitRes.code !== 0) {
+      return ctx.print(`Commit failed:\n${commitRes.output}`);
+    }
+
+    let pushInfo = '';
+    if (shouldPush) {
+      ctx.print('Pushing to remote...');
+      const pushRes = await shell('git push');
+      pushInfo = pushRes.code === 0 ? 'Pushed to origin' : `Push warning: ${pushRes.output}`;
+    }
+
+    if (ctx.printPanel) {
+      return ctx.printPanel({
+        title: 'GIT COMMIT RECORDED',
+        status: 'COMMITTED',
+        fields: [
+          { label: 'Message', value: commitMsg, color: '#afd7ff' },
+          { label: 'Push', value: shouldPush ? pushInfo : 'No (run git push or /commit --push)', color: shouldPush ? '#4ade80' : '#777777' }
+        ]
+      });
+    }
+    ctx.print(`✓ Committed: ${commitMsg} ${shouldPush ? '(' + pushInfo + ')' : ''}`);
+  }
+});
+
+defineCommand({
+  name: 'bg',
+  description: 'Manage background processes: /bg, /bg logs <pid>, /bg kill <pid>, /bg clear',
+  args: [
+    { name: 'action', required: false, description: 'Action: list, logs, kill, or clear' },
+    { name: 'target', required: false, description: 'Target PID or line count' }
+  ],
+  run: async ({ action, target }, ctx) => {
+    const fs = (await import('node:fs')).default;
+    const path = (await import('node:path')).default;
+    const os = (await import('node:os')).default;
+    const procsFile = path.join(os.homedir(), '.levi', 'processes.json');
+
+    let procs = [];
+    try { procs = JSON.parse(fs.readFileSync(procsFile, 'utf-8')); } catch {}
+
+    const act = (action || 'list').toLowerCase();
+
+    if (act === 'list' || (!action && !target)) {
+      if (!procs.length) return ctx.print('No background processes registered in ~/.levi/processes.json');
+      const lines = procs.map(p => {
+        let isAlive = false;
+        try { process.kill(p.pid, 0); isAlive = true; } catch {}
+        const status = isAlive ? 'RUNNING' : 'STOPPED';
+        return `• PID ${p.pid} [${status}] — ${p.cmd}\n  Started: ${p.at} | Log: ${p.log || 'none'}`;
+      });
+      if (ctx.printPanel) {
+        return ctx.printPanel({
+          title: 'BACKGROUND PROCESSES',
+          status: `${procs.length} REGISTERED`,
+          fields: procs.map(p => {
+            let isAlive = false;
+            try { process.kill(p.pid, 0); isAlive = true; } catch {}
+            return {
+              label: `PID ${p.pid}`,
+              value: `[${isAlive ? 'RUNNING' : 'EXITED'}] ${p.cmd}\nLog: ${p.log || 'n/a'}`,
+              color: isAlive ? '#4ade80' : '#777777'
+            };
+          })
+        });
+      }
+      return ctx.print(lines.join('\n\n'));
+    }
+
+    if (act === 'logs' || act === 'log') {
+      const pid = parseInt(target, 10);
+      const proc = procs.find(p => p.pid === pid) || procs[procs.length - 1];
+      if (!proc) return ctx.print(`Process with PID ${target} not found.`);
+      const logFile = proc.log || path.join(os.homedir(), '.levi', 'processes', `process-${proc.pid}.log`);
+      if (!fs.existsSync(logFile)) return ctx.print(`Log file ${logFile} does not exist.`);
+      const content = fs.readFileSync(logFile, 'utf-8');
+      const tail = content.split('\n').slice(-35).join('\n');
+      return ctx.print(`[Logs for PID ${proc.pid} (${proc.cmd})]:\n${tail || '(empty log)'}`);
+    }
+
+    if (act === 'kill' || act === 'stop') {
+      const pid = parseInt(target, 10);
+      if (!pid) return ctx.print('Please specify a PID to kill: /bg kill <pid>');
+      try {
+        process.kill(pid, 'SIGTERM');
+      } catch (e) {
+        try { process.kill(pid, 'SIGKILL'); } catch {}
+      }
+      procs = procs.filter(p => p.pid !== pid);
+      try { fs.writeFileSync(procsFile, JSON.stringify(procs, null, 2)); } catch {}
+      return ctx.print(`✓ Sent termination signal to PID ${pid}`);
+    }
+
+    if (act === 'clear') {
+      procs = procs.filter(p => {
+        try { process.kill(p.pid, 0); return true; } catch { return false; }
+      });
+      try { fs.writeFileSync(procsFile, JSON.stringify(procs, null, 2)); } catch {}
+      return ctx.print(`✓ Cleared exited processes. ${procs.length} active process(es) remaining.`);
+    }
+
+    ctx.print(`Unknown action: ${act}. Usage: /bg [list|logs <pid>|kill <pid>|clear]`);
+  }
+});
+
+defineCommand({
+  name: 'find',
+  description: 'Fuzzy search and select project files to inject into prompt',
+  args: [{ name: 'query', required: false, description: 'Optional initial file search query' }],
+  run: async ({ query }, ctx) => {
+    if (ctx.openForm) {
+      return ctx.openForm({ mode: 'find', query: query || '' });
+    }
+    const { execSync } = await import('node:child_process');
+    try {
+      const out = execSync(`find . -maxdepth 3 -not -path '*/.*' | head -30`, { encoding: 'utf-8' });
+      ctx.print(out);
+    } catch (e) {
+      ctx.print(`Error listing files: ${e.message}`);
+    }
+  }
+});
+
+

@@ -1,8 +1,9 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { spawn } from 'node:child_process';
+import { spawn, execSync } from 'node:child_process';
 import { execa } from 'execa';
+import { snapshotFileBeforeEdit } from './undo.js';
 import { currentSessionId, setProject, searchSessions, readSessionOverview, isSoloOnly, getProject } from './session.js';
 import { retrieve } from './retrieval.js';
 import { runSubAgent } from './subagent.js';
@@ -876,13 +877,35 @@ export async function runTool(name, args, opts = {}) {
       return fs.readFileSync(p, 'utf-8');
     }
 
+    function checkFileSyntax(filePath) {
+      try {
+        const ext = path.extname(filePath).toLowerCase();
+        if (ext === '.js' || ext === '.mjs' || ext === '.cjs') {
+          execSync(`node --check "${filePath}"`, { stdio: 'pipe', timeout: 3000 });
+        } else if (ext === '.json') {
+          JSON.parse(fs.readFileSync(filePath, 'utf-8'));
+        } else if (ext === '.py') {
+          execSync(`python3 -m py_compile "${filePath}"`, { stdio: 'pipe', timeout: 3000 });
+        }
+        return null;
+      } catch (err) {
+        const stderr = (err.stderr?.toString() || err.message || '').trim();
+        return stderr.slice(0, 400);
+      }
+    }
+
     if (name === 'write_file') {
       const p = resolve(args.path);
       if (fs.existsSync(p) && fs.statSync(p).isDirectory()) {
         return `Error: ${p} is a directory, not a file. Pick a different filename or remove the directory first.`;
       }
+      snapshotFileBeforeEdit(p);
       fs.mkdirSync(path.dirname(p), { recursive: true });
       fs.writeFileSync(p, args.content);
+      const syntaxErr = checkFileSyntax(p);
+      if (syntaxErr) {
+        return `Wrote ${args.content.length} bytes to ${p}\n\n[SYNTAX CHECK FAILED]:\n${syntaxErr}\nPlease fix this syntax error immediately before concluding.`;
+      }
       return `Wrote ${args.content.length} bytes to ${p}`;
     }
 
@@ -893,7 +916,12 @@ export async function runTool(name, args, opts = {}) {
       const count = content.split(args.old_str).length - 1;
       if (count > 1) return `Error: old_str matches ${count} times in ${p}, must be unique`;
       if (count === 1) {
+        snapshotFileBeforeEdit(p);
         fs.writeFileSync(p, content.replace(args.old_str, args.new_str));
+        const syntaxErr = checkFileSyntax(p);
+        if (syntaxErr) {
+          return `Edited ${p}\n\n[SYNTAX CHECK FAILED]:\n${syntaxErr}\nPlease fix this syntax error immediately using edit_file before concluding.`;
+        }
         return `Edited ${p}`;
       }
       // Exact match failed — try whitespace-normalized fuzzy match
@@ -914,7 +942,12 @@ export async function runTool(name, args, opts = {}) {
       const leading = lines[matchStart].match(/^([ \t]*)/)?.[1] || '';
       const newLines = args.new_str.split('\n').map((l, i) => i === 0 ? l : leading + l.trimStart());
       lines.splice(matchStart, len, ...newLines);
+      snapshotFileBeforeEdit(p);
       fs.writeFileSync(p, lines.join('\n'));
+      const syntaxErr = checkFileSyntax(p);
+      if (syntaxErr) {
+        return `Edited ${p} (whitespace-normalized match at line ${matchStart + 1})\n\n[SYNTAX CHECK FAILED]:\n${syntaxErr}\nPlease fix this syntax error immediately using edit_file before concluding.`;
+      }
       return `Edited ${p} (whitespace-normalized match at line ${matchStart + 1})`;
     }
 

@@ -16,6 +16,8 @@ import MemSync from './MemSync.js';
 import Confirm from './Confirm.js';
 import CompactProgress from './CompactProgress.js';
 import ChangelogViewer from './ChangelogViewer.js';
+import DiffViewer from './DiffViewer.js';
+import FilePicker from './FilePicker.js';
 import CommandBar from './CommandBar.js';
 import SubAgentBar from './SubAgentBar.js';
 import { filterCommands, runCapture } from './commands.js';
@@ -1046,6 +1048,7 @@ function App({ mascot }) {
   const formRef = React.useRef(form);
   formRef.current = form;
   const changelogScrollRef = React.useRef(null);
+  const diffScrollRef = React.useRef(null);
   const [commandOutput, setCommandOutput] = useState(null);
   const [commandScroll, setCommandScroll] = useState(0);
   const commandOutputRef = React.useRef(commandOutput);
@@ -1293,7 +1296,7 @@ function App({ mascot }) {
     : 0;
 
   const formHeight = form
-    ? (form.mode === 'compact' ? 9 : (form.mode === 'effort' ? 9 : (form.mode === 'config' || form.mode === 'settings' ? 11 : (form.mode.startsWith('mem-') ? 7 : 4))))
+    ? (form.mode === 'compact' ? 9 : (form.mode === 'effort' ? 9 : (form.mode === 'find' ? 14 : (form.mode === 'config' || form.mode === 'settings' ? 11 : (form.mode.startsWith('mem-') ? 7 : 4)))))
     : 0;
   const bottomAreaHeight = form ? formHeight : inputAreaHeight;
   const subagentsHeight = activeSubagents.length > 0 ? activeSubagents.length * 4 : 0;
@@ -1332,6 +1335,12 @@ function App({ mascot }) {
     // Ctrl + O: toggle single tool call mode vs showing full tool call history
     if ((key.ctrl && (char === 'o' || char === 'O')) || char === '\x0f') {
       setCompactTools((prev) => !prev);
+      return;
+    }
+
+    // Ctrl + P: fuzzy file palette
+    if ((key.ctrl && (char === 'p' || char === 'P')) || char === '\x10') {
+      setForm({ mode: 'find' });
       return;
     }
 
@@ -1452,6 +1461,8 @@ function App({ mascot }) {
     globalScrollUp = () => {
       if (formRef.current?.mode === 'changelog' && changelogScrollRef.current?.up) {
         changelogScrollRef.current.up();
+      } else if (formRef.current?.mode === 'diff' && diffScrollRef.current?.up) {
+        diffScrollRef.current.up();
       } else if (commandOutputRef.current) {
         setCommandScroll((s) => Math.max(0, s - 2));
       } else {
@@ -1461,6 +1472,8 @@ function App({ mascot }) {
     globalScrollDown = () => {
       if (formRef.current?.mode === 'changelog' && changelogScrollRef.current?.down) {
         changelogScrollRef.current.down();
+      } else if (formRef.current?.mode === 'diff' && diffScrollRef.current?.down) {
+        diffScrollRef.current.down();
       } else if (commandOutputRef.current) {
         setCommandScroll((s) => s + 2);
       } else {
@@ -1492,6 +1505,16 @@ function App({ mascot }) {
       width: terminalWidth,
       height: terminalHeight,
       scrollRef: changelogScrollRef,
+      onClose: () => setForm(null)
+    });
+  }
+
+  if (form && form.mode === 'diff') {
+    return h(DiffViewer, {
+      diffText: form.diffText,
+      width: terminalWidth,
+      height: terminalHeight,
+      scrollRef: diffScrollRef,
       onClose: () => setForm(null)
     });
   }
@@ -1636,6 +1659,14 @@ function App({ mascot }) {
                       fields: saved.fields
                     });
                   }
+                },
+                onCancel: () => setForm(null)
+              })
+            : form.mode === 'find'
+            ? h(FilePicker, {
+                onPick: (filePath) => {
+                  setInput((prev) => (prev ? prev + ' ' + filePath : filePath));
+                  setForm(null);
                 },
                 onCancel: () => setForm(null)
               })

@@ -2,6 +2,7 @@ import os from 'node:os';
 import fs from 'node:fs';
 import path from 'node:path';
 import { getSkillsPromptList } from './skills.js';
+import { readProjectPlaybook } from './project.js';
 
 function getExistingProjects() {
   try {
@@ -136,6 +137,12 @@ export function buildContext({ userName, insight, dataContent, taskSummary, hint
   if (!(exchange && exchange.length) && recent && recent.length) lines.push("earlier user messages (background only, already handled, do not answer them again):\n" + recent.map((m) => "- " + m).join("\n"));
   if (dataContent) lines.push(`DATA.md (already read, may be stale): ${dataContent}`);
   if (taskSummary) lines.push(`tasks: ${taskSummary}`);
+  try {
+    const playbook = readProjectPlaybook();
+    if (playbook?.content) {
+      lines.push(`project playbook (${path.basename(playbook.path)}):\n${playbook.content}`);
+    }
+  } catch {}
   return lines.length ? `[context]\n${lines.join('\n')}\n[/context]\n\n` : '';
 }
 

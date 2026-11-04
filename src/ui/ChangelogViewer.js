@@ -3,7 +3,13 @@ import { Box, Text, useInput } from 'ink';
 
 const h = React.createElement;
 
-function parseInline(text, defaultColor = '#e2e8f0') {
+const CYAN = '#afd7ff';
+const WHITE = '#ffffff';
+const SOFT = '#c4c4c4';
+const GRAY = '#777777';
+const DIM = '#334455';
+
+function parseInline(text, defaultColor = SOFT) {
   const tokens = [];
   const regex = /(`[^`]+`|\*\*[^*]+\*\*|\*[^*]+\*)/g;
   let lastIndex = 0;
@@ -14,11 +20,11 @@ function parseInline(text, defaultColor = '#e2e8f0') {
     }
     const raw = match[0];
     if (raw.startsWith('`') && raw.endsWith('`')) {
-      tokens.push({ text: raw.slice(1, -1), color: '#7dd3fc', bold: true });
+      tokens.push({ text: raw.slice(1, -1), color: WHITE, bold: true });
     } else if (raw.startsWith('**') && raw.endsWith('**')) {
-      tokens.push({ text: raw.slice(2, -2), color: '#ffffff', bold: true });
+      tokens.push({ text: raw.slice(2, -2), color: WHITE, bold: true });
     } else if (raw.startsWith('*') && raw.endsWith('*')) {
-      tokens.push({ text: raw.slice(1, -1), color: '#cbd5e1', italic: true });
+      tokens.push({ text: raw.slice(1, -1), color: SOFT, italic: true });
     }
     lastIndex = regex.lastIndex;
   }
@@ -38,7 +44,7 @@ function wrapTokens(tokens, maxWidth, indent = '    ') {
     const wLen = word.length;
     if (curLen + wLen > maxWidth && curLen > 0) {
       lines.push(curLine);
-      curLine = indent ? [{ text: indent, color: '#64748b' }] : [];
+      curLine = indent ? [{ text: indent, color: GRAY }] : [];
       curLen = indent ? indent.length : 0;
       const trimmed = word.trimStart();
       if (trimmed) {
@@ -65,7 +71,7 @@ function wrapTokens(tokens, maxWidth, indent = '    ') {
           rem = rem.slice(avail);
           if (rem.length > 0) {
             lines.push(curLine);
-            curLine = indent ? [{ text: indent, color: '#64748b' }] : [];
+            curLine = indent ? [{ text: indent, color: GRAY }] : [];
             curLen = indent ? indent.length : 0;
           }
         }
@@ -104,8 +110,8 @@ function parseChangelogToLines(content, maxWidth) {
     if (trimmed.startsWith('# ')) {
       const title = trimmed.slice(2).trim();
       const sepLen = Math.min(maxWidth, Math.max(20, title.length + 8));
-      allVisualLines.push([{ text: `✦ ${title.toUpperCase()} ✦`, color: '#38bdf8', bold: true }]);
-      allVisualLines.push([{ text: '═'.repeat(sepLen), color: '#0284c7' }]);
+      allVisualLines.push([{ text: `✦ ${title.toUpperCase()} ✦`, color: CYAN, bold: true }]);
+      allVisualLines.push([{ text: '═'.repeat(sepLen), color: CYAN }]);
       allVisualLines.push([{ text: ' ' }]);
       continue;
     }
@@ -114,7 +120,7 @@ function parseChangelogToLines(content, maxWidth) {
     if (trimmed === '---' || trimmed === '***' || trimmed === '___') {
       ensureBlankLine();
       const sep = '─'.repeat(maxWidth);
-      allVisualLines.push([{ text: sep, color: '#334155' }]);
+      allVisualLines.push([{ text: sep, color: DIM }]);
       allVisualLines.push([{ text: ' ' }]);
       continue;
     }
@@ -124,12 +130,12 @@ function parseChangelogToLines(content, maxWidth) {
       const text = trimmed.slice(3).trim();
       ensureBlankLine();
       const toks = [
-        { text: '◆  ', color: '#818cf8', bold: true },
-        ...parseInline(text, '#c084fc')
+        { text: '◆  ', color: CYAN, bold: true },
+        ...parseInline(text, WHITE)
       ];
       toks.forEach((t) => { t.bold = true; });
       allVisualLines.push(...wrapTokens(toks, maxWidth, '   '));
-      allVisualLines.push([{ text: '─'.repeat(Math.min(maxWidth, Math.max(16, text.length + 4))), color: '#4338ca' }]);
+      allVisualLines.push([{ text: '─'.repeat(Math.min(maxWidth, Math.max(16, text.length + 4))), color: GRAY }]);
       continue;
     }
 
@@ -138,34 +144,23 @@ function parseChangelogToLines(content, maxWidth) {
       const cat = trimmed.slice(4).trim();
       const lower = cat.toLowerCase();
       let icon = '▸ ';
-      let color = '#c084fc';
-      if (lower.includes('added')) {
-        icon = '▲ ';
-        color = '#4ade80';
-      } else if (lower.includes('fixed')) {
-        icon = '● ';
-        color = '#fbbf24';
-      } else if (lower.includes('changed') || lower.includes('updated')) {
-        icon = '■ ';
-        color = '#60a5fa';
-      } else if (lower.includes('removed') || lower.includes('deprecated')) {
-        icon = '✖ ';
-        color = '#f87171';
-      } else if (lower.includes('security')) {
-        icon = '🔒 ';
-        color = '#f472b6';
-      }
+      if (lower.includes('added')) icon = '▲ ';
+      else if (lower.includes('fixed')) icon = '● ';
+      else if (lower.includes('changed') || lower.includes('updated')) icon = '■ ';
+      else if (lower.includes('removed') || lower.includes('deprecated')) icon = '✖ ';
+      else if (lower.includes('security')) icon = '🔒 ';
+
       ensureBlankLine();
-      allVisualLines.push([{ text: `  ${icon}${cat.toUpperCase()}`, color, bold: true }]);
+      allVisualLines.push([{ text: `  ${icon}${cat.toUpperCase()}`, color: CYAN, bold: true }]);
       continue;
     }
 
     // Bullet items
     if (trimmed.startsWith('- ') || trimmed.startsWith('* ')) {
       const text = trimmed.slice(2).trim();
-      const inlineTokens = parseInline(text, '#e2e8f0');
+      const inlineTokens = parseInline(text, SOFT);
       const bulletTokens = [
-        { text: '  • ', color: '#38bdf8' },
+        { text: '  • ', color: CYAN },
         ...inlineTokens
       ];
       allVisualLines.push(...wrapTokens(bulletTokens, maxWidth, '    '));
@@ -173,7 +168,7 @@ function parseChangelogToLines(content, maxWidth) {
     }
 
     // Standard body text
-    const pTokens = parseInline(trimmed, '#94a3b8');
+    const pTokens = parseInline(trimmed, SOFT);
     allVisualLines.push(...wrapTokens(pTokens, maxWidth, ''));
   }
 
@@ -286,7 +281,7 @@ export default function ChangelogViewer({ content, onClose, width, height, scrol
       width,
       height: totalHeight,
       borderStyle: 'round',
-      borderColor: '#0284c7'
+      borderColor: CYAN
     },
 
     // Header bar
@@ -301,10 +296,10 @@ export default function ChangelogViewer({ content, onClose, width, height, scrol
       h(
         Box,
         null,
-        h(Text, { color: '#38bdf8', bold: true }, '☾ LEVI '),
-        h(Text, { color: '#cbd5e1', bold: true }, 'CHANGELOG')
+        h(Text, { color: CYAN, bold: true }, '☾ LEVI '),
+        h(Text, { color: WHITE, bold: true }, 'CHANGELOG')
       ),
-      h(Text, { color: '#64748b' }, 'Esc/q to close')
+      h(Text, { color: GRAY }, 'Esc/q to close')
     ),
 
     // Top divider
@@ -312,7 +307,7 @@ export default function ChangelogViewer({ content, onClose, width, height, scrol
       ? h(
           Box,
           { height: 1, paddingX: 1, flexShrink: 0 },
-          h(Text, { color: '#1e293b' }, '─'.repeat(usableWidth))
+          h(Text, { color: DIM }, '─'.repeat(usableWidth))
         )
       : null,
 
@@ -334,7 +329,7 @@ export default function ChangelogViewer({ content, onClose, width, height, scrol
       ? h(
           Box,
           { height: 1, paddingX: 1, flexShrink: 0 },
-          h(Text, { color: '#1e293b' }, '─'.repeat(usableWidth))
+          h(Text, { color: DIM }, '─'.repeat(usableWidth))
         )
       : null,
 
@@ -351,21 +346,21 @@ export default function ChangelogViewer({ content, onClose, width, height, scrol
         ? h(
             Box,
             null,
-            h(Text, { color: '#4ade80' }, '● All content shown ('),
-            h(Text, { color: '#94a3b8' }, `${totalLines} lines`),
-            h(Text, { color: '#4ade80' }, ')')
+            h(Text, { color: CYAN }, '● All content shown ('),
+            h(Text, { color: SOFT }, `${totalLines} lines`),
+            h(Text, { color: CYAN }, ')')
           )
         : h(
             Box,
             null,
-            h(Text, { color: '#38bdf8', bold: true }, '▲ '),
-            h(Text, { color: '#94a3b8' }, `${clampedOffset + 1}–${Math.min(clampedOffset + visibleLinesCount, totalLines)}/${totalLines} `),
-            h(Text, { color: '#38bdf8' }, `[${bar}] `),
-            h(Text, { color: '#64748b' }, `${pct}%`)
+            h(Text, { color: CYAN, bold: true }, '▲ '),
+            h(Text, { color: SOFT }, `${clampedOffset + 1}–${Math.min(clampedOffset + visibleLinesCount, totalLines)}/${totalLines} `),
+            h(Text, { color: CYAN }, `[${bar}] `),
+            h(Text, { color: GRAY }, `${pct}%`)
           ),
       h(
         Text,
-        { color: '#64748b' },
+        { color: GRAY },
         usableWidth > 55 ? '↑↓/j/k PgUp/Dn Home/End • q/Esc exit' : '↑↓ scroll • q exit'
       )
     )

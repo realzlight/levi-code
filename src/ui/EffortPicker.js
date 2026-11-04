@@ -33,14 +33,14 @@ export default function EffortPicker({ current, onPick, onCancel }) {
       const isSel = i === sel;
       const isCur = e.id === currentId;
       const marker = isSel ? '❯ ' : '  ';
-      const badge = isCur ? '★ ' : '  ';
+      const labelColor = isCur ? '#ffffff' : (isSel ? CYAN : SOFT);
+      const pacingColor = isCur ? '#ffffff' : (isSel ? CYAN : GRAY);
       return h(
         Box,
         { key: e.id, height: 1, overflow: 'hidden' },
         h(Text, { color: isSel ? CYAN : GRAY }, marker),
-        h(Text, { color: isCur ? GOLD : GRAY }, badge),
-        h(Text, { color: isSel ? CYAN : SOFT, bold: isSel }, e.label.padEnd(20)),
-        h(Text, { color: isSel ? GOLD : GRAY }, e.pacing || '')
+        h(Text, { color: labelColor, bold: isCur || isSel }, e.label.padEnd(22)),
+        h(Text, { color: pacingColor }, e.pacing || '')
       );
     }),
     h(Box, { marginTop: 1, height: 1, overflow: 'hidden' },
