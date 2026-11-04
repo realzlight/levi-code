@@ -1043,6 +1043,9 @@ function App({ mascot }) {
   const [sel, setSel] = useState(0);
   const [effort, setEffortState] = useState(() => getEffort());
   const [form, setForm] = useState(null);
+  const formRef = React.useRef(form);
+  formRef.current = form;
+  const changelogScrollRef = React.useRef(null);
   const [commandOutput, setCommandOutput] = useState(null);
   const [commandScroll, setCommandScroll] = useState(0);
   const commandOutputRef = React.useRef(commandOutput);
@@ -1447,14 +1450,18 @@ function App({ mascot }) {
 
   useEffect(() => {
     globalScrollUp = () => {
-      if (commandOutputRef.current) {
+      if (formRef.current?.mode === 'changelog' && changelogScrollRef.current?.up) {
+        changelogScrollRef.current.up();
+      } else if (commandOutputRef.current) {
         setCommandScroll((s) => Math.max(0, s - 2));
       } else {
         scrollTo(targetScrollRef.current + 2);
       }
     };
     globalScrollDown = () => {
-      if (commandOutputRef.current) {
+      if (formRef.current?.mode === 'changelog' && changelogScrollRef.current?.down) {
+        changelogScrollRef.current.down();
+      } else if (commandOutputRef.current) {
         setCommandScroll((s) => s + 2);
       } else {
         scrollTo(targetScrollRef.current - 2);
@@ -1478,6 +1485,16 @@ function App({ mascot }) {
       if (tapTimer) clearTimeout(tapTimer);
     };
   }, [scrollTo]);
+
+  if (form && form.mode === 'changelog') {
+    return h(ChangelogViewer, {
+      content: form.content,
+      width: terminalWidth,
+      height: terminalHeight,
+      scrollRef: changelogScrollRef,
+      onClose: () => setForm(null)
+    });
+  }
 
   return h(
     Box,
@@ -1557,8 +1574,6 @@ function App({ mascot }) {
                   }
                 }
               })
-            : form.mode === 'changelog'
-            ? h(ChangelogViewer, { content: form.content, width: terminalWidth, height: terminalHeight, onClose: () => setForm(null) })
             : form.mode === 'delete-confirm'
             ? h(Confirm, {
                 message: 'Hard delete SESSION-' + form.sessionId + (form.title ? ' "' + form.title + '"' : '') + '?',
