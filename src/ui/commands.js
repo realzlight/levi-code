@@ -820,13 +820,33 @@ const skillsMod = () => import('../agent/skills.js');
 
 defineCommand({
   name: 'skills',
-  description: 'List all custom skills grouped by folder, or filter by folder',
-  args: [{ name: 'folder', required: false, description: 'Optional folder name to filter' }],
+  description: 'View the complete walkthrough guide for the Levi Skill system (fullscreen, Esc to close)',
+  run: async (_, ctx) => {
+    const { readFileSync, existsSync } = await import('node:fs');
+    const { fileURLToPath } = await import('node:url');
+    const nodePath = await import('node:path');
+    const __filename = fileURLToPath(import.meta.url);
+    const guidePath = nodePath.resolve(nodePath.dirname(__filename), '../../SKILL-WALKTHROUGH.md');
+    if (!existsSync(guidePath)) return ctx.print('SKILL-WALKTHROUGH.md not found at ' + guidePath);
+    const content = readFileSync(guidePath, 'utf-8');
+    if (ctx.openForm) {
+      ctx.openForm({ mode: 'changelog', content });
+    } else {
+      ctx.print(content);
+    }
+  }
+});
+
+defineCommand({
+  name: 'skills:list',
+  description: 'List all skill folders and skills within them',
+  args: [{ name: 'folder', required: false, rest: true, description: 'Optional folder or subfolder to filter' }],
   run: async ({ folder }, ctx) => {
-    const { listSkills, listSkillFolders } = await skillsMod();
-    const skills = listSkills(folder);
+    const { listSkills } = await skillsMod();
+    const filterFolder = Array.isArray(folder) ? folder.join('/') : (folder ? String(folder).trim() : null);
+    const skills = listSkills(filterFolder);
     if (!skills.length) {
-      return ctx.print(`No skills found${folder ? ` in folder "${folder}"` : ''}. Use /skills:create <folder> <file> to create one.`);
+      return ctx.print(`No skills found${filterFolder ? ` in "${filterFolder}"` : ''}.\nUse /skills:create <folder> <filename> to create one.`);
     }
 
     const grouped = {};
@@ -859,115 +879,101 @@ defineCommand({
 });
 
 defineCommand({
-  name: 'skills:list',
-  description: 'List all custom skills grouped by folder, or filter by folder',
-  args: [{ name: 'folder', required: false, description: 'Optional folder name to filter' }],
-  run: async ({ folder }, ctx) => {
-    const { listSkills } = await skillsMod();
-    const skills = listSkills(folder);
-    if (!skills.length) {
-      return ctx.print(`No skills found${folder ? ` in folder "${folder}"` : ''}. Use /skills:create <folder> <file> to create one.`);
-    }
-
-    const grouped = {};
-    for (const s of skills) {
-      const f = s.folder || 'GENERAL';
-      if (!grouped[f]) grouped[f] = [];
-      grouped[f].push(s);
-    }
-
-    const fields = [];
-    for (const [fName, list] of Object.entries(grouped)) {
-      fields.push({
-        label: `📁 ${fName}`,
-        value: `${list.length} skill${list.length === 1 ? '' : 's'}`
-      });
-      for (const s of list) {
-        const icon = s.disabled ? '❌ ' : '🟢 ';
-        fields.push({
-          label: `   ${icon}${s.name}`,
-          value: `${s.title ? s.title + ' — ' : ''}${s.summary || 'No summary'} (${s.disabled ? 'disabled' : s.usedCount ? `active · used ${s.usedCount}x` : 'active'}) [~/.levi/SKILLS/${s.relPath}]`
-        });
-      }
-    }
-
-    ctx.printPanel({
-      title: `Skills Catalog (~/.levi/SKILLS/ — ${skills.length} skills)`,
-      fields
-    });
-  }
-});
-
-defineCommand({
-  name: 'skills:folders',
-  description: 'List all skill folders under ~/.levi/SKILLS/',
+  name: 'skills:folder',
+  description: 'List all skill folders and nested subfolders',
   run: async (_, ctx) => {
     const { listSkillFolders } = await skillsMod();
     const folders = listSkillFolders();
-    if (!folders.length) return ctx.print('No skill folders found. Use /skills:folder:create <name> to create one.');
+    if (!folders.length) return ctx.print('No skill folders found. Use /skills:new <folder> to create one.');
     ctx.printPanel({
-      title: 'Skill Folders (~/.levi/SKILLS/)',
+      title: `Skill Folders (~/.levi/SKILLS/ — ${folders.length} folders & subfolders)`,
       fields: folders.map((f) => ({
         label: `📁 ${f.name}`,
-        value: `${f.count} skill file${f.count === 1 ? '' : 's'} (${f.path})`
+        value: `${f.count} direct skill${f.count === 1 ? '' : 's'}${f.totalCount !== f.count ? ` (${f.totalCount} total in subtree)` : ''} [~/.levi/SKILLS/${f.name}/]`
       }))
     });
   }
 });
 
 defineCommand({
-  name: 'skills:folder:create',
-  description: 'Create a new skill folder under ~/.levi/SKILLS/',
-  args: [{ name: 'name', required: true, description: 'Folder name (e.g. UI-UX-SKILLS, BACKEND)' }],
-  run: async ({ name }, ctx) => {
+  name: 'skills:folders',
+  description: 'List all skill folders and nested subfolders',
+  run: async (_, ctx) => {
+    const { listSkillFolders } = await skillsMod();
+    const folders = listSkillFolders();
+    if (!folders.length) return ctx.print('No skill folders found. Use /skills:new <folder> to create one.');
+    ctx.printPanel({
+      title: `Skill Folders (~/.levi/SKILLS/ — ${folders.length} folders & subfolders)`,
+      fields: folders.map((f) => ({
+        label: `📁 ${f.name}`,
+        value: `${f.count} direct skill${f.count === 1 ? '' : 's'}${f.totalCount !== f.count ? ` (${f.totalCount} total in subtree)` : ''} [~/.levi/SKILLS/${f.name}/]`
+      }))
+    });
+  }
+});
+
+defineCommand({
+  name: 'skills:new',
+  description: 'Create a new skill folder or nested subfolder (e.g. /skills:new UI-UX-SKILLS/COMPONENTS)',
+  args: [{ name: 'folder', required: true, rest: true, description: 'Folder or nested subfolder path' }],
+  run: async ({ folder }, ctx) => {
     const { createSkillFolder } = await skillsMod();
-    const res = createSkillFolder(name);
+    const rawParts = Array.isArray(folder) ? folder : String(folder || '').trim().split(/\s+/);
+    const res = createSkillFolder(...rawParts);
+    if (!res.ok) return ctx.print(res.error || 'Failed to create skill folder.');
     if (res.existing) {
-      return ctx.print(`Folder "${res.folder}" already exists at ~/.levi/SKILLS/${res.folder}/.\nUse /skills:create ${res.folder} <file> to add skills.`);
+      return ctx.print(`Folder "${res.folder}" already exists at ~/.levi/SKILLS/${res.folder}/.\nUse /skills:create ${res.folder} <filename> to add skills.`);
     }
-    ctx.print(`✓ Skill folder "${res.folder}" created at ~/.levi/SKILLS/${res.folder}/.\nUse /skills:create ${res.folder} <file> to add skills.`);
+    ctx.print(`✓ Skill folder "${res.folder}" created at ~/.levi/SKILLS/${res.folder}/.\nUse /skills:create ${res.folder} <filename> to add skills.`);
   }
 });
 
 defineCommand({
   name: 'skills:create',
-  description: 'Create a new skill in a skill folder (e.g. /skills:create UI-UX-SKILLS ui)',
-  args: [
-    { name: 'target', required: true, description: 'Folder name or folder/file (e.g. UI-UX-SKILLS or UI-UX-SKILLS/ui)' },
-    { name: 'file', required: false, description: 'Optional skill file name if folder was provided first' }
-  ],
-  run: async ({ target, file }, ctx) => {
+  description: 'Create a new skill in a folder or subfolder (e.g. /skills:create UI-UX-SKILLS COMPONENTS button)',
+  args: [{ name: 'parts', required: true, rest: true, description: '<folder> [subfolder...] <filename>' }],
+  run: async ({ parts }, ctx) => {
     const { createSkill } = await skillsMod();
-    const res = await createSkill(target, file);
+    const rawArgs = Array.isArray(parts) ? parts : String(parts || '').trim().split(/\s+/);
+    const res = await createSkill(...rawArgs);
     if (!res.ok) return ctx.print(res.error);
-    ctx.print(`✓ Skill "${res.id}" created at ~/.levi/SKILLS/${res.folder}/${res.file}.md.\nUse /skills:edit ${res.id} to write instructions.`);
+    ctx.print(`✓ Skill "${res.id}" created at ~/.levi/SKILLS/${res.relPath}.\nUse /skills:edit ${res.id} to write instructions.`);
   }
 });
 
 defineCommand({
   name: 'skills:edit',
-  description: 'Open editor to write skill instructions and auto-summarize (e.g. /skills:edit UI-UX-SKILLS/ui)',
-  args: [
-    { name: 'target', required: true, description: 'Skill target (e.g. UI-UX-SKILLS/ui or folder)' },
-    { name: 'file', required: false, description: 'Optional skill file name' }
-  ],
+  description: 'Open editor to write skill instructions and auto-summarize (e.g. /skills:edit UI-UX-SKILLS/COMPONENTS/button)',
+  args: [{ name: 'target', required: true, rest: true, description: 'Skill target path' }],
   screen: true,
-  run: async ({ target, file }, ctx) => {
+  run: async ({ target }, ctx) => {
     const { editSkill } = await skillsMod();
-    await editSkill(target, file, ctx);
+    const rawArgs = Array.isArray(target) ? target : String(target || '').trim().split(/\s+/);
+    await editSkill(rawArgs, ctx);
   }
 });
 
 defineCommand({
   name: 'skills:read',
   description: 'View instructions and content of a skill directly in the terminal',
-  args: [
-    { name: 'target', required: true, description: 'Skill target (e.g. UI-UX-SKILLS/ui)' },
-    { name: 'file', required: false, description: 'Optional skill file name' }
-  ],
-  run: async ({ target, file }, ctx) => {
+  args: [{ name: 'target', required: true, rest: true, description: 'Skill target path' }],
+  run: async ({ target }, ctx) => {
     const { readSkill } = await skillsMod();
-    const res = readSkill(target, file);
+    const rawArgs = Array.isArray(target) ? target : String(target || '').trim().split(/\s+/);
+    const res = readSkill(...rawArgs);
+    if (!res.ok) return ctx.print(`Error: ${res.error}`);
+    ctx.print(`\n--- [Skill: ${res.id}] (${res.path}) ---\n\n${res.content}\n`);
+  }
+});
+
+defineCommand({
+  name: 'skills:show',
+  description: 'View instructions and content of a skill directly in the terminal',
+  args: [{ name: 'target', required: true, rest: true, description: 'Skill target path' }],
+  run: async ({ target }, ctx) => {
+    const { readSkill } = await skillsMod();
+    const rawArgs = Array.isArray(target) ? target : String(target || '').trim().split(/\s+/);
+    const res = readSkill(...rawArgs);
     if (!res.ok) return ctx.print(`Error: ${res.error}`);
     ctx.print(`\n--- [Skill: ${res.id}] (${res.path}) ---\n\n${res.content}\n`);
   }
@@ -975,17 +981,15 @@ defineCommand({
 
 defineCommand({
   name: 'skills:delete',
-  description: 'Permanently delete a skill file or an entire skill folder',
-  args: [
-    { name: 'target', required: true, description: 'Skill file (e.g. UI-UX-SKILLS/ui) or folder (e.g. UI-UX-SKILLS)' },
-    { name: 'file', required: false, description: 'Optional file name if folder given' }
-  ],
-  run: async ({ target, file }, ctx) => {
+  description: 'Permanently delete a skill file or an entire skill folder branch',
+  args: [{ name: 'target', required: true, rest: true, description: 'Skill file or folder path' }],
+  run: async ({ target }, ctx) => {
     const { deleteSkill } = await skillsMod();
-    const res = deleteSkill(target, file);
+    const rawArgs = Array.isArray(target) ? target : String(target || '').trim().split(/\s+/);
+    const res = deleteSkill(...rawArgs);
     if (!res.ok) return ctx.print(res.error);
     if (res.isFolder) {
-      ctx.print(`✓ Skill folder "${res.id}" and all its skills have been permanently deleted.`);
+      ctx.print(`✓ Skill folder "${res.id}" and all its subfolders/skills have been permanently deleted.`);
     } else {
       ctx.print(`✓ Skill "${res.id}" deleted.`);
     }
@@ -995,16 +999,14 @@ defineCommand({
 defineCommand({
   name: 'skills:disable',
   description: 'Disable a skill or folder (excludes it from lazy-loaded context)',
-  args: [
-    { name: 'target', required: true, description: 'Skill (e.g. UI-UX-SKILLS/ui) or folder (e.g. UI-UX-SKILLS)' },
-    { name: 'file', required: false, description: 'Optional file name' }
-  ],
-  run: async ({ target, file }, ctx) => {
+  args: [{ name: 'target', required: true, rest: true, description: 'Skill or folder path' }],
+  run: async ({ target }, ctx) => {
     const { disableSkill } = await skillsMod();
-    const res = disableSkill(target, file);
+    const rawArgs = Array.isArray(target) ? target : String(target || '').trim().split(/\s+/);
+    const res = disableSkill(...rawArgs);
     if (!res.ok) return ctx.print(res.error);
     if (res.isFolder) {
-      ctx.print(`✓ Disabled ${res.count} skills in folder "${res.id}". They will not be loaded into context.`);
+      ctx.print(`✓ Disabled ${res.count} skill(s) in folder "${res.id}". They will not be loaded into context.`);
     } else {
       ctx.print(`✓ Skill "${res.id}" disabled. It will not be loaded into context.`);
     }
@@ -1014,16 +1016,14 @@ defineCommand({
 defineCommand({
   name: 'skills:enable',
   description: 'Enable a skill or folder (includes it in lazy-loaded context)',
-  args: [
-    { name: 'target', required: true, description: 'Skill (e.g. UI-UX-SKILLS/ui) or folder (e.g. UI-UX-SKILLS)' },
-    { name: 'file', required: false, description: 'Optional file name' }
-  ],
-  run: async ({ target, file }, ctx) => {
+  args: [{ name: 'target', required: true, rest: true, description: 'Skill or folder path' }],
+  run: async ({ target }, ctx) => {
     const { enableSkill } = await skillsMod();
-    const res = enableSkill(target, file);
+    const rawArgs = Array.isArray(target) ? target : String(target || '').trim().split(/\s+/);
+    const res = enableSkill(...rawArgs);
     if (!res.ok) return ctx.print(res.error);
     if (res.isFolder) {
-      ctx.print(`✓ Enabled ${res.count} skills in folder "${res.id}".`);
+      ctx.print(`✓ Enabled ${res.count} skill(s) in folder "${res.id}".`);
     } else {
       ctx.print(`✓ Skill "${res.id}" enabled.`);
     }
@@ -1033,13 +1033,14 @@ defineCommand({
 defineCommand({
   name: 'learn',
   description: 'Distill recent conversation actions into a reusable skill in ~/.levi/SKILLS/<folder>/<file>.md',
-  args: [{ name: 'target', required: false, description: 'Optional folder/name (e.g. UI-UX-SKILLS/ui or folder)' }],
+  args: [{ name: 'target', required: false, rest: true, description: 'Optional folder/name (e.g. UI-UX-SKILLS/ui or folder)' }],
   run: async ({ target }, ctx) => {
     const { distillLastSessionSkill } = await import('../agent/skills.js');
     const { currentSessionId } = await import('../agent/session.js');
     const sid = currentSessionId();
-    ctx.print('Analyzing recent actions and distilling reusable skill into folder...');
-    const res = await distillLastSessionSkill(sid, target);
+    const rawTarget = Array.isArray(target) ? target.join('/') : (target ? String(target).trim() : null);
+    ctx.print('Analyzing recent actions and distilling reusable skill...');
+    const res = await distillLastSessionSkill(sid, rawTarget);
     if (!res || !res.ok) {
       return ctx.print(res?.error || 'No sufficiently complex or reusable workflow found in recent messages to distill.');
     }

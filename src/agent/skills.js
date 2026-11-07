@@ -16,21 +16,14 @@ export function sanitizeSlug(raw) {
   if (!raw || typeof raw !== 'string') return '';
   return raw
     .trim()
-    .toLowerCase()
     .replace(/\.md$/i, '')
-    .replace(/[^a-z0-9_-]/g, '-')
+    .replace(/[^a-zA-Z0-9_\-\.]/g, '-')
     .replace(/^-+|-+$/g, '')
     .replace(/-+/g, '-');
 }
 
-export function sanitizeFolder(raw) {
-  if (!raw || typeof raw !== 'string') return 'GENERAL';
-  const clean = raw
-    .trim()
-    .replace(/[\/\\]+/g, '-')
-    .replace(/[^a-zA-Z0-9_\-\.]/g, '-')
-    .replace(/^-+|-+$/g, '');
-  return clean || 'GENERAL';
+export function sanitizeFolderName(raw) {
+  return sanitizeSlug(raw);
 }
 
 export function sanitizeSkillName(raw) {
@@ -66,200 +59,270 @@ export function writeSkillsMeta(meta) {
 }
 
 /**
- * Parse input arguments into a structured skill target:
- * e.g. ("UI-UX-SKILLS", "ui") -> { folder: "UI-UX-SKILLS", file: "ui", id: "UI-UX-SKILLS/ui", relPath: "UI-UX-SKILLS/ui.md" }
- * e.g. "UI-UX-SKILLS/ui"     -> { folder: "UI-UX-SKILLS", file: "ui", id: "UI-UX-SKILLS/ui", relPath: "UI-UX-SKILLS/ui.md" }
- * e.g. "ui"                  -> searches existing skills, or defaults to ("GENERAL", "ui")
+ * Recursively crawl SKILLS_DIR to discover all nested folders, subfolders, and .md files.
  */
-export function parseSkillTarget(target, optionalFile) {
-  if (!target && !optionalFile) return null;
-  let raw = String(target || '').trim();
-  let fileRaw = optionalFile ? String(optionalFile).trim() : '';
-
-  let folder = '';
-  let file = '';
-
-  if (fileRaw) {
-    folder = sanitizeFolder(raw);
-    file = sanitizeSlug(fileRaw);
-  } else if (raw.includes('/')) {
-    const parts = raw.split('/').filter(Boolean);
-    folder = sanitizeFolder(parts[0]);
-    file = sanitizeSlug(parts.slice(1).join('-'));
-  } else {
-    ensureSkillsDir();
-    const directFolder = path.join(SKILLS_DIR, raw);
-    if (fs.existsSync(directFolder) && fs.statSync(directFolder).isDirectory()) {
-      folder = sanitizeFolder(raw);
-      file = '';
-    } else {
-      // Check if target matches an existing skill across all folders
-      const all = listSkills();
-      const match = all.find((s) => s.file === `${sanitizeSlug(raw)}.md` || s.name === sanitizeSlug(raw));
-      if (match) {
-        folder = match.folder;
-        file = sanitizeSlug(match.name);
-      } else {
-        folder = sanitizeFolder(raw);
-        file = '';
-      }
-    }
-  }
-
-  const id = file ? `${folder}/${file}` : folder;
-  const fileName = file ? `${file}.md` : '';
-  const relPath = file ? path.join(folder, `${file}.md`) : folder;
-  const filePath = file ? path.join(SKILLS_DIR, folder, `${file}.md`) : path.join(SKILLS_DIR, folder);
-
-  return { id, folder, file, fileName, relPath, filePath };
-}
-
-/**
- * List all skill folders with their file counts.
- */
-export function listSkillFolders() {
-  ensureSkillsDir();
+export function scanSkillsDirRecursively(dirPath = SKILLS_DIR, baseDir = dirPath) {
   const folders = [];
-  try {
-    const entries = fs.readdirSync(SKILLS_DIR, { withFileTypes: true });
-    for (const ent of entries) {
-      if (ent.isDirectory()) {
-        let count = 0;
-        try {
-          count = fs.readdirSync(path.join(SKILLS_DIR, ent.name)).filter((f) => f.endsWith('.md')).length;
-        } catch {}
-        folders.push({ name: ent.name, count, path: path.join(SKILLS_DIR, ent.name) });
-      }
+  const files = [];
+
+  function walk(current) {
+    let entries = [];
+    try {
+      entries = fs.readdirSync(current, { withFileTypes: true });
+    } catch {
+      return;
     }
-  } catch {}
-  return folders;
-}
 
-/**
- * Create a new skill folder under ~/.levi/SKILLS/<name>
- */
-export function createSkillFolder(rawFolder) {
-  const folder = sanitizeFolder(rawFolder);
-  ensureSkillsDir();
-  const folderPath = path.join(SKILLS_DIR, folder);
-  if (fs.existsSync(folderPath)) {
-    return { ok: true, folder, path: folderPath, existing: true };
-  }
-  fs.mkdirSync(folderPath, { recursive: true });
-  const meta = readSkillsMeta();
-  if (!meta.folders) meta.folders = {};
-  meta.folders[folder] = {
-    name: folder,
-    createdAt: new Date().toISOString()
-  };
-  writeSkillsMeta(meta);
-  return { ok: true, folder, path: folderPath, existing: false };
-}
-
-/**
- * Scan SKILLS_DIR recursively for all skills organized by folder.
- * Discovers .levi/SKILLS/<folder>/<file>.md and synchronizes with metadata.
- */
-export function listSkills(filterFolder = null) {
-  ensureSkillsDir();
-  const meta = readSkillsMeta();
-  let changed = false;
-  const foundSkills = [];
-
-  try {
-    const entries = fs.readdirSync(SKILLS_DIR, { withFileTypes: true });
     for (const ent of entries) {
+      const fullPath = path.join(current, ent.name);
+      const relPath = path.relative(baseDir, fullPath).replace(/\\/g, '/');
+
       if (ent.isDirectory()) {
-        const folderName = ent.name;
-        if (filterFolder && folderName.toLowerCase() !== filterFolder.toLowerCase()) continue;
-        const subFiles = fs.readdirSync(path.join(SKILLS_DIR, folderName));
-        for (const f of subFiles) {
-          if (!f.endsWith('.md')) continue;
-          const fileName = f.slice(0, -3);
-          const id = `${folderName}/${fileName}`;
-          const relPath = `${folderName}/${f}`;
-          const fullPath = path.join(SKILLS_DIR, folderName, f);
-
-          if (!meta.skills[id]) {
-            const content = fs.readFileSync(fullPath, 'utf-8');
-            const lines = content.split('\n').map((l) => l.trim()).filter(Boolean);
-            const h1 = lines.find((l) => l.startsWith('#'));
-            const title = h1 ? h1.replace(/^#+\s*/, '').trim() : fileName;
-            const body = lines.find((l) => !l.startsWith('#') && !l.startsWith('---') && !l.startsWith('>'));
-            const summary = body ? body.slice(0, 120) : `Skill instructions for ${id}`;
-            meta.skills[id] = {
-              id,
-              name: fileName,
-              folder: folderName,
-              file: f,
-              relPath,
-              title,
-              summary,
-              disabled: false,
-              createdAt: new Date().toISOString(),
-              updatedAt: new Date().toISOString()
-            };
-            changed = true;
-          }
-          foundSkills.push({
-            ...meta.skills[id],
-            id,
-            name: fileName,
-            folder: folderName,
-            file: f,
-            relPath,
-            filePath: fullPath
-          });
-        }
+        folders.push({
+          relPath,
+          fullPath,
+          name: ent.name
+        });
+        walk(fullPath);
       } else if (ent.isFile() && ent.name.endsWith('.md')) {
-        // Flat legacy skill file support (e.g. ~/.levi/SKILLS/ui.md)
-        const fileName = ent.name.slice(0, -3);
-        const folderName = 'GENERAL';
-        const id = `${folderName}/${fileName}`;
-        const relPath = ent.name;
-        const fullPath = path.join(SKILLS_DIR, ent.name);
-
-        if (!meta.skills[id] && !meta.skills[fileName]) {
-          const content = fs.readFileSync(fullPath, 'utf-8');
-          const lines = content.split('\n').map((l) => l.trim()).filter(Boolean);
-          const h1 = lines.find((l) => l.startsWith('#'));
-          const title = h1 ? h1.replace(/^#+\s*/, '').trim() : fileName;
-          const body = lines.find((l) => !l.startsWith('#') && !l.startsWith('---') && !l.startsWith('>'));
-          const summary = body ? body.slice(0, 120) : `Skill instructions for ${fileName}`;
-          meta.skills[id] = {
-            id,
-            name: fileName,
-            folder: folderName,
-            file: ent.name,
-            relPath,
-            title,
-            summary,
-            disabled: false,
-            createdAt: new Date().toISOString(),
-            updatedAt: new Date().toISOString()
-          };
-          changed = true;
-        }
-        const record = meta.skills[id] || meta.skills[fileName];
-        foundSkills.push({
-          ...record,
+        const parsed = path.parse(relPath);
+        const folder = parsed.dir ? parsed.dir.replace(/\\/g, '/') : 'GENERAL';
+        const file = parsed.base;
+        const name = parsed.name;
+        const id = relPath.replace(/\.md$/, '');
+        files.push({
           id,
-          name: fileName,
-          folder: folderName,
-          file: ent.name,
+          name,
+          folder,
+          file,
           relPath,
           filePath: fullPath
         });
       }
     }
-  } catch {}
+  }
+
+  ensureSkillsDir();
+  walk(dirPath);
+  return { folders, files };
+}
+
+/**
+ * Parse input arguments into a structured skill target:
+ * Supports:
+ * - parseSkillTarget("UI-UX-SKILLS", "ui")
+ * - parseSkillTarget("UI-UX-SKILLS", "COMPONENTS", "button")
+ * - parseSkillTarget("UI-UX-SKILLS/COMPONENTS/button")
+ * - parseSkillTarget("UI-UX-SKILLS/ui")
+ * - parseSkillTarget("ui") -> matches existing skill by name, or defaults to GENERAL/ui
+ */
+export function parseSkillTarget(...rawArgs) {
+  const parts = rawArgs
+    .flat()
+    .filter(Boolean)
+    .map(String)
+    .join(' ')
+    .trim()
+    .split(/[\s/]+/)
+    .map(sanitizeSlug)
+    .filter(Boolean);
+
+  if (!parts.length) return null;
+
+  ensureSkillsDir();
+
+  // If only 1 argument token was supplied
+  if (parts.length === 1) {
+    const single = parts[0];
+    const directFolder = path.join(SKILLS_DIR, single);
+    if (fs.existsSync(directFolder) && fs.statSync(directFolder).isDirectory()) {
+      return {
+        isFolderOnly: true,
+        folder: single,
+        file: '',
+        fileName: '',
+        id: single,
+        relPath: single,
+        filePath: directFolder
+      };
+    }
+
+    // Check if single matches an existing skill by id or file name across any folder
+    const all = listSkills();
+    const match = all.find((s) => s.name === single || s.id === single || s.file === `${single}.md`);
+    if (match) {
+      return {
+        isFolderOnly: false,
+        folder: match.folder,
+        file: match.name,
+        fileName: match.file,
+        id: match.id,
+        relPath: match.relPath,
+        filePath: match.filePath
+      };
+    }
+
+    return {
+      isFolderOnly: false,
+      folder: 'GENERAL',
+      file: single,
+      fileName: `${single}.md`,
+      id: single,
+      relPath: `${single}.md`,
+      filePath: path.join(SKILLS_DIR, `${single}.md`)
+    };
+  }
+
+  // Multiple tokens:
+  // e.g. ["UI-UX-SKILLS", "COMPONENTS", "button"]
+  // e.g. ["UI-UX-SKILLS", "ui"]
+  const file = parts[parts.length - 1];
+  const folderParts = parts.slice(0, parts.length - 1);
+  const folder = folderParts.join('/');
+  const id = `${folder}/${file}`;
+  const fileName = `${file}.md`;
+  const relPath = `${folder}/${fileName}`;
+  const filePath = path.join(SKILLS_DIR, ...folderParts, fileName);
+
+  return {
+    isFolderOnly: false,
+    folder,
+    file,
+    fileName,
+    id,
+    relPath,
+    filePath
+  };
+}
+
+/**
+ * Parse arguments specifically for folder operations (/skills:new, /skills:folder)
+ */
+export function parseSkillFolder(...rawArgs) {
+  const parts = rawArgs
+    .flat()
+    .filter(Boolean)
+    .map(String)
+    .join(' ')
+    .trim()
+    .split(/[\s/]+/)
+    .map(sanitizeFolderName)
+    .filter(Boolean);
+
+  if (!parts.length) return null;
+  const folder = parts.join('/');
+  const fullPath = path.join(SKILLS_DIR, ...parts);
+  return { folder, fullPath, parts };
+}
+
+/**
+ * List all skill folders and subfolders with direct and recursive file counts.
+ */
+export function listSkillFolders() {
+  ensureSkillsDir();
+  const { folders, files } = scanSkillsDirRecursively(SKILLS_DIR);
+  return folders.map((f) => {
+    const directFiles = files.filter((x) => x.folder === f.relPath);
+    const subFiles = files.filter((x) => x.folder === f.relPath || x.folder.startsWith(f.relPath + '/'));
+    return {
+      name: f.relPath,
+      baseName: f.name,
+      count: directFiles.length,
+      totalCount: subFiles.length,
+      path: f.fullPath
+    };
+  });
+}
+
+/**
+ * Create a new skill folder or nested subfolder branch under ~/.levi/SKILLS/
+ */
+export function createSkillFolder(...rawArgs) {
+  const parsed = parseSkillFolder(...rawArgs);
+  if (!parsed || !parsed.folder) {
+    return { ok: false, error: 'Folder name required.' };
+  }
+  ensureSkillsDir();
+  if (fs.existsSync(parsed.fullPath)) {
+    return { ok: true, folder: parsed.folder, path: parsed.fullPath, existing: true };
+  }
+  fs.mkdirSync(parsed.fullPath, { recursive: true });
+  const meta = readSkillsMeta();
+  if (!meta.folders) meta.folders = {};
+  meta.folders[parsed.folder] = {
+    name: parsed.folder,
+    createdAt: new Date().toISOString()
+  };
+  writeSkillsMeta(meta);
+  return { ok: true, folder: parsed.folder, path: parsed.fullPath, existing: false };
+}
+
+/**
+ * Scan SKILLS_DIR recursively for all skills organized by folder and subfolders.
+ * Synchronizes discovered files with skills.json metadata.
+ */
+export function listSkills(filterFolder = null) {
+  ensureSkillsDir();
+  const meta = readSkillsMeta();
+  let changed = false;
+  const { files } = scanSkillsDirRecursively(SKILLS_DIR);
+
+  const result = [];
+  const activeIds = new Set();
+
+  for (const f of files) {
+    if (filterFolder) {
+      const matchFolder = f.folder.toLowerCase() === filterFolder.toLowerCase() ||
+        f.folder.toLowerCase().startsWith(filterFolder.toLowerCase() + '/') ||
+        f.id.toLowerCase().startsWith(filterFolder.toLowerCase() + '/');
+      if (!matchFolder) continue;
+    }
+
+    activeIds.add(f.id);
+
+    if (!meta.skills[f.id]) {
+      let content = '';
+      try { content = fs.readFileSync(f.filePath, 'utf-8'); } catch {}
+      const lines = content.split('\n').map((l) => l.trim()).filter(Boolean);
+      const h1 = lines.find((l) => l.startsWith('#'));
+      const title = h1 ? h1.replace(/^#+\s*/, '').trim() : f.name;
+      const body = lines.find((l) => !l.startsWith('#') && !l.startsWith('---') && !l.startsWith('>'));
+      const summary = body ? body.slice(0, 120) : `Skill instructions for ${f.id}`;
+      meta.skills[f.id] = {
+        id: f.id,
+        name: f.name,
+        folder: f.folder,
+        file: f.file,
+        relPath: f.relPath,
+        title,
+        summary,
+        disabled: false,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString()
+      };
+      changed = true;
+    }
+
+    const rec = meta.skills[f.id];
+    result.push({
+      ...rec,
+      id: f.id,
+      name: f.name,
+      folder: f.folder,
+      file: f.file,
+      relPath: f.relPath,
+      filePath: f.filePath
+    });
+  }
 
   // Prune deleted skills from meta
-  for (const [id, entry] of Object.entries(meta.skills)) {
-    const fullPath = entry.filePath || (entry.folder && entry.folder !== 'GENERAL' ? path.join(SKILLS_DIR, entry.folder, entry.file || `${entry.name}.md`) : path.join(SKILLS_DIR, entry.relPath || `${entry.name}.md`));
-    if (!fs.existsSync(fullPath)) {
-      delete meta.skills[id];
-      changed = true;
+  for (const id of Object.keys(meta.skills)) {
+    if (!activeIds.has(id)) {
+      const p = path.join(SKILLS_DIR, meta.skills[id].relPath || `${id}.md`);
+      if (!fs.existsSync(p)) {
+        delete meta.skills[id];
+        changed = true;
+      }
     }
   }
 
@@ -267,72 +330,66 @@ export function listSkills(filterFolder = null) {
     writeSkillsMeta(meta);
   }
 
-  return foundSkills;
+  return result;
 }
 
-export function getSkill(target, optionalFile) {
-  const parsed = parseSkillTarget(target, optionalFile);
+export function getSkill(...rawArgs) {
+  const parsed = parseSkillTarget(...rawArgs);
   if (!parsed || !parsed.file) return null;
   const meta = readSkillsMeta();
   return meta.skills[parsed.id] || null;
 }
 
 /**
- * Create a new skill file inside a skill folder.
- * If target has no file name, defaults to 'main'.
+ * Create a new skill file inside a folder or subfolder.
+ * e.g. createSkill('UI-UX-SKILLS', 'COMPONENTS', 'button')
  */
-export async function createSkill(target, optionalFile, initialContent = null) {
-  const parsed = parseSkillTarget(target, optionalFile);
-  if (!parsed || !parsed.folder) {
-    return { ok: false, error: 'Invalid folder or skill name.' };
+export async function createSkill(...rawArgs) {
+  const parsed = parseSkillTarget(...rawArgs);
+  if (!parsed || !parsed.folder || !parsed.file) {
+    return { ok: false, error: 'Usage: /skills:create <folder> [subfolder] <filename>' };
   }
 
-  const folder = parsed.folder;
-  const file = parsed.file || 'main';
-  const id = `${folder}/${file}`;
-  const folderPath = path.join(SKILLS_DIR, folder);
-  const filePath = path.join(folderPath, `${file}.md`);
-
   ensureSkillsDir();
+  const folderPath = path.dirname(parsed.filePath);
   if (!fs.existsSync(folderPath)) {
     fs.mkdirSync(folderPath, { recursive: true });
   }
 
-  if (fs.existsSync(filePath)) {
-    return { ok: false, error: `Skill "${id}" already exists. Use /skills:edit ${id} to modify it.` };
+  if (fs.existsSync(parsed.filePath)) {
+    return { ok: false, error: `Skill "${parsed.id}" already exists. Use /skills:edit ${parsed.id} to modify it.` };
   }
 
-  const content = initialContent || `# ${file.toUpperCase()}\n\n> Describe what this skill accomplishes and when Levi should use it.\n\n## When to use\nState the trigger conditions or keywords.\n\n## Instructions & Recipes\n- Step 1: Detailed guidelines and commands\n- Step 2: Concrete code patterns or configurations\n`;
-  fs.writeFileSync(filePath, content, 'utf-8');
+  const initialContent = `# ${parsed.file.toUpperCase()}\n\n> Describe what this skill accomplishes and when Levi should use it.\n\n## When to use\nState the trigger conditions, keywords, or scenarios.\n\n## Instructions & Recipes\n- Step 1: Detailed guidelines and commands\n- Step 2: Concrete code patterns or configurations\n`;
+  fs.writeFileSync(parsed.filePath, initialContent, 'utf-8');
 
   const meta = readSkillsMeta();
-  meta.skills[id] = {
-    id,
-    name: file,
-    folder,
-    file: `${file}.md`,
-    relPath: `${folder}/${file}.md`,
-    title: `${file} (${folder})`,
-    summary: `Instructions for ${id}`,
+  meta.skills[parsed.id] = {
+    id: parsed.id,
+    name: parsed.file,
+    folder: parsed.folder,
+    file: parsed.fileName,
+    relPath: parsed.relPath,
+    title: `${parsed.file} (${parsed.folder})`,
+    summary: `Instructions for ${parsed.id}`,
     disabled: false,
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString()
   };
   writeSkillsMeta(meta);
 
-  return { ok: true, id, folder, file, path: filePath };
+  return { ok: true, id: parsed.id, folder: parsed.folder, file: parsed.file, path: parsed.filePath, relPath: parsed.relPath };
 }
 
 /**
  * Read the full markdown content of a skill.
  */
-export function readSkill(target, optionalFile) {
-  const parsed = parseSkillTarget(target, optionalFile);
+export function readSkill(...rawArgs) {
+  const parsed = parseSkillTarget(...rawArgs);
   if (!parsed) return { ok: false, error: 'Skill not found.' };
 
   let targetPath = parsed.filePath;
-  if (!parsed.file && fs.existsSync(targetPath) && fs.statSync(targetPath).isDirectory()) {
-    // If folder was passed without file, pick first .md in folder or list them
+  if (parsed.isFolderOnly && fs.existsSync(targetPath)) {
     const files = fs.readdirSync(targetPath).filter((f) => f.endsWith('.md'));
     if (!files.length) return { ok: false, error: `Folder "${parsed.folder}" contains no skill files.` };
     targetPath = path.join(targetPath, files[0]);
@@ -352,7 +409,7 @@ export function readSkill(target, optionalFile) {
 
 export async function summarizeSkill(content, name, folder = '') {
   const trimmed = (content || '').trim();
-  const fallbackTitle = folder ? `${name} (${folder})` : name;
+  const fallbackTitle = folder && folder !== 'GENERAL' ? `${name} (${folder})` : name;
   if (!trimmed || trimmed === `# ${name}` || trimmed.includes('Describe what this skill accomplishes')) {
     return {
       title: fallbackTitle,
@@ -398,102 +455,87 @@ ${trimmed.slice(0, 4000)}`;
   return { title, summary };
 }
 
-export async function editSkill(target, optionalFile, ctx = {}) {
-  const parsed = parseSkillTarget(target, optionalFile);
-  if (!parsed || !parsed.folder) {
-    console.log('\x1b[31mInvalid folder or skill name.\x1b[0m');
+export async function editSkill(rawArgs, ctx = {}) {
+  const parsed = parseSkillTarget(...(Array.isArray(rawArgs) ? rawArgs : [rawArgs]));
+  if (!parsed || !parsed.filePath) {
+    console.log('\x1b[31mInvalid skill target.\x1b[0m');
     return;
   }
 
-  let folder = parsed.folder;
-  let file = parsed.file;
-
-  if (!file) {
-    // If folder was passed without file, pick first existing file or default to main
-    const folderPath = path.join(SKILLS_DIR, folder);
-    if (fs.existsSync(folderPath) && fs.statSync(folderPath).isDirectory()) {
-      const files = fs.readdirSync(folderPath).filter((f) => f.endsWith('.md'));
-      file = files.length ? files[0].slice(0, -3) : 'main';
-    } else {
-      file = 'main';
-    }
+  ensureSkillsDir();
+  const folderPath = path.dirname(parsed.filePath);
+  if (!fs.existsSync(folderPath)) {
+    fs.mkdirSync(folderPath, { recursive: true });
   }
 
-  const id = `${folder}/${file}`;
-  const folderPath = path.join(SKILLS_DIR, folder);
-  const filePath = path.join(folderPath, `${file}.md`);
-
-  ensureSkillsDir();
-  if (!fs.existsSync(filePath)) {
-    await createSkill(folder, file);
+  if (!fs.existsSync(parsed.filePath)) {
+    await createSkill(parsed.folder, parsed.file);
   }
 
   const editor = process.env.EDITOR || 'nano';
   try {
-    await execa(editor, [filePath], { stdio: 'inherit' });
+    await execa(editor, [parsed.filePath], { stdio: 'inherit' });
   } catch (err) {
     console.error(`\x1b[31mFailed to launch editor (${editor}): ${err.message}\x1b[0m`);
     return;
   }
 
-  if (!fs.existsSync(filePath)) {
-    console.log(`\x1b[33mSkill file ${filePath} was removed.\x1b[0m`);
+  if (!fs.existsSync(parsed.filePath)) {
+    console.log(`\x1b[33mSkill file ${parsed.filePath} was removed.\x1b[0m`);
     return;
   }
 
-  const content = fs.readFileSync(filePath, 'utf-8');
+  const content = fs.readFileSync(parsed.filePath, 'utf-8');
   console.log('\n\x1b[36mSummarizing skill instructions...\x1b[0m');
-  const { title, summary } = await summarizeSkill(content, file, folder);
+  const { title, summary } = await summarizeSkill(content, parsed.file, parsed.folder);
 
   const meta = readSkillsMeta();
-  meta.skills[id] = {
-    id,
-    name: file,
-    folder,
-    file: `${file}.md`,
-    relPath: `${folder}/${file}.md`,
+  meta.skills[parsed.id] = {
+    id: parsed.id,
+    name: parsed.file,
+    folder: parsed.folder,
+    file: parsed.fileName,
+    relPath: parsed.relPath,
     title,
     summary,
-    disabled: meta.skills[id]?.disabled || false,
+    disabled: meta.skills[parsed.id]?.disabled || false,
     updatedAt: new Date().toISOString()
   };
   writeSkillsMeta(meta);
 
-  console.log(`\x1b[32m✓ Skill "${id}" saved and indexed.\x1b[0m`);
+  console.log(`\x1b[32m✓ Skill "${parsed.id}" saved and indexed.\x1b[0m`);
   console.log(`  \x1b[2mTitle:\x1b[0m   ${title}`);
   console.log(`  \x1b[2mSummary:\x1b[0m ${summary}`);
-  console.log(`  \x1b[2mPath:\x1b[0m    ~/.levi/SKILLS/${folder}/${file}.md`);
+  console.log(`  \x1b[2mPath:\x1b[0m    ~/.levi/SKILLS/${parsed.relPath}`);
 
   ctx.printPanel?.({
-    title: `Skill: ${id}`,
+    title: `Skill: ${parsed.id}`,
     fields: [
-      { label: 'Folder', value: folder, color: '#38bdf8' },
+      { label: 'Folder', value: parsed.folder, color: '#38bdf8' },
       { label: 'Title', value: title, color: '#22d3ee' },
       { label: 'Summary', value: summary, color: '#4ade80' },
-      { label: 'File', value: `~/.levi/SKILLS/${folder}/${file}.md`, color: '#c0caf5' },
-      { label: 'Status', value: meta.skills[id].disabled ? 'Disabled' : 'Active (lazy-loaded in context)', color: meta.skills[id].disabled ? '#f87171' : '#ffd700' }
+      { label: 'File', value: `~/.levi/SKILLS/${parsed.relPath}`, color: '#c0caf5' },
+      { label: 'Status', value: meta.skills[parsed.id].disabled ? 'Disabled' : 'Active (lazy-loaded in context)', color: meta.skills[parsed.id].disabled ? '#f87171' : '#ffd700' }
     ]
   });
 }
 
-export function deleteSkill(target, optionalFile) {
-  const parsed = parseSkillTarget(target, optionalFile);
+export function deleteSkill(...rawArgs) {
+  const parsed = parseSkillTarget(...rawArgs);
   if (!parsed) return { ok: false, error: 'Invalid skill or folder.' };
 
   const meta = readSkillsMeta();
 
-  if (!parsed.file) {
-    // Delete entire folder
-    const folderPath = path.join(SKILLS_DIR, parsed.folder);
-    if (!fs.existsSync(folderPath)) return { ok: false, error: `Folder "${parsed.folder}" not found.` };
+  // If deleting an entire folder branch
+  const directFolder = path.join(SKILLS_DIR, parsed.folder);
+  if (parsed.isFolderOnly && fs.existsSync(directFolder)) {
     try {
-      fs.rmSync(folderPath, { recursive: true, force: true });
+      fs.rmSync(directFolder, { recursive: true, force: true });
     } catch (err) {
       return { ok: false, error: `Failed to remove folder: ${err.message}` };
     }
-    // Remove all skills in that folder from meta
     for (const k of Object.keys(meta.skills)) {
-      if (meta.skills[k].folder === parsed.folder) {
+      if (meta.skills[k].folder === parsed.folder || meta.skills[k].folder.startsWith(parsed.folder + '/')) {
         delete meta.skills[k];
       }
     }
@@ -504,29 +546,27 @@ export function deleteSkill(target, optionalFile) {
     return { ok: true, id: parsed.folder, isFolder: true };
   }
 
-  // Delete specific skill file
-  const filePath = parsed.filePath;
-  if (!fs.existsSync(filePath) && !meta.skills[parsed.id]) {
+  // If deleting a specific file
+  if (!fs.existsSync(parsed.filePath) && !meta.skills[parsed.id]) {
     return { ok: false, error: `Skill "${parsed.id}" not found.` };
   }
   try {
-    if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
+    if (fs.existsSync(parsed.filePath)) fs.unlinkSync(parsed.filePath);
   } catch {}
   delete meta.skills[parsed.id];
   writeSkillsMeta(meta);
   return { ok: true, id: parsed.id, isFolder: false };
 }
 
-export function disableSkill(target, optionalFile) {
-  const parsed = parseSkillTarget(target, optionalFile);
+export function disableSkill(...rawArgs) {
+  const parsed = parseSkillTarget(...rawArgs);
   if (!parsed) return { ok: false, error: 'Invalid skill or folder.' };
   const meta = readSkillsMeta();
 
-  if (!parsed.file) {
-    // Disable all skills in folder
+  if (parsed.isFolderOnly) {
     let count = 0;
     for (const [k, v] of Object.entries(meta.skills)) {
-      if (v.folder === parsed.folder) {
+      if (v.folder === parsed.folder || v.folder.startsWith(parsed.folder + '/')) {
         v.disabled = true;
         count++;
       }
@@ -544,16 +584,15 @@ export function disableSkill(target, optionalFile) {
   return { ok: true, id: parsed.id, isFolder: false };
 }
 
-export function enableSkill(target, optionalFile) {
-  const parsed = parseSkillTarget(target, optionalFile);
+export function enableSkill(...rawArgs) {
+  const parsed = parseSkillTarget(...rawArgs);
   if (!parsed) return { ok: false, error: 'Invalid skill or folder.' };
   const meta = readSkillsMeta();
 
-  if (!parsed.file) {
-    // Enable all skills in folder
+  if (parsed.isFolderOnly) {
     let count = 0;
     for (const [k, v] of Object.entries(meta.skills)) {
-      if (v.folder === parsed.folder) {
+      if (v.folder === parsed.folder || v.folder.startsWith(parsed.folder + '/')) {
         v.disabled = false;
         count++;
       }
@@ -647,8 +686,7 @@ export function saveLearnedSkill({ folder: rawFolder, name: rawName, title, when
   const folder = parsed.folder;
   const file = parsed.file || 'recipe';
   const id = `${folder}/${file}`;
-  const folderPath = path.join(SKILLS_DIR, folder);
-  const filePath = path.join(folderPath, `${file}.md`);
+  const folderPath = path.dirname(parsed.filePath);
 
   ensureSkillsDir();
   if (!fs.existsSync(folderPath)) {
@@ -660,7 +698,7 @@ export function saveLearnedSkill({ folder: rawFolder, name: rawName, title, when
 
   const meta = readSkillsMeta();
   let content;
-  const existing = fs.existsSync(filePath) ? fs.readFileSync(filePath, 'utf-8') : null;
+  const existing = fs.existsSync(parsed.filePath) ? fs.readFileSync(parsed.filePath, 'utf-8') : null;
 
   if (existing && existing.length > 50) {
     const dateStr = new Date().toISOString().slice(0, 10);
@@ -678,13 +716,13 @@ ${(recipe || '').trim()}
 `;
   }
 
-  fs.writeFileSync(filePath, content, 'utf-8');
+  fs.writeFileSync(parsed.filePath, content, 'utf-8');
   meta.skills[id] = {
     id,
     name: file,
     folder,
     file: `${file}.md`,
-    relPath: `${folder}/${file}.md`,
+    relPath: parsed.relPath,
     title: cleanTitle,
     summary: cleanSummary,
     disabled: false,
@@ -694,7 +732,7 @@ ${(recipe || '').trim()}
   };
   writeSkillsMeta(meta);
 
-  return { ok: true, id, folder, file, name: file, title: cleanTitle, summary: cleanSummary, path: filePath };
+  return { ok: true, id, folder, file, name: file, title: cleanTitle, summary: cleanSummary, path: parsed.filePath, relPath: parsed.relPath };
 }
 
 export async function distillSkillFromExchange({ userQuery, toolCalls, resultText, requestedTarget }) {
@@ -803,7 +841,7 @@ export async function autoLearnIfEligible({ userQuery, toolCalls, resultText, on
     try {
       const res = await distillSkillFromExchange({ userQuery, toolCalls, resultText });
       if (res && res.ok) {
-        onStep?.('narrate', `✦ Distilled new skill: "${res.id}" (~/.levi/SKILLS/${res.folder}/${res.file}.md)`);
+        onStep?.('narrate', `✦ Distilled new skill: "${res.id}" (~/.levi/SKILLS/${res.relPath})`);
       }
     } catch {}
   }, 100);
