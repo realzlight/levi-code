@@ -1,0 +1,9 @@
+{
+  "name": "levi-companion-skills",
+  "version": "1.0.0",
+  "description": "Essential development playbooks and companion workflows for Levi",
+  "author": "realzlight",
+  "plugins": [
+    "./skills"
+  ]
+}
