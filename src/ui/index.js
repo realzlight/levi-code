@@ -520,6 +520,50 @@ const CSM_ACTIVE = '#afd7ff';    // light blue for selected row
 const CSM_INACTIVE = '#949494';  // gray for unselected rows
 const CSM_NAME_COLS = 20;        // padded command name column
 
+function wrapDescription(text, width) {
+  if (!text) return [''];
+  const safeW = Math.max(5, width);
+  const words = text.split(/\s+/).filter(Boolean);
+  if (!words.length) return [''];
+  const lines = [];
+  let cur = '';
+  for (const w of words) {
+    if (!cur) {
+      if (w.length <= safeW) {
+        cur = w;
+      } else {
+        for (let i = 0; i < w.length; i += safeW) {
+          const slice = w.slice(i, i + safeW);
+          if (slice.length === safeW && i + safeW < w.length) {
+            lines.push(slice);
+          } else {
+            cur = slice;
+          }
+        }
+      }
+    } else if (cur.length + 1 + w.length <= safeW) {
+      cur += ' ' + w;
+    } else {
+      lines.push(cur);
+      if (w.length <= safeW) {
+        cur = w;
+      } else {
+        cur = '';
+        for (let i = 0; i < w.length; i += safeW) {
+          const slice = w.slice(i, i + safeW);
+          if (slice.length === safeW && i + safeW < w.length) {
+            lines.push(slice);
+          } else {
+            cur = slice;
+          }
+        }
+      }
+    }
+  }
+  if (cur) lines.push(cur);
+  return lines;
+}
+
 function ClaudeSlashMenu({ matches, active, width = 80 }) {
   if (!matches.length) {
     return h(Box, { flexDirection: 'column', marginBottom: 1 },
@@ -534,17 +578,20 @@ function ClaudeSlashMenu({ matches, active, width = 80 }) {
   const safeW = Math.max(30, width || 80);
   const prefixWidth = 2; // '❯ ' or '  '
   const dashWidth = 3;   // ' - '
+  const nameCol = Math.min(20, Math.max(12, Math.floor(safeW * 0.24)));
 
   return h(Box, { flexDirection: 'column', marginBottom: 1, width: '100%' },
     visible.map((c, i) => {
       const isActive = start + i === active;
       const rawName = '/' + c.name;
-      const firstLineCap = Math.max(10, safeW - rawName.length - prefixWidth - dashWidth - 2);
       const desc = c.description || '';
-      const isLongDesc = desc.length > firstLineCap;
+      const itemPad = Math.max(nameCol, rawName.length);
+      const itemIndent = ' '.repeat(prefixWidth + itemPad + dashWidth);
+      const itemDescWidth = Math.max(10, safeW - prefixWidth - itemPad - dashWidth - 2);
+      const lines = wrapDescription(desc, itemDescWidth);
 
       // Two line spacing for commands requiring more lines, 1 line spacing for standard commands
-      const spacing = isLongDesc ? 2 : 1;
+      const spacing = lines.length > 1 ? 2 : 1;
 
       return h(Box, {
         key: c.name,
@@ -553,11 +600,19 @@ function ClaudeSlashMenu({ matches, active, width = 80 }) {
         marginBottom: spacing
       },
         h(Box, { flexDirection: 'row', width: '100%' },
-          h(Text, { wrap: 'wrap' },
+          h(Text, null,
             isActive ? h(Text, { color: CSM_ACTIVE, bold: true }, '❯ ') : h(Text, null, '  '),
-            h(Text, { color: isActive ? '#38bdf8' : '#e2e8f0', bold: true }, rawName),
+            h(Text, { color: isActive ? '#38bdf8' : '#e2e8f0', bold: true }, rawName.padEnd(nameCol, ' ')),
             h(Text, { color: isActive ? '#94a3b8' : '#64748b' }, ' - '),
-            h(Text, { color: isActive ? '#ffffff' : '#949494' }, desc)
+            h(Text, { color: isActive ? '#ffffff' : '#949494' }, lines[0] || '')
+          )
+        ),
+        lines.slice(1).map((l, idx) =>
+          h(Box, { key: idx, flexDirection: 'row', width: '100%' },
+            h(Text, null,
+              h(Text, null, itemIndent),
+              h(Text, { color: isActive ? '#ffffff' : '#949494' }, l)
+            )
           )
         )
       );
@@ -565,7 +620,7 @@ function ClaudeSlashMenu({ matches, active, width = 80 }) {
 
     // Bottom helper & counter row
     h(Box, { justifyContent: 'space-between', width: '100%', height: 1 },
-      h(Text, { color: '#666666' }, '  ↑↓ navigate · tab fill · enter run · esc close'),
+      h(Text, { color: '#666666' }, safeW < 60 ? '  ↑↓ nav · tab fill · ↵ run · esc' : '  ↑↓ navigate · tab fill · enter run · esc close'),
       matches.length > 1
         ? h(Text, { color: '#888888' }, `[${active + 1} of ${matches.length}]`)
         : null
@@ -575,20 +630,29 @@ function ClaudeSlashMenu({ matches, active, width = 80 }) {
 
 export const slashMenuHeight = (matchesOrCount, active = 0, width = 80) => {
   if (typeof matchesOrCount === 'number') {
-    return Math.min(Math.max(matchesOrCount, 1), 4) * 3 + 1;
+    return Math.min(Math.max(matchesOrCount, 1), 4) * 3 + 2;
   }
   const matches = matchesOrCount || [];
+  if (!matches.length) return 2;
+
   const maxVisible = 4;
   const start = Math.max(0, Math.min(active - Math.floor(maxVisible / 2), matches.length - maxVisible));
   const visible = matches.slice(start, start + maxVisible);
-  let h = 1;
+
+  const safeW = Math.max(30, width || 80);
+  const prefixWidth = 2;
+  const dashWidth = 3;
+  const nameCol = Math.min(20, Math.max(12, Math.floor(safeW * 0.24)));
+
+  let h = 2; // 1 for helper row + 1 for outer marginBottom
   for (const c of visible) {
     const rawName = '/' + c.name;
     const desc = c.description || '';
-    const firstLineCap = Math.max(10, width - rawName.length - 7);
-    const isLong = desc.length > firstLineCap;
-    const lines = isLong ? Math.min(3, Math.ceil(desc.length / Math.max(20, width - 4))) : 1;
-    h += lines + (isLong ? 2 : 1);
+    const itemPad = Math.max(nameCol, rawName.length);
+    const itemDescWidth = Math.max(10, safeW - prefixWidth - itemPad - dashWidth - 2);
+    const lines = wrapDescription(desc, itemDescWidth);
+    const spacing = lines.length > 1 ? 2 : 1;
+    h += lines.length + spacing;
   }
   return h;
 };
