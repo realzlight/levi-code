@@ -75,9 +75,10 @@ export default function Prompt({ onChat }) {
               const isSel = start + i === active;
               return h(
                 Box,
-                { key: c.name },
+                { key: c.name, marginBottom: 1 },
                 h(Text, { color: CYAN }, isSel ? '❯ ' : '  '),
-                h(Text, { color: isSel ? CYAN : SOFT, bold: isSel }, usage(c).padEnd(pad)),
+                h(Text, { color: isSel ? CYAN : SOFT, bold: isSel }, usage(c)),
+                h(Text, { color: GRAY }, ' - '),
                 h(Text, { color: isSel ? SOFT : GRAY }, c.description)
               );
             })

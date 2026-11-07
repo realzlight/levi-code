@@ -522,39 +522,43 @@ const CSM_NAME_COLS = 20;        // padded command name column
 
 function ClaudeSlashMenu({ matches, active, width = 80 }) {
   if (!matches.length) {
-    return h(Box, { flexDirection: 'column', marginBottom: 0 },
+    return h(Box, { flexDirection: 'column', marginBottom: 1 },
       h(Text, { color: CSM_INACTIVE }, '  No matching commands')
     );
   }
 
-  const maxVisible = 8;
+  const maxVisible = 5;
   const start = Math.max(0, Math.min(active - Math.floor(maxVisible / 2), matches.length - maxVisible));
   const visible = matches.slice(start, start + maxVisible);
   const counter = matches.length > maxVisible ? `  ${active + 1}/${matches.length}` : '';
 
   const safeW = Math.max(30, width || 80);
-  const nameCol = Math.min(22, Math.max(15, Math.floor(safeW * 0.28)));
   const prefixWidth = 2; // '❯ ' or '  '
-  const maxDescLen = Math.max(6, safeW - nameCol - prefixWidth - 3);
+  const dashWidth = 3;   // ' - '
 
-  return h(Box, { flexDirection: 'column', marginBottom: 0, width: '100%' },
+  return h(Box, { flexDirection: 'column', marginBottom: 1, width: '100%' },
     visible.map((c, i) => {
       const isActive = start + i === active;
       const rawName = '/' + c.name;
-      const name = rawName.length >= nameCol
-        ? rawName.slice(0, nameCol - 1) + ' '
-        : rawName.padEnd(nameCol, ' ');
+      const maxDescLen = Math.max(6, safeW - rawName.length - prefixWidth - dashWidth - 2);
 
       let desc = c.description || '';
       if (desc.length > maxDescLen) {
         desc = desc.slice(0, Math.max(0, maxDescLen - 1)) + '…';
       }
 
-      return h(Box, { key: c.name, flexDirection: 'row', width: '100%', overflow: 'hidden' },
+      return h(Box, {
+        key: c.name,
+        flexDirection: 'row',
+        width: '100%',
+        overflow: 'hidden',
+        marginBottom: 1
+      },
         h(Text, { color: isActive ? CSM_ACTIVE : CSM_INACTIVE, wrap: 'truncate-end' },
           isActive ? '❯ ' : '  ',
-          h(Text, { bold: isActive }, name),
-          h(Text, { color: isActive ? '#c4c4c4' : '#666666' }, desc)
+          h(Text, { color: isActive ? '#38bdf8' : '#e2e8f0', bold: true }, rawName),
+          h(Text, { color: isActive ? '#94a3b8' : '#64748b' }, ' - '),
+          h(Text, { color: isActive ? '#ffffff' : '#949494' }, desc)
         )
       );
     }),
@@ -562,7 +566,7 @@ function ClaudeSlashMenu({ matches, active, width = 80 }) {
   );
 }
 
-export const slashMenuHeight = (n) => Math.min(Math.max(n, 1), 8) + 1;
+export const slashMenuHeight = (n) => Math.min(Math.max(n, 1), 5) * 2 + 1;
 // --- end Claude Slash Menu ----------------------------------------------------
 
 // --- Claude Todo List component (brainless/claude-todo-list) -------------------
