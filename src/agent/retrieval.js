@@ -149,6 +149,18 @@ function listSources() {
         out.push({ path: path.join(skillsDir, ent.name), kind: 'skill', session: '' });
       }
     }
+  try {
+    const pluginsMetaFile = path.join(HOME, 'plugins.json');
+    if (fs.existsSync(pluginsMetaFile)) {
+      const meta = JSON.parse(fs.readFileSync(pluginsMetaFile, 'utf-8'));
+      for (const p of Object.values(meta.plugins || {})) {
+        for (const f of p.files || []) {
+          if (f.path && fs.existsSync(f.path)) {
+            out.push({ path: f.path, kind: 'plugin', session: '' });
+          }
+        }
+      }
+    }
   } catch {}
   return out;
 }

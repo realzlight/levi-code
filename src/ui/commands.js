@@ -1030,6 +1030,195 @@ defineCommand({
   }
 });
 
+// ---- plugin commands ----
+const pluginsMod = () => import('../agent/plugins.js');
+
+defineCommand({
+  name: 'plugin',
+  description: 'View the complete walkthrough guide for the Levi Plugin system (fullscreen, Esc to close)',
+  run: async (_, ctx) => {
+    const { readFileSync, existsSync } = await import('node:fs');
+    const { fileURLToPath } = await import('node:url');
+    const nodePath = await import('node:path');
+    const __filename = fileURLToPath(import.meta.url);
+    const guidePath = nodePath.resolve(nodePath.dirname(__filename), '../../PLUGIN-WALKTHROUGH.md');
+    if (!existsSync(guidePath)) return ctx.print('PLUGIN-WALKTHROUGH.md not found at ' + guidePath);
+    const content = readFileSync(guidePath, 'utf-8');
+    if (ctx.openForm) {
+      ctx.openForm({ mode: 'changelog', content });
+    } else {
+      ctx.print(content);
+    }
+  }
+});
+
+defineCommand({
+  name: 'plugins',
+  description: 'View plugin catalog or walkthrough guide',
+  run: async (_, ctx) => {
+    const { listPlugins } = await pluginsMod();
+    const plugins = listPlugins();
+    if (!plugins.length) {
+      const { readFileSync, existsSync } = await import('node:fs');
+      const { fileURLToPath } = await import('node:url');
+      const nodePath = await import('node:path');
+      const __filename = fileURLToPath(import.meta.url);
+      const guidePath = nodePath.resolve(nodePath.dirname(__filename), '../../PLUGIN-WALKTHROUGH.md');
+      if (existsSync(guidePath) && ctx.openForm) {
+        return ctx.openForm({ mode: 'changelog', content: readFileSync(guidePath, 'utf-8') });
+      }
+      return ctx.print('No community plugins installed.\nUse /plugin:install <git-url> to install one, or run /plugin to view the guide.');
+    }
+    return runCommand('plugin:list', ctx);
+  }
+});
+
+defineCommand({
+  name: 'plugin:install',
+  description: 'Install a community plugin from a Git repo (e.g. /plugin:install https://github.com/<owner>/<repo>)',
+  args: [{ name: 'url', required: true, description: 'Git repository URL' }],
+  run: async ({ url }, ctx) => {
+    const cleanUrl = String(url || '').trim();
+    if (!cleanUrl) return ctx.print('Please provide a Git repository URL.');
+    const { installPlugin } = await pluginsMod();
+    ctx.print(`Cloning and verifying plugin from "${cleanUrl}"...`);
+    const res = await installPlugin(cleanUrl, {
+      onProgress: (msg) => ctx.print(msg)
+    });
+    if (!res.ok) {
+      return ctx.print(`❌ Plugin installation failed: ${res.error}`);
+    }
+    if (ctx.printPanel) {
+      return ctx.printPanel({
+        title: `✦ Installed Plugin: ${res.name}`,
+        fields: [
+          { label: 'Name', value: res.name, color: '#38bdf8' },
+          { label: 'Version', value: res.version, color: '#22d3ee' },
+          { label: 'Author', value: res.author, color: '#c0caf5' },
+          { label: 'Description', value: res.description || 'Community plugin', color: '#4ade80' },
+          { label: 'Playbooks', value: `${res.filesCount} file(s) indexed`, color: '#ffd700' },
+          { label: 'Location', value: `~/.levi/PLUGINS/${res.name}`, color: '#a78bfa' }
+        ]
+      });
+    }
+    ctx.print(`✓ Installed plugin "${res.name}" (v${res.version}) by ${res.author} with ${res.filesCount} playbook(s) indexed at ~/.levi/PLUGINS/${res.name}.`);
+  }
+});
+
+defineCommand({
+  name: 'plugins:install',
+  description: 'Alias for /plugin:install',
+  args: [{ name: 'url', required: true, description: 'Git repository URL' }],
+  run: async (args, ctx) => runCommand(`plugin:install ${args.url}`, ctx)
+});
+
+defineCommand({
+  name: 'plugin:list',
+  description: 'List all installed community plugins and their playbooks',
+  run: async (_, ctx) => {
+    const { listPlugins } = await pluginsMod();
+    const plugins = listPlugins();
+    if (!plugins.length) {
+      return ctx.print('No community plugins installed.\nUse /plugin:install <git-url> to install one, or run /plugin to view the guide.');
+    }
+
+    const fields = [];
+    for (const p of plugins) {
+      fields.push({
+        label: `📦 ${p.name} (v${p.version})`,
+        value: `${p.description ? p.description + ' — ' : ''}by ${p.author || 'Unknown'} [${p.filesCount || 0} playbook(s)]`
+      });
+      if (Array.isArray(p.files)) {
+        for (const f of p.files) {
+          fields.push({
+            label: `   ⚡ ${f.id}`,
+            value: `${f.title ? f.title + ' — ' : ''}${f.summary || 'Playbook'} [~/.levi/PLUGINS/${f.relPath}]`
+          });
+        }
+      }
+    }
+
+    if (ctx.printPanel) {
+      return ctx.printPanel({
+        title: `Plugins Catalog (~/.levi/PLUGINS/ — ${plugins.length} plugin(s))`,
+        fields
+      });
+    }
+
+    const lines = [`Plugins Catalog (~/.levi/PLUGINS/ — ${plugins.length} plugin(s)):`];
+    for (const f of fields) {
+      lines.push(`${f.label}: ${f.value}`);
+    }
+    ctx.print(lines.join('\n'));
+  }
+});
+
+defineCommand({
+  name: 'plugins:list',
+  description: 'Alias for /plugin:list',
+  run: async (_, ctx) => runCommand('plugin:list', ctx)
+});
+
+defineCommand({
+  name: 'plugin:update',
+  description: 'Update installed plugin(s) via git pull (e.g. /plugin:update [name])',
+  args: [{ name: 'name', required: false, description: 'Optional plugin name to update (or all)' }],
+  run: async ({ name }, ctx) => {
+    const { updatePlugin, listPlugins } = await pluginsMod();
+    const target = name ? String(name).trim() : null;
+
+    if (target) {
+      ctx.print(`Updating plugin "${target}"...`);
+      const res = await updatePlugin(target, { onProgress: (m) => ctx.print(m) });
+      if (!res.ok) return ctx.print(`❌ Update failed: ${res.error}`);
+      return ctx.print(`✓ Updated "${res.name}" (v${res.version}) — ${res.filesCount} playbook(s) synced.`);
+    }
+
+    const plugins = listPlugins();
+    if (!plugins.length) return ctx.print('No plugins installed to update.');
+    ctx.print(`Updating ${plugins.length} plugin(s)...`);
+    for (const p of plugins) {
+      const res = await updatePlugin(p.name);
+      if (res.ok) {
+        ctx.print(`✓ ${p.name}: updated (v${res.version}, ${res.filesCount} playbooks)`);
+      } else {
+        ctx.print(`❌ ${p.name}: ${res.error}`);
+      }
+    }
+  }
+});
+
+defineCommand({
+  name: 'plugins:update',
+  description: 'Alias for /plugin:update',
+  args: [{ name: 'name', required: false, description: 'Optional plugin name' }],
+  run: async ({ name }, ctx) => runCommand(`plugin:update ${name || ''}`, ctx)
+});
+
+defineCommand({
+  name: 'plugin:remove',
+  description: 'Remove an installed plugin from ~/.levi/PLUGINS/ and unindex it',
+  args: [{ name: 'name', required: true, description: 'Plugin name to remove' }],
+  run: async ({ name }, ctx) => {
+    const target = String(name || '').trim();
+    if (!target) return ctx.print('Please specify the plugin name to remove.');
+    const { removePlugin } = await pluginsMod();
+    const res = removePlugin(target);
+    if (!res.ok) return ctx.print(`❌ Failed to remove: ${res.error}`);
+    import('../agent/retrieval.js').then(({ retrieve }) => {
+      retrieve({ query: 'sync', limit: 1, rebuild: false }).catch(() => {});
+    }).catch(() => {});
+    ctx.print(`✓ Removed plugin "${res.name}" from ~/.levi/PLUGINS/ and unindexed all playbooks.`);
+  }
+});
+
+defineCommand({
+  name: 'plugin:delete',
+  description: 'Alias for /plugin:remove',
+  args: [{ name: 'name', required: true, description: 'Plugin name to delete' }],
+  run: async ({ name }, ctx) => runCommand(`plugin:remove ${name}`, ctx)
+});
+
 defineCommand({
   name: 'learn',
   description: 'Distill recent conversation actions into a reusable skill in ~/.levi/SKILLS/<folder>/<file>.md',

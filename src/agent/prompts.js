@@ -2,6 +2,7 @@ import os from 'node:os';
 import fs from 'node:fs';
 import path from 'node:path';
 import { getSkillsPromptList } from './skills.js';
+import { getPluginsPromptList } from './plugins.js';
 import { readProjectPlaybook } from './project.js';
 
 function getExistingProjects() {
@@ -100,9 +101,13 @@ PROJECTS
 - New substantial project only: if [context] shows no matching existing project AND the work is multi-session and substantial, then set_project with a short name. If the code location is unknown ask once, then record it as Location in DATA.md. In bash use $HOME or an unquoted ~ (a quoted ~ does not expand); file tools accept ~ directly.
 
 SKILLS (~/.levi/SKILLS/<folder>/<file>.md)
-- Available skills are organized in topic folders and lazy-loaded. [context] lists each skill's id (folder/name), relative path, and 1-line summary.
+- Available personal skills are organized in topic folders and lazy-loaded. [context] lists each skill's id (folder/name), relative path, and 1-line summary.
 - Based on the user's request, decide whether to use a skill: if relevant, use read_file('~/.levi/SKILLS/<folder>/<file>.md') to read its full instructions on-demand, then follow them.
 - SELF-LEARNING (SKILL CREATION): When you solve a non-trivial problem, discover an obscure workaround, or build a working multi-step recipe, save it into an organized skill folder using learn_skill(name, folder, title, when_to_use, recipe). Future sessions and turns will automatically see and use it.
+
+PLUGINS (~/.levi/PLUGINS/<name>/)
+- Available community plugins provide external skills and playbooks. [context] lists installed plugin capabilities and relative paths.
+- Based on the user's request, decide whether to use an installed plugin: if relevant, use read_file('~/.levi/PLUGINS/<path>') to read its instructions on-demand, then follow them.
 
 ASKING
 - Max one clarifying question in a row; never ask what the user already said. A request that names what to build is the spec: ask location if unknown, then build with sensible defaults (pick the stack yourself). Second question only for a consequential fork.
@@ -124,6 +129,10 @@ export function buildContext({ userName, insight, dataContent, taskSummary, hint
   const skillsList = skills !== undefined ? skills : getSkillsPromptList();
   if (skillsList?.length) {
     lines.push('available skills (lazy-loaded; decide whether to use based on the user\'s request; to use one, read its instructions with read_file("~/.levi/SKILLS/<folder>/<file>.md") and follow them):\n' + skillsList.map((s) => s.line || `- ${s.id || s.name}: ${s.summary || s.title || s.name}`).join('\n'));
+  }
+  const pluginsList = getPluginsPromptList();
+  if (pluginsList?.length) {
+    lines.push('available plugins (lazy-loaded; decide whether to use based on the user\'s request; to use one, read its instructions with read_file("~/.levi/PLUGINS/<path>") and follow them):\n' + pluginsList.map((p) => p.line || `- ${p.id || p.plugin}: ${p.summary || p.title}`).join('\n'));
   }
   if (memory) lines.push('saved memory:\n' + memory);
   const existingProjects = getExistingProjects();

@@ -22,6 +22,7 @@ function resolve(p) {
   if (p.startsWith('~/')) return path.join(os.homedir(), p.slice(2));
   if (p.startsWith('.levi/')) return path.join(os.homedir(), p);
   if (p.startsWith('SKILLS/')) return path.join(os.homedir(), '.levi', p);
+  if (p.startsWith('PLUGINS/')) return path.join(os.homedir(), '.levi', p);
   return p;
 }
 export const CATEGORIES = {

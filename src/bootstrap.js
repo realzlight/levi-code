@@ -103,7 +103,7 @@ export async function runBootstrap({ onProgress = null, quiet = false } = {}) {
     await sleep(200);
   }
 
-  const dirs = ['ACTIVE-BUFFER', 'ENDED-BUFFER', 'PROJECTS', 'SKILLS', 'MEMORY', 'screenshots'];
+  const dirs = ['ACTIVE-BUFFER', 'ENDED-BUFFER', 'PROJECTS', 'SKILLS', 'PLUGINS', 'MEMORY', 'screenshots'];
   if (!fs.existsSync(LEVI_HOME)) {
     fs.mkdirSync(LEVI_HOME, { recursive: true });
     results.createdDirs.push('.levi');
@@ -124,7 +124,7 @@ export async function runBootstrap({ onProgress = null, quiet = false } = {}) {
   if (spinner) {
     const dirSummary = results.createdDirs.length
       ? `Created ${results.createdDirs.length} folder(s)`
-      : 'All 6 core folders verified';
+      : 'All 7 core folders verified';
     spinner.stop(`${green('✓')} ${dirSummary} (${dirs.join(', ')})`);
   }
 
