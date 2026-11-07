@@ -136,6 +136,20 @@ function listSources() {
       }
     }
   } catch {}
+  try {
+    const skillsDir = path.join(HOME, 'SKILLS');
+    for (const ent of fs.readdirSync(skillsDir, { withFileTypes: true })) {
+      if (ent.isDirectory()) {
+        let files = [];
+        try { files = fs.readdirSync(path.join(skillsDir, ent.name)); } catch { continue; }
+        for (const f of files) {
+          if (/\.md$/i.test(f)) out.push({ path: path.join(skillsDir, ent.name, f), kind: 'skill', session: '' });
+        }
+      } else if (/\.md$/i.test(ent.name)) {
+        out.push({ path: path.join(skillsDir, ent.name), kind: 'skill', session: '' });
+      }
+    }
+  } catch {}
   return out;
 }
 

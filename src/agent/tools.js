@@ -200,11 +200,12 @@ export const toolDefs = [
     type: 'function',
     function: {
       name: 'learn_skill',
-      description: 'Save a reusable, battle-tested recipe, workaround, or workflow into ~/.levi/SKILLS/<name>.md so you and future sessions can use it automatically. Use when you solve a non-trivial problem, figure out tricky configs, or build a working multi-step recipe.',
+      description: 'Save a reusable, battle-tested recipe, workaround, or workflow into ~/.levi/SKILLS/<folder>/<name>.md so you and future sessions can use it automatically. Use when you solve a non-trivial problem, figure out tricky configs, or build a working multi-step recipe.',
       parameters: {
         type: 'object',
         properties: {
-          name: { type: 'string', description: 'Short kebab-case slug (e.g. "termux-caddy-ssl", "vite-port-fix")' },
+          name: { type: 'string', description: 'Skill name or relative path (e.g. "ui" or "UI-UX-SKILLS/ui")' },
+          folder: { type: 'string', description: 'Skill folder category (e.g. "UI-UX-SKILLS", "BACKEND", "DEVOPS")' },
           title: { type: 'string', description: 'Short descriptive title (2-5 words)' },
           when_to_use: { type: 'string', description: 'Clear 1-line condition for when to activate this skill (max 20 words)' },
           recipe: { type: 'string', description: 'Step-by-step markdown recipe with exact commands, configs, and gotchas to avoid' }
@@ -871,8 +872,10 @@ export async function runTool(name, args, opts = {}) {
         throw new Error(`ENOENT: no such file or directory, open '${p}'`);
       }
       if (p.includes('.levi/SKILLS/') && p.endsWith('.md')) {
-        const skillName = path.basename(p, '.md');
-        import('./skills.js').then(({ recordSkillUsage }) => recordSkillUsage(skillName)).catch(() => {});
+        const rel = p.split('.levi/SKILLS/')[1];
+        if (rel) {
+          import('./skills.js').then(({ recordSkillUsage }) => recordSkillUsage(rel)).catch(() => {});
+        }
       }
       return fs.readFileSync(p, 'utf-8');
     }
@@ -1010,7 +1013,7 @@ if (name === 'mcp_search') {
       const { saveLearnedSkill } = await import('./skills.js');
       const res = saveLearnedSkill(args || {});
       if (!res.ok) return `Error saving skill: ${res.error}`;
-      return `Successfully learned skill "${res.name}" (${res.title}). It is saved to ~/.levi/SKILLS/${res.name}.md and active in context.`;
+      return `Successfully learned skill "${res.id}" (${res.title}). It is saved to ~/.levi/SKILLS/${res.relPath} and active in context.`;
     }
 
     if (name === 'remember') {
