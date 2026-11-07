@@ -509,6 +509,12 @@ async function runOnboardingSetup() {
     p.log.info(dim('Search key skipped. You can set it later with /search:api <key>.'));
   }
 
+  // 4. Ask to install optional heavy tools (Playwright browser automation & Chromium)
+  try {
+    const { promptOptionalToolsInstall } = await import('../commands/optional-tools.js');
+    await promptOptionalToolsInstall();
+  } catch {}
+
   p.outro(`${cyan('✦')} Setup complete! Launching Levi...`);
   await new Promise((r) => setTimeout(r, 600));
   await launchMainUi();

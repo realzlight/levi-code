@@ -34,7 +34,11 @@ let pwModule = null;
 
 async function getPlaywright() {
   if (!pwModule) {
-    pwModule = await import('playwright');
+    try {
+      pwModule = await import('playwright');
+    } catch {
+      throw new Error("Playwright is not installed. To install browser automation tools, run: 'levi install:browser' or 'npm install playwright && npx playwright install chromium'");
+    }
   }
   return pwModule;
 }

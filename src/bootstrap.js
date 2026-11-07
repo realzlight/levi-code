@@ -268,26 +268,10 @@ export async function runBootstrap({ onProgress = null, quiet = false } = {}) {
       p.log.step(cyan('🖥 Desktop Platform Detected: Configuring browser & desktop automation'));
     }
 
-    // Playwright setup
+    // Playwright browser automation is optional and deferred to post-login setup prompt
+    results.playwrightStatus = 'deferred (prompted after sign-in & setup)';
     if (spinner) {
-      spinner.start('Setting up Playwright browser binaries (Chromium)...');
-    }
-
-    try {
-      const pwCheck = await execa('npx', ['playwright', 'install', 'chromium'], {
-        timeout: 90000,
-        reject: false
-      });
-      if (pwCheck.exitCode === 0) {
-        results.playwrightStatus = 'installed';
-        if (spinner) spinner.stop(`${green('✓')} Playwright Chromium installed successfully`);
-      } else {
-        results.playwrightStatus = 'available (run `npx playwright install chromium` if needed)';
-        if (spinner) spinner.stop(`${yellow('!')} Playwright browser install notice: run "npx playwright install chromium"`);
-      }
-    } catch {
-      results.playwrightStatus = 'ready for manual install';
-      if (spinner) spinner.stop(`${yellow('!')} Playwright installation deferred`);
+      spinner.stop(`${cyan('ℹ')} Playwright browser setup deferred (prompted after sign-in & setup)`);
     }
 
     // CUA-Driver setup

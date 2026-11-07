@@ -53,6 +53,10 @@ program.command('whoami').action(async () => {
   const { whoami } = await import('../src/commands/auth.js');
   await whoami();
 });
+program.command('install:browser').description('Install optional Playwright browser automation & Chromium').action(async () => {
+  const { installPlaywrightTools } = await import('../src/commands/optional-tools.js');
+  await installPlaywrightTools();
+});
 
 program.action(async () => {
   await ensureBootstrapped();
@@ -64,6 +68,10 @@ program.action(async () => {
       const config = JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf-8'));
       config.currentSession = null;
       fs.writeFileSync(CONFIG_PATH, JSON.stringify(config, null, 2));
+      if (!config.optional_tools?.asked) {
+        const { promptOptionalToolsInstall } = await import('../src/commands/optional-tools.js');
+        await promptOptionalToolsInstall();
+      }
     } catch {}
     await import('../src/ui/index.js');
   }
