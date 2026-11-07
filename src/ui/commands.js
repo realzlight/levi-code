@@ -1073,43 +1073,101 @@ defineCommand({
   }
 });
 
+// Shared install result panel renderer
+function showInstallResult(res, ctx) {
+  if (ctx.printPanel) {
+    return ctx.printPanel({
+      title: `✦ Installed Plugin: ${res.name}`,
+      fields: [
+        { label: 'Name', value: res.name, color: '#38bdf8' },
+        { label: 'Format', value: res.formatLabel || res.format || 'Levi', color: '#e879f9' },
+        { label: 'Version', value: res.version, color: '#22d3ee' },
+        { label: 'Author', value: res.author, color: '#c0caf5' },
+        { label: 'Description', value: res.description || 'Community plugin', color: '#4ade80' },
+        { label: 'Playbooks', value: `${res.filesCount} file(s) indexed`, color: '#ffd700' },
+        { label: 'Location', value: `~/.levi/PLUGINS/${res.name}`, color: '#a78bfa' }
+      ]
+    });
+  }
+  ctx.print(`✓ Installed plugin "${res.name}" [${res.formatLabel || res.format}] (v${res.version}) by ${res.author} with ${res.filesCount} playbook(s) indexed at ~/.levi/PLUGINS/${res.name}.`);
+}
+
 defineCommand({
   name: 'plugin:install',
-  description: 'Install a community plugin from a Git repo (e.g. /plugin:install https://github.com/<owner>/<repo>)',
-  args: [{ name: 'url', required: true, description: 'Git repository URL' }],
-  run: async ({ url }, ctx) => {
+  description: 'Install a community plugin from a Git repo — auto-detects Levi, Claude Code, Codex, Cursor, Windsurf, Copilot, Cline, Aider formats',
+  args: [
+    { name: 'url', required: true, description: 'Git repository URL' },
+    { name: 'format', required: false, description: 'Optional format override: levi, claude, codex, cursor, windsurf, copilot, cline, aider' }
+  ],
+  run: async ({ url, format }, ctx) => {
     const cleanUrl = String(url || '').trim();
     if (!cleanUrl) return ctx.print('Please provide a Git repository URL.');
-    const { installPlugin } = await pluginsMod();
-    ctx.print(`Cloning and verifying plugin from "${cleanUrl}"...`);
+    const { installPlugin, finalizeInstall } = await pluginsMod();
+
+    ctx.print(`Cloning and detecting format from "${cleanUrl}"...`);
     const res = await installPlugin(cleanUrl, {
-      onProgress: (msg) => ctx.print(msg)
+      onProgress: (msg) => ctx.print(msg),
+      format: format ? String(format).trim().toLowerCase() : null
     });
+
+    // Multiple formats detected — present interactive choice
+    if (!res.ok && res.needsChoice) {
+      const fmts = res.formats;
+      const lines = [
+        '',
+        '  Multiple plugin formats detected in this repository:',
+        ''
+      ];
+      for (let i = 0; i < fmts.length; i++) {
+        lines.push(`    ${fmts[i].icon}  [${i + 1}] ${fmts[i].label}  —  ${fmts[i].description}`);
+      }
+      lines.push('');
+      lines.push(`  Re-run with your choice:  /plugin:install ${cleanUrl} <format>`);
+      lines.push(`  Formats: ${fmts.map(f => f.id).join(', ')}`);
+      lines.push('');
+
+      if (ctx.printPanel) {
+        const fields = fmts.map(f => ({
+          label: `${f.icon} ${f.label}`,
+          value: f.description,
+          color: '#e879f9'
+        }));
+        fields.push({ label: '💡 Tip', value: `Re-run: /plugin:install ${cleanUrl} <format>`, color: '#fbbf24' });
+        ctx.printPanel({
+          title: `Format Selection — ${fmts.length} formats found in ${res.repoBase}`,
+          fields
+        });
+
+        // Auto-select if there's a levi format among them (it's the richest)
+        if (fmts.find(f => f.id === 'levi')) {
+          ctx.print('Auto-selecting Levi format (has full manifest)...');
+          const final = finalizeInstall(res.tempDir, res.repoUrl, res.repoBase, 'levi', (msg) => ctx.print(msg));
+          if (!final.ok) return ctx.print(`❌ Installation failed: ${final.error}`);
+          return showInstallResult(final, ctx);
+        }
+        return;
+      }
+
+      ctx.print(lines.join('\n'));
+      return;
+    }
+
     if (!res.ok) {
       return ctx.print(`❌ Plugin installation failed: ${res.error}`);
     }
-    if (ctx.printPanel) {
-      return ctx.printPanel({
-        title: `✦ Installed Plugin: ${res.name}`,
-        fields: [
-          { label: 'Name', value: res.name, color: '#38bdf8' },
-          { label: 'Version', value: res.version, color: '#22d3ee' },
-          { label: 'Author', value: res.author, color: '#c0caf5' },
-          { label: 'Description', value: res.description || 'Community plugin', color: '#4ade80' },
-          { label: 'Playbooks', value: `${res.filesCount} file(s) indexed`, color: '#ffd700' },
-          { label: 'Location', value: `~/.levi/PLUGINS/${res.name}`, color: '#a78bfa' }
-        ]
-      });
-    }
-    ctx.print(`✓ Installed plugin "${res.name}" (v${res.version}) by ${res.author} with ${res.filesCount} playbook(s) indexed at ~/.levi/PLUGINS/${res.name}.`);
+
+    showInstallResult(res, ctx);
   }
 });
 
 defineCommand({
   name: 'plugins:install',
   description: 'Alias for /plugin:install',
-  args: [{ name: 'url', required: true, description: 'Git repository URL' }],
-  run: async (args, ctx) => runCommand(`plugin:install ${args.url}`, ctx)
+  args: [
+    { name: 'url', required: true, description: 'Git repository URL' },
+    { name: 'format', required: false, description: 'Optional format: levi, claude, codex, cursor, windsurf, copilot, cline, aider' }
+  ],
+  run: async (args, ctx) => runCommand(`plugin:install ${args.url}${args.format ? ' ' + args.format : ''}`, ctx)
 });
 
 defineCommand({
@@ -1123,9 +1181,12 @@ defineCommand({
     }
 
     const fields = [];
+    const FMT_ICONS = { levi: '🔷', claude: '🟠', codex: '🟢', cursor: '🟣', windsurf: '🔵', copilot: '⚫', cline: '🟡', aider: '🟤', generic: '📄' };
     for (const p of plugins) {
+      const fmtIcon = FMT_ICONS[p.format] || '📦';
+      const fmtLabel = p.format ? ` [${p.format}]` : '';
       fields.push({
-        label: `📦 ${p.name} (v${p.version})`,
+        label: `${fmtIcon} ${p.name} (v${p.version})${fmtLabel}`,
         value: `${p.description ? p.description + ' — ' : ''}by ${p.author || 'Unknown'} [${p.filesCount || 0} playbook(s)]`
       });
       if (Array.isArray(p.files)) {
