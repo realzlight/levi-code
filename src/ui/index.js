@@ -1080,11 +1080,29 @@ function App({ mascot }) {
   const fill = (cmd) => setInput('/' + cmd.name + ' ');
 
   async function runSlash(text) {
+    const isAsyncJob = /^\/(plugin|plugins):(install|update)/i.test(text.trim());
+    if (isAsyncJob) {
+      setCommandOutput({
+        kind: 'loading',
+        title: 'PLUGIN OPERATION IN PROGRESS',
+        subtitle: 'Connecting to repository & initializing...'
+      });
+    }
+
     const { text: out, panel } = await runCapture(text, {
       clear: () => setMessages([]),
       exit,
       suspend,
       openForm: setForm,
+      onProgress: (msg) => {
+        if (isAsyncJob) {
+          setCommandOutput({
+            kind: 'loading',
+            title: 'PLUGIN OPERATION IN PROGRESS',
+            subtitle: msg
+          });
+        }
+      },
       reload: () => {
         const id = currentSessionId();
         if (id) {

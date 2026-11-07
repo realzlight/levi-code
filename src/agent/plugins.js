@@ -47,12 +47,28 @@ function sanitizeName(raw) {
     .replace(/-+/g, '-');
 }
 
+const IGNORE_PLUGIN_DIRS = new Set([
+  'node_modules', '.git', '.github', '.levi', '.levi-plugins',
+  'ACTIVE-BUFFER', 'ENDED-BUFFER', 'MEMORY', 'PROJECTS',
+  'screenshots', 'logs', 'cache', 'UNDO'
+]);
+
 /**
  * Scan a plugin repository for all markdown files targeted in its manifest's `plugins` array.
+ * Recursively discovers nested subfolders and multi-folder structures.
  */
 function scanPluginTargets(pluginDir, targetPaths = []) {
   const discovered = [];
-  const normalizedTargets = Array.isArray(targetPaths) && targetPaths.length ? targetPaths : ['./'];
+  let normalizedTargets = Array.isArray(targetPaths) && targetPaths.length ? targetPaths : ['./'];
+
+  // If default root target is provided but repo has dedicated SKILLS/skills dir, scope to it
+  if (normalizedTargets.length === 1 && (normalizedTargets[0] === './' || normalizedTargets[0] === '.')) {
+    if (fs.existsSync(path.join(pluginDir, 'SKILLS'))) {
+      normalizedTargets = ['./SKILLS'];
+    } else if (fs.existsSync(path.join(pluginDir, 'skills'))) {
+      normalizedTargets = ['./skills'];
+    }
+  }
 
   for (const target of normalizedTargets) {
     const cleanTarget = String(target || '').trim();
@@ -64,12 +80,12 @@ function scanPluginTargets(pluginDir, targetPaths = []) {
     if (stat.isFile() && resolvedPath.endsWith('.md')) {
       discovered.push(resolvedPath);
     } else if (stat.isDirectory()) {
-      // Recursively crawl directory for all .md files
+      // Recursively crawl directory for all .md files across all subfolders
       function crawl(dir) {
         let entries = [];
         try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return; }
         for (const ent of entries) {
-          if (ent.name.startsWith('.') || ent.name === 'node_modules') continue;
+          if (ent.name.startsWith('.') || IGNORE_PLUGIN_DIRS.has(ent.name)) continue;
           const full = path.join(dir, ent.name);
           if (ent.isDirectory()) {
             crawl(full);

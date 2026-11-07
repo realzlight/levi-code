@@ -128,20 +128,25 @@ function parseAndWrapLines(rawText, width = 76) {
   return rows;
 }
 
-// output: null | { kind: 'text', text, title? } | { kind: 'panel', title, fields: [{label, value, color?}] } | { kind: 'init', ... }
+const SPINNERS = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
+
+// output: null | { kind: 'text', text, title? } | { kind: 'panel', title, status?, fields: [{label, value, color?}] } | { kind: 'loading', title, subtitle? } | { kind: 'init', ... }
 export default function CommandBar({ output, scrollOffset = 0, width = 80, height = 24 }) {
   if (!output) return null;
 
+  const isAnimated = output.kind === 'init' || output.kind === 'loading';
   const [frame, setFrame] = useState(0);
 
   useEffect(() => {
+    if (!isAnimated) return;
     const timer = setInterval(() => {
       setFrame((f) => (f + 1) % 1000);
-    }, 90);
+    }, 80);
     return () => clearInterval(timer);
-  }, []);
+  }, [isAnimated]);
 
   const spark = SPARKS[frame % SPARKS.length];
+  const spinner = SPINNERS[frame % SPINNERS.length];
   const safeWidth = Math.max(30, width || 80);
   const contentWidth = safeWidth - 4; // account for border + padding
 
@@ -265,18 +270,48 @@ export default function CommandBar({ output, scrollOffset = 0, width = 80, heigh
     );
   }
 
+  // Animated loading card
+  if (output.kind === 'loading') {
+    return h(Box, { flexDirection: 'column', borderStyle: 'round', borderColor: '#38bdf8', paddingX: 1, width: '100%' },
+      h(Box, { justifyContent: 'space-between', marginBottom: 1 },
+        h(Box, null,
+          h(Text, { color: '#38bdf8', bold: true }, `${spinner} `),
+          h(Text, { color: 'white', bold: true }, output.title || 'Working...')
+        ),
+        h(Text, { color: '#fbbf24', bold: true }, '[In Progress]')
+      ),
+      output.subtitle
+        ? h(Box, { marginBottom: 1 },
+            h(Text, { color: '#38bdf8' }, '  ▸ '),
+            h(Text, { color: '#cbd5e1' }, output.subtitle)
+          )
+        : null,
+      h(Box, { marginTop: 1, justifyContent: 'flex-end' },
+        h(Text, { color: '#64748b' }, 'Please wait · Esc to dismiss')
+      )
+    );
+  }
+
   // Standard panel
-  return h(Box, { flexDirection: 'column', borderStyle: 'round', borderColor: CARD_COLOR, paddingX: 1, width: '100%' },
+  const isInstalled = output.status === 'INSTALLED';
+  const isUpdated = output.status === 'UPDATED';
+  const isRemoved = output.status === 'REMOVED';
+  const isCatalog = output.status === 'CATALOG';
+
+  const borderColor = isRemoved ? '#f87171' : (isInstalled || isUpdated) ? '#4ade80' : isCatalog ? '#a78bfa' : CARD_COLOR;
+  const statusColor = isRemoved ? '#f87171' : (isInstalled || isUpdated) ? '#4ade80' : isCatalog ? '#a78bfa' : GREEN;
+
+  return h(Box, { flexDirection: 'column', borderStyle: 'round', borderColor, paddingX: 1, width: '100%' },
     h(Box, { justifyContent: 'space-between', marginBottom: 1 },
-      h(Text, { color: CARD_COLOR, bold: true }, `✦ ${output.title || 'LEVI'}`),
+      h(Text, { color: borderColor, bold: true }, `✦ ${output.title || 'LEVI'}`),
       output.status
-        ? h(Text, { color: GREEN, bold: true }, `[${output.status}]`)
+        ? h(Text, { color: statusColor, bold: true }, `[${output.status}]`)
         : h(Text, { color: GRAY }, '[Esc to close]')
     ),
     (output.fields || []).map((f, i) =>
       h(Box, { key: i, flexDirection: 'row' },
-        h(Text, { color: CARD_COLOR }, '▸ '),
-        h(Text, { color: CARD_COLOR }, f.label + ': '),
+        h(Text, { color: f.labelColor || borderColor }, '▸ '),
+        h(Text, { color: f.labelColor || borderColor }, f.label + ': '),
         h(Text, { color: f.color || 'white', wrap: 'wrap' }, f.value)
       )
     ),

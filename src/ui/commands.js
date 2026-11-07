@@ -132,7 +132,14 @@ defineCommand({
 export async function runCapture(input, ctx = {}) {
   const out = [];
   let panel = null;
-  await runCommand(input, { ...ctx, print: (t) => out.push(String(t)), printPanel: (p) => { panel = p; } });
+  await runCommand(input, {
+    ...ctx,
+    print: (t) => {
+      out.push(String(t));
+      if (ctx.onProgress) ctx.onProgress(String(t));
+    },
+    printPanel: (p) => { panel = p; }
+  });
   return { text: out.join('\n'), panel };
 }
 
@@ -1208,6 +1215,7 @@ defineCommand({
     if (ctx.printPanel) {
       return ctx.printPanel({
         title: `Plugins Catalog (~/.levi/PLUGINS/ — ${plugins.length} plugin(s))`,
+        status: 'CATALOG',
         fields
       });
     }
@@ -1238,19 +1246,44 @@ defineCommand({
       ctx.print(`Updating plugin "${target}"...`);
       const res = await updatePlugin(target, { onProgress: (m) => ctx.print(m) });
       if (!res.ok) return ctx.print(`❌ Update failed: ${res.error}`);
+      if (ctx.printPanel) {
+        return ctx.printPanel({
+          title: `Plugin Updated: ${res.name}`,
+          status: 'UPDATED',
+          fields: [
+            { label: 'Plugin', value: res.name, color: '#38bdf8' },
+            { label: 'Version', value: `v${res.version}`, color: '#22d3ee' },
+            { label: 'Playbooks', value: `${res.filesCount} file(s) synced`, color: '#4ade80' },
+            { label: 'Status', value: 'Git pull complete & search index synced', color: '#4ade80' }
+          ]
+        });
+      }
       return ctx.print(`✓ Updated "${res.name}" (v${res.version}) — ${res.filesCount} playbook(s) synced.`);
     }
 
     const plugins = listPlugins();
     if (!plugins.length) return ctx.print('No plugins installed to update.');
     ctx.print(`Updating ${plugins.length} plugin(s)...`);
+    const results = [];
     for (const p of plugins) {
       const res = await updatePlugin(p.name);
+      results.push({ name: p.name, ok: res.ok, version: res.version, filesCount: res.filesCount, error: res.error });
       if (res.ok) {
         ctx.print(`✓ ${p.name}: updated (v${res.version}, ${res.filesCount} playbooks)`);
       } else {
         ctx.print(`❌ ${p.name}: ${res.error}`);
       }
+    }
+    if (ctx.printPanel) {
+      return ctx.printPanel({
+        title: `All Plugins Updated (${plugins.length})`,
+        status: 'UPDATED',
+        fields: results.map((r) => ({
+          label: r.name,
+          value: r.ok ? `v${r.version} (${r.filesCount} playbooks synced)` : `Error: ${r.error}`,
+          color: r.ok ? '#4ade80' : '#f87171'
+        }))
+      });
     }
   }
 });
@@ -1275,6 +1308,19 @@ defineCommand({
     import('../agent/retrieval.js').then(({ retrieve }) => {
       retrieve({ query: 'sync', limit: 1, rebuild: false }).catch(() => {});
     }).catch(() => {});
+
+    if (ctx.printPanel) {
+      return ctx.printPanel({
+        title: `Plugin Uninstalled`,
+        status: 'REMOVED',
+        fields: [
+          { label: 'Plugin', value: res.name, color: '#f87171' },
+          { label: 'Location', value: `~/.levi/PLUGINS/${res.name}`, color: '#94a3b8' },
+          { label: 'Disk', value: 'Deleted from ~/.levi/PLUGINS/', color: '#f87171' },
+          { label: 'Memory', value: 'Unindexed from hybrid retrieval database', color: '#4ade80' }
+        ]
+      });
+    }
     ctx.print(`✓ Removed plugin "${res.name}" from ~/.levi/PLUGINS/ and unindexed all playbooks.`);
   }
 });
