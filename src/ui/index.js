@@ -527,10 +527,9 @@ function ClaudeSlashMenu({ matches, active, width = 80 }) {
     );
   }
 
-  const maxVisible = 5;
+  const maxVisible = 4;
   const start = Math.max(0, Math.min(active - Math.floor(maxVisible / 2), matches.length - maxVisible));
   const visible = matches.slice(start, start + maxVisible);
-  const counter = matches.length > maxVisible ? `  ${active + 1}/${matches.length}` : '';
 
   const safeW = Math.max(30, width || 80);
   const prefixWidth = 2; // '❯ ' or '  '
@@ -540,33 +539,59 @@ function ClaudeSlashMenu({ matches, active, width = 80 }) {
     visible.map((c, i) => {
       const isActive = start + i === active;
       const rawName = '/' + c.name;
-      const maxDescLen = Math.max(6, safeW - rawName.length - prefixWidth - dashWidth - 2);
+      const firstLineCap = Math.max(10, safeW - rawName.length - prefixWidth - dashWidth - 2);
+      const desc = c.description || '';
+      const isLongDesc = desc.length > firstLineCap;
 
-      let desc = c.description || '';
-      if (desc.length > maxDescLen) {
-        desc = desc.slice(0, Math.max(0, maxDescLen - 1)) + '…';
-      }
+      // Two line spacing for commands requiring more lines, 1 line spacing for standard commands
+      const spacing = isLongDesc ? 2 : 1;
 
       return h(Box, {
         key: c.name,
-        flexDirection: 'row',
+        flexDirection: 'column',
         width: '100%',
-        overflow: 'hidden',
-        marginBottom: 1
+        marginBottom: spacing
       },
-        h(Text, { color: isActive ? CSM_ACTIVE : CSM_INACTIVE, wrap: 'truncate-end' },
-          isActive ? '❯ ' : '  ',
-          h(Text, { color: isActive ? '#38bdf8' : '#e2e8f0', bold: true }, rawName),
-          h(Text, { color: isActive ? '#94a3b8' : '#64748b' }, ' - '),
-          h(Text, { color: isActive ? '#ffffff' : '#949494' }, desc)
+        h(Box, { flexDirection: 'row', width: '100%' },
+          h(Text, { wrap: 'wrap' },
+            isActive ? h(Text, { color: CSM_ACTIVE, bold: true }, '❯ ') : h(Text, null, '  '),
+            h(Text, { color: isActive ? '#38bdf8' : '#e2e8f0', bold: true }, rawName),
+            h(Text, { color: isActive ? '#94a3b8' : '#64748b' }, ' - '),
+            h(Text, { color: isActive ? '#ffffff' : '#949494' }, desc)
+          )
         )
       );
     }),
-    h(Text, { color: '#666666', wrap: 'truncate-end' }, `  ↑↓ navigate · tab fill · enter run · esc close${counter}`)
+
+    // Bottom helper & counter row
+    h(Box, { justifyContent: 'space-between', width: '100%', height: 1 },
+      h(Text, { color: '#666666' }, '  ↑↓ navigate · tab fill · enter run · esc close'),
+      matches.length > 1
+        ? h(Text, { color: '#888888' }, `[${active + 1} of ${matches.length}]`)
+        : null
+    )
   );
 }
 
-export const slashMenuHeight = (n) => Math.min(Math.max(n, 1), 5) * 2 + 1;
+export const slashMenuHeight = (matchesOrCount, active = 0, width = 80) => {
+  if (typeof matchesOrCount === 'number') {
+    return Math.min(Math.max(matchesOrCount, 1), 4) * 3 + 1;
+  }
+  const matches = matchesOrCount || [];
+  const maxVisible = 4;
+  const start = Math.max(0, Math.min(active - Math.floor(maxVisible / 2), matches.length - maxVisible));
+  const visible = matches.slice(start, start + maxVisible);
+  let h = 1;
+  for (const c of visible) {
+    const rawName = '/' + c.name;
+    const desc = c.description || '';
+    const firstLineCap = Math.max(10, width - rawName.length - 7);
+    const isLong = desc.length > firstLineCap;
+    const lines = isLong ? Math.min(3, Math.ceil(desc.length / Math.max(20, width - 4))) : 1;
+    h += lines + (isLong ? 2 : 1);
+  }
+  return h;
+};
 // --- end Claude Slash Menu ----------------------------------------------------
 
 // --- Claude Todo List component (brainless/claude-todo-list) -------------------
@@ -1322,7 +1347,7 @@ function App({ mascot }) {
     : 0;
   const bottomAreaHeight = form ? formHeight : inputAreaHeight;
   const subagentsHeight = activeSubagents.length > 0 ? activeSubagents.length * 4 : 0;
-  const fixedHeight = headerHeight + headerMargin + bottomAreaHeight + footerHeight + (paletteOn ? slashMenuHeight(matches.length) : 0) + commandOutputHeight + subagentsHeight;
+  const fixedHeight = headerHeight + headerMargin + bottomAreaHeight + footerHeight + (paletteOn ? slashMenuHeight(matches, active, terminalWidth) : 0) + commandOutputHeight + subagentsHeight;
   const rawAvailable = Math.max(1, terminalHeight - fixedHeight);
   const needsScrollIndicators = totalLines > rawAvailable;
   const availableForMessages = Math.max(1, rawAvailable - (needsScrollIndicators ? 2 : 0));
