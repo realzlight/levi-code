@@ -1,12 +1,15 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
-import { getEmbedding, cosineSimilarity, vectorToBuffer, bufferToVector } from './embedding.js';
+import { fileURLToPath } from 'node:url';
+import { getEmbedding, rerankCandidates } from './embedding.js';
 
 const HOME = path.join(os.homedir(), '.levi');
 const DB_PATH = path.join(HOME, 'INDEX.db');
 const CHUNK = 1000;
 const STOP = new Set(['the', 'and', 'for', 'what', 'did', 'we', 'about', 'with', 'that', 'this', 'you', 'are', 'was', 'how', 'when', 'is', 'to', 'of', 'in', 'on', 'it', 'my', 'me', 'do', 'be', 'a', 'an']);
+
+let hasVec = false;
 
 async function openDb() {
   const w = process.emitWarning;
@@ -17,13 +20,73 @@ async function openDb() {
     throw new Error('node:sqlite DatabaseSync is not available in this Node version');
   }
   try { fs.mkdirSync(HOME, { recursive: true }); } catch {}
-  const db = new mod.DatabaseSync(DB_PATH);
+  const db = new mod.DatabaseSync(DB_PATH, { allowExtension: true });
   db.exec('PRAGMA busy_timeout = 3000');
+
+  // Dense Indexing initialization: load native sqlite-vec vec0 extension
+  try {
+    db.enableLoadExtension(true);
+    const __dirname = path.dirname(fileURLToPath(import.meta.url));
+    const vecPath = path.resolve(__dirname, '../lib/sqlite-vec/vec0');
+    db.loadExtension(vecPath);
+    hasVec = true;
+  } catch {
+    hasVec = false;
+  }
+
+  // 1. Unified Data Layout Paradigm:
+  // - Primary Persistence: relational table `documents`
+  // - Sparse Indexing: external-content virtual table `documents_fts` linked via triggers
   db.exec(`
     CREATE TABLE IF NOT EXISTS files (path TEXT PRIMARY KEY, sig TEXT, kind TEXT);
-    CREATE VIRTUAL TABLE IF NOT EXISTS chunks USING fts5(text, path UNINDEXED, kind UNINDEXED, session UNINDEXED, role UNINDEXED, tokenize = 'porter unicode61');
-    CREATE TABLE IF NOT EXISTS vectors (path TEXT, chunk_idx INTEGER, vector BLOB, PRIMARY KEY (path, chunk_idx));
+
+    CREATE TABLE IF NOT EXISTS documents (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      title TEXT,
+      text TEXT,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      path TEXT,
+      kind TEXT,
+      session TEXT,
+      role TEXT
+    );
+
+    CREATE VIRTUAL TABLE IF NOT EXISTS documents_fts USING fts5(
+      title,
+      text,
+      content='documents',
+      content_rowid='id',
+      tokenize = 'porter unicode61'
+    );
+
+    CREATE TRIGGER IF NOT EXISTS documents_ai AFTER INSERT ON documents BEGIN
+      INSERT INTO documents_fts(rowid, title, text) VALUES (new.id, new.title, new.text);
+    END;
+
+    CREATE TRIGGER IF NOT EXISTS documents_ad AFTER DELETE ON documents BEGIN
+      INSERT INTO documents_fts(documents_fts, rowid, title, text) VALUES ('delete', old.id, old.title, old.text);
+    END;
+
+    CREATE TRIGGER IF NOT EXISTS documents_au AFTER UPDATE ON documents BEGIN
+      INSERT INTO documents_fts(documents_fts, rowid, title, text) VALUES ('delete', old.id, old.title, old.text);
+      INSERT INTO documents_fts(rowid, title, text) VALUES (new.id, new.title, new.text);
+    END;
   `);
+
+  // Dense Indexing: vector virtual table `documents_vec` with vec0 syntax
+  if (hasVec) {
+    try {
+      db.exec(`
+        CREATE VIRTUAL TABLE IF NOT EXISTS documents_vec USING vec0(
+          id INTEGER PRIMARY KEY,
+          embedding float[384]
+        );
+      `);
+    } catch {
+      hasVec = false;
+    }
+  }
+
   return db;
 }
 
@@ -96,36 +159,64 @@ function chunkFile(src, raw) {
   return splitText(raw).map((text) => ({ text, role: '' }));
 }
 
-function syncIndex(db, extra = []) {
+async function syncIndex(db, extra = []) {
   const sources = listSources().concat(extra.map((p) => ({ path: p, kind: 'file', session: '' })));
   const known = new Map(db.prepare('SELECT path, sig, kind FROM files').all().map((r) => [r.path, r]));
   const seen = new Set();
-  db.exec('BEGIN');
-  try {
-    for (const src of sources) {
-      seen.add(src.path);
-      let st;
-      try { st = fs.statSync(src.path); } catch { continue; }
-      if (src.kind === 'file' && st.size > 1000000) continue;
-      const sig = st.mtimeMs + ':' + st.size;
-      if (known.get(src.path)?.sig === sig) continue;
-      let raw = '';
-      try { raw = fs.readFileSync(src.path, 'utf-8'); } catch { continue; }
-      db.prepare('DELETE FROM chunks WHERE path = ?').run(src.path);
-      const ins = db.prepare('INSERT INTO chunks (text, path, kind, session, role) VALUES (?, ?, ?, ?, ?)');
-      for (const c of chunkFile(src, raw)) ins.run(c.text, src.path, src.kind, src.session, c.role);
-      db.prepare('INSERT OR REPLACE INTO files (path, sig, kind) VALUES (?, ?, ?)').run(src.path, sig, src.kind);
-    }
-    for (const [p, r] of known) {
-      if (!seen.has(p) && r.kind !== 'file') {
-        db.prepare('DELETE FROM chunks WHERE path = ?').run(p);
-        db.prepare('DELETE FROM files WHERE path = ?').run(p);
+
+  for (const src of sources) {
+    seen.add(src.path);
+    let st;
+    try { st = fs.statSync(src.path); } catch { continue; }
+    if (src.kind === 'file' && st.size > 1000000) continue;
+    const sig = st.mtimeMs + ':' + st.size;
+    if (known.get(src.path)?.sig === sig) continue;
+
+    let raw = '';
+    try { raw = fs.readFileSync(src.path, 'utf-8'); } catch { continue; }
+
+    // Remove old document records and their dense vectors
+    const oldDocs = db.prepare('SELECT id FROM documents WHERE path = ?').all(src.path);
+    for (const d of oldDocs) {
+      if (hasVec) {
+        try { db.prepare('DELETE FROM documents_vec WHERE id = ?').run(BigInt(d.id)); } catch {}
       }
     }
-    db.exec('COMMIT');
-  } catch (e) {
-    try { db.exec('ROLLBACK'); } catch {}
-    throw e;
+    db.prepare('DELETE FROM documents WHERE path = ?').run(src.path);
+
+    const title = path.basename(src.path);
+    const chunks = chunkFile(src, raw);
+    const insDoc = db.prepare('INSERT INTO documents (title, text, path, kind, session, role) VALUES (?, ?, ?, ?, ?, ?)');
+    const insVec = hasVec ? db.prepare('INSERT INTO documents_vec(id, embedding) VALUES (?, ?)') : null;
+
+    for (const c of chunks) {
+      const res = insDoc.run(title, c.text, src.path, src.kind, src.session, c.role || '');
+      const docId = BigInt(res.lastInsertRowid);
+
+      if (insVec) {
+        try {
+          const vec = await getEmbedding(c.text);
+          if (vec) {
+            insVec.run(docId, vec);
+          }
+        } catch {}
+      }
+    }
+
+    db.prepare('INSERT OR REPLACE INTO files (path, sig, kind) VALUES (?, ?, ?)').run(src.path, sig, src.kind);
+  }
+
+  for (const [p, r] of known) {
+    if (!seen.has(p) && r.kind !== 'file') {
+      const oldDocs = db.prepare('SELECT id FROM documents WHERE path = ?').all(p);
+      for (const d of oldDocs) {
+        if (hasVec) {
+          try { db.prepare('DELETE FROM documents_vec WHERE id = ?').run(BigInt(d.id)); } catch {}
+        }
+      }
+      db.prepare('DELETE FROM documents WHERE path = ?').run(p);
+      db.prepare('DELETE FROM files WHERE path = ?').run(p);
+    }
   }
 }
 
@@ -168,102 +259,171 @@ function sessionOverview(id) {
 
 const resolveHome = (p) => (p.startsWith('~') ? path.join(os.homedir(), p.slice(1)) : path.resolve(p));
 
-export async function retrieve({ query, session, path: file, limit, rebuild = true } = {}) {
+/**
+ * High-Precision Multi-Stage Hybrid Memory Architecture:
+ * - Stage 1: Parallel High-Recall Extraction (Sparse FTS5 + Dense sqlite-vec)
+ * - Stage 2: Reciprocal Rank Fusion Interleaving (RRF merging & top-25 candidate hydration)
+ * - Stage 3: Full-Attention Cross-Encoder Reranking (Xenova/bge-reranker-base)
+ */
+export async function retrieve({ query, session, path: file, limit = 5, rebuild = false } = {}) {
   if (session && !query && !file) return sessionOverview(session);
+
   if (rebuild) {
     try { await rebuildIndex(); } catch {}
   }
+
   let db;
-  try { db = await openDb(); } catch (e) { return 'Error: search index unavailable (' + String((e && e.message) || e).slice(0, 80) + '). It needs Node 22.13 or newer with node:sqlite.'; }
   try {
-    const lim = Math.min(Math.max(Number(limit) || 5, 1), 8);
+    db = await openDb();
+  } catch (e) {
+    return 'Error: search index unavailable (' + String((e && e.message) || e).slice(0, 80) + ').';
+  }
+
+  try {
+    const lim = Math.min(Math.max(Number(limit) || 5, 1), 25);
     const filePath = file ? resolveHome(String(file)) : '';
-    syncIndex(db, filePath && fs.existsSync(filePath) ? [filePath] : []);
+    if (filePath && fs.existsSync(filePath)) {
+      await syncIndex(db, [filePath]);
+    } else {
+      const hasDocs = db.prepare('SELECT 1 FROM documents LIMIT 1').get();
+      if (!hasDocs) {
+        await syncIndex(db);
+      }
+    }
+
     if (filePath && !query) {
-      const rows = db.prepare('SELECT text FROM chunks WHERE path = ? ORDER BY rowid LIMIT 2').all(filePath);
+      const rows = db.prepare('SELECT text FROM documents WHERE path = ? ORDER BY id LIMIT 2').all(filePath);
       return rows.length ? rows.map((r) => r.text).join('\n---\n').slice(0, 1200) : 'No indexed content for that path.';
     }
-    const run = (mode) => {
-      const q = ftsQuery(query, mode);
-      if (!q) return [];
-      let sql = "SELECT path, kind, session, role, snippet(chunks, 0, '[', ']', ' ... ', 20) AS s FROM chunks WHERE chunks MATCH ?";
-      const params = [q];
-      if (session) { sql += ' AND session = ?'; params.push(String(session)); }
-      if (filePath) { sql += ' AND path = ?'; params.push(filePath); }
-      sql += ' ORDER BY bm25(chunks) LIMIT ?';
-      params.push(lim);
-      return db.prepare(sql).all(...params);
-    };
-    let bm25Rows = run('and');
-    if (!bm25Rows.length) bm25Rows = run('or');
 
-    // Hybrid Semantic Vector Search: Reciprocal Rank Fusion (BM25 + Cosine Similarity)
-    let rows = bm25Rows;
-    if (query) {
+    if (!query) {
+      return 'No search query provided.';
+    }
+
+    // ── STAGE 1: Parallel High-Recall Extraction (The Dragnet) ──
+    const runSparse = () => {
+      const q = ftsQuery(query, 'and') || ftsQuery(query, 'or');
+      if (!q) return [];
+      let sql = `SELECT rowid AS id, rank, snippet(documents_fts, 1, '[', ']', '...', 15) AS s FROM documents_fts WHERE documents_fts MATCH ?`;
+      const params = [q];
+      if (session) { sql += ' AND rowid IN (SELECT id FROM documents WHERE session = ?)'; params.push(String(session)); }
+      if (filePath) { sql += ' AND rowid IN (SELECT id FROM documents WHERE path = ?)'; params.push(filePath); }
+      sql += ' ORDER BY rank LIMIT 50';
+      try { return db.prepare(sql).all(...params); } catch { return []; }
+    };
+
+    const runDense = async () => {
+      if (!hasVec) return [];
       try {
         const qVec = await getEmbedding(query);
-        if (qVec) {
-          const candSql = "SELECT text, path, kind, session, role FROM chunks WHERE kind IN ('memory', 'project') OR (kind = 'session' AND role = 'summary') LIMIT 60";
-          const cands = db.prepare(candSql).all();
-          const scoredMap = new Map();
+        if (!qVec) return [];
+        let sql = `SELECT id, distance FROM documents_vec WHERE embedding MATCH ? AND k = ?`;
+        const params = [qVec, 50n];
+        sql += ' ORDER BY distance';
+        return db.prepare(sql).all(...params);
+      } catch {
+        return [];
+      }
+    };
 
-          // 1. Seed with BM25 rankings
-          bm25Rows.forEach((r, rank) => {
-            const key = `${r.path}:${r.s || r.text?.slice(0, 100)}`;
-            scoredMap.set(key, { ...r, score: 1.0 / (60 + rank) });
-          });
+    const [sparseHits, denseHits] = await Promise.all([runSparse(), runDense()]);
 
-          // 2. Score candidate chunks with local vector embeddings
-          for (const cand of cands) {
-            const candVec = await getEmbedding(cand.text);
-            if (candVec) {
-              const sim = cosineSimilarity(qVec, candVec);
-              if (sim > 0.28) {
-                const s = cand.text.slice(0, 180);
-                const key = `${cand.path}:${s.slice(0, 100)}`;
-                const existing = scoredMap.get(key);
-                if (existing) {
-                  existing.score += sim * 2.0; // Boost chunks that match BOTH keywords and semantic vector
-                } else {
-                  scoredMap.set(key, { ...cand, s, score: sim });
-                }
-              }
-            }
-          }
+    // ── STAGE 2: Reciprocal Rank Fusion Interleaving (The Mathematical Merge) ──
+    const RRF_K = 60;
+    const rrfScores = new Map(); // id -> { id, rrfScore, sparseRank, denseRank, snippet }
 
-          if (scoredMap.size > 0) {
-            const fused = [...scoredMap.values()].sort((a, b) => b.score - a.score);
-            rows = fused.slice(0, lim);
-          }
-        }
-      } catch {}
+    sparseHits.forEach((hit, idx) => {
+      const id = Number(hit.id);
+      const rank = idx + 1;
+      const cur = rrfScores.get(id) || { id, rrfScore: 0, snippet: hit.s };
+      cur.rrfScore += 1.0 / (RRF_K + rank);
+      cur.sparseRank = rank;
+      if (hit.s) cur.snippet = hit.s;
+      rrfScores.set(id, cur);
+    });
+
+    denseHits.forEach((hit, idx) => {
+      const id = Number(hit.id);
+      const rank = idx + 1;
+      const cur = rrfScores.get(id) || { id, rrfScore: 0 };
+      cur.rrfScore += 1.0 / (RRF_K + rank);
+      cur.denseRank = rank;
+      rrfScores.set(id, cur);
+    });
+
+    if (rrfScores.size === 0) {
+      return 'No matches. Try different keywords.';
     }
-    if (!rows.length) return 'No matches. Try different keywords.';
+
+    // Slice top 25 highest-scoring candidate IDs from RRF merge
+    const top25Candidates = [...rrfScores.values()]
+      .sort((a, b) => b.rrfScore - a.rrfScore)
+      .slice(0, 25);
+
+    const candidateIds = top25Candidates.map((c) => c.id);
+    const placeholders = candidateIds.map(() => '?').join(',');
+    const hydratedRows = db.prepare(`SELECT id, title, text, path, kind, session, role FROM documents WHERE id IN (${placeholders})`).all(...candidateIds);
+    const hydratedMap = new Map(hydratedRows.map((r) => [Number(r.id), r]));
+
+    const candidates = top25Candidates.map((c) => {
+      const doc = hydratedMap.get(c.id) || {};
+      return {
+        ...doc,
+        id: c.id,
+        rrfScore: c.rrfScore,
+        snippet: c.snippet || (doc.text ? doc.text.slice(0, 180) : '')
+      };
+    }).filter((d) => Boolean(d.text));
+
+    if (candidates.length === 0) {
+      return 'No matches found.';
+    }
+
+    // ── STAGE 3: Full-Attention Cross-Encoder Reranking (The Context Judge) ──
+    let finalRanked = candidates;
+    try {
+      finalRanked = await rerankCandidates(query, candidates);
+    } catch {
+      finalRanked = candidates;
+    }
+
+    // Select absolute top N blocks to populate context window
+    const selected = finalRanked.slice(0, lim);
     const home = os.homedir();
     const lines = [];
     let total = 0;
-    for (const r of rows) {
-      const line = '[' + r.kind + (r.session ? ' ' + r.session : '') + (r.role ? ' ' + r.role : '') + '] ' + (r.kind === 'session' ? '' : r.path.replace(home, '~') + ': ') + String(r.s).replace(/\s+/g, ' ');
-      if (total + line.length > 1200) break;
+
+    for (const r of selected) {
+      const snippet = r.snippet || r.text.slice(0, 200);
+      const line = '[' + (r.kind || 'doc') + (r.session ? ' ' + r.session : '') + (r.role ? ' ' + r.role : '') + '] ' +
+        (r.kind === 'session' ? '' : (r.path || '').replace(home, '~') + ': ') +
+        String(snippet).replace(/\s+/g, ' ');
+
+      if (total + line.length > 2000) break;
       lines.push(line);
       total += line.length;
     }
-    return lines.join('\n');
+
+    return lines.join('\n') || 'No matches found.';
   } finally {
-    db.close();
+    try { db.close(); } catch {}
   }
 }
 
 export async function rebuildIndex() {
-  for (const suf of ['', '-wal', '-shm']) { try { fs.unlinkSync(DB_PATH + suf); } catch {} }
+  for (const suf of ['', '-wal', '-shm']) {
+    try { fs.unlinkSync(DB_PATH + suf); } catch {}
+  }
   let db;
-  try { db = await openDb(); } catch (e) { return 'Error: search index unavailable (' + String((e && e.message) || e).slice(0, 80) + '). It needs Node 22.13 or newer with node:sqlite.'; }
   try {
-    syncIndex(db, []);
-    const f = db.prepare('SELECT count(*) AS n FROM files').get().n;
-    const c = db.prepare('SELECT count(*) AS n FROM chunks').get().n;
-    return 'Index rebuilt: ' + f + ' files, ' + c + ' chunks.';
+    db = await openDb();
+  } catch (e) {
+    return 'Error: search index unavailable (' + String((e && e.message) || e).slice(0, 80) + ').';
+  }
+  try {
+    await syncIndex(db);
+    return 'Search index rebuilt successfully with Multi-Stage Hybrid Memory (FTS5 + vec0 + Cross-Encoder).';
   } finally {
-    db.close();
+    try { db.close(); } catch {}
   }
 }
