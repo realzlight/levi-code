@@ -1559,7 +1559,22 @@ function App({ mascot }) {
                 question: form.question,
                 options: form.options,
                 allowCustom: form.allowCustom,
-                onPick: (answer) => { setForm(null); submit(answer); }
+                onPick: (answer) => { setForm(null); submit(answer); },
+                onCancel: () => setForm(null)
+              })
+            : form.mode === 'plugin-manifest'
+            ? h(AskPrompt, {
+                question: form.question || 'Select plugin manifest to use:',
+                options: form.options,
+                allowCustom: false,
+                onPick: (answer) => {
+                  setForm(null);
+                  if (form.onPick) form.onPick(answer);
+                },
+                onCancel: () => {
+                  setForm(null);
+                  if (form.onCancel) form.onCancel();
+                }
               })
             : form.mode === 'mem-push'
             ? h(MemSync, { mode: 'push', onDone: () => setForm(null) })

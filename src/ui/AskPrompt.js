@@ -5,7 +5,7 @@ const h = React.createElement;
 const CARD_COLOR = '#afd7ff';
 const GRAY = '#888888';
 
-export default function AskPrompt({ question, options, allowCustom = true, onPick }) {
+export default function AskPrompt({ question, options, allowCustom = true, onPick, onCancel }) {
   const allOptions = allowCustom ? [...options, 'Custom answer...'] : options;
   const [sel, setSel] = useState(0);
   const [customMode, setCustomMode] = useState(false);
@@ -20,6 +20,11 @@ export default function AskPrompt({ question, options, allowCustom = true, onPic
       if (key.backspace || key.delete) { setCustomText((v) => v.slice(0, -1)); return; }
       if (key.escape) { setCustomMode(false); setCustomText(''); return; }
       if (char && !key.ctrl && !key.meta) setCustomText((v) => v + char);
+      return;
+    }
+
+    if (key.escape) {
+      if (onCancel) onCancel();
       return;
     }
 

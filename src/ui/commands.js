@@ -1110,12 +1110,42 @@ defineCommand({
       format: format ? String(format).trim().toLowerCase() : null
     });
 
-    // Multiple formats detected — present interactive choice
+    // Multiple manifests detected — prompt the user which one to use!
     if (!res.ok && res.needsChoice) {
       const fmts = res.formats;
+      if (ctx.openForm) {
+        const optionMap = new Map();
+        const options = fmts.map((f) => {
+          const optText = `${f.icon} ${f.label}${f.description ? ` — ${f.description}` : ''}`;
+          optionMap.set(optText, f);
+          return optText;
+        });
+
+        return ctx.openForm({
+          mode: 'plugin-manifest',
+          question: `Multiple manifests detected in ${res.repoBase}. Which manifest should Levi use?`,
+          options,
+          onPick: async (pickedText) => {
+            const picked = optionMap.get(pickedText) || fmts[0];
+            ctx.print(`Installing with ${picked.label}...`);
+            const final = finalizeInstall(res.tempDir, res.repoUrl, res.repoBase, picked, (msg) => ctx.print(msg));
+            if (!final.ok) return ctx.print(`❌ Installation failed: ${final.error}`);
+            return showInstallResult(final, ctx);
+          },
+          onCancel: async () => {
+            try {
+              const { rmSync } = await import('node:fs');
+              rmSync(res.tempDir, { recursive: true, force: true });
+            } catch {}
+            ctx.print('Plugin installation cancelled.');
+          }
+        });
+      }
+
+      // Non-interactive / headless fallback
       const lines = [
         '',
-        '  Multiple plugin formats detected in this repository:',
+        `  Multiple manifests detected in ${res.repoBase}:`,
         ''
       ];
       for (let i = 0; i < fmts.length; i++) {
@@ -1123,33 +1153,9 @@ defineCommand({
       }
       lines.push('');
       lines.push(`  Re-run with your choice:  /plugin:install ${cleanUrl} <format>`);
-      lines.push(`  Formats: ${fmts.map(f => f.id).join(', ')}`);
+      lines.push(`  Available options: ${fmts.map(f => f.id).join(', ')}`);
       lines.push('');
-
-      if (ctx.printPanel) {
-        const fields = fmts.map(f => ({
-          label: `${f.icon} ${f.label}`,
-          value: f.description,
-          color: '#e879f9'
-        }));
-        fields.push({ label: '💡 Tip', value: `Re-run: /plugin:install ${cleanUrl} <format>`, color: '#fbbf24' });
-        ctx.printPanel({
-          title: `Format Selection — ${fmts.length} formats found in ${res.repoBase}`,
-          fields
-        });
-
-        // Auto-select if there's a levi format among them (it's the richest)
-        if (fmts.find(f => f.id === 'levi')) {
-          ctx.print('Auto-selecting Levi format (has full manifest)...');
-          const final = finalizeInstall(res.tempDir, res.repoUrl, res.repoBase, 'levi', (msg) => ctx.print(msg));
-          if (!final.ok) return ctx.print(`❌ Installation failed: ${final.error}`);
-          return showInstallResult(final, ctx);
-        }
-        return;
-      }
-
-      ctx.print(lines.join('\n'));
-      return;
+      return ctx.print(lines.join('\n'));
     }
 
     if (!res.ok) {

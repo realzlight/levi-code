@@ -113,48 +113,143 @@ function scanPluginTargets(pluginDir, targetPaths = []) {
   });
 }
 
-// ---- Multi-Format Plugin Detection ----
+// ---- Multi-Manifest & Multi-Format Plugin System ----
 
 /**
- * All supported plugin format definitions.
- * Each format specifies how to detect it, what label to show, and how to
- * extract files + synthetic manifest from a cloned repository.
+ * Universal reader for plugin.json manifests across all ecosystems.
+ * Extracts canonical metadata and normalizes playbook target paths.
  */
-const FORMATS = {
-  levi: {
-    id: 'levi',
-    label: 'Levi',
-    icon: '🔷',
-    description: '.levi-plugins/plugin.json manifest',
-    detect: (dir) => fs.existsSync(path.join(dir, '.levi-plugins', 'plugin.json')),
-    resolve: (dir, repoBase) => {
-      const raw = JSON.parse(fs.readFileSync(path.join(dir, '.levi-plugins', 'plugin.json'), 'utf-8'));
-      const targets = Array.isArray(raw.plugins) ? raw.plugins : (raw.skills || ['./']);
-      return {
-        name: sanitizeName(raw.name) || sanitizeName(repoBase),
-        version: raw.version || '1.0.0',
-        description: raw.description || '',
-        author: raw.author || 'Unknown',
-        targetPaths: targets,
-        raw
-      };
+export function readManifest(filePath, repoBase) {
+  try {
+    const raw = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
+    let targets = raw.plugins || raw.skills || raw.rules || raw.commands || raw.agents || raw.playbooks || raw.prompts || raw.instructions || raw.files;
+    if (typeof targets === 'string') targets = [targets];
+    if (!Array.isArray(targets) || !targets.length) {
+      targets = ['./'];
     }
+    const name = sanitizeName(raw.name) || sanitizeName(repoBase);
+    let author = 'Unknown';
+    if (typeof raw.author === 'string') author = raw.author;
+    else if (raw.author && typeof raw.author.name === 'string') author = raw.author.name;
+
+    return {
+      name,
+      version: raw.version || '1.0.0',
+      description: raw.description || '',
+      author,
+      targetPaths: targets,
+      raw
+    };
+  } catch (err) {
+    return null;
+  }
+}
+
+/**
+ * Manifest definitions for all supported AI CLI ecosystems.
+ */
+export const MANIFEST_SPECS = [
+  {
+    id: 'levi',
+    label: 'Levi Manifest',
+    icon: '🔷',
+    paths: ['.levi-plugins/plugin.json', '.levi/plugin.json'],
+    defaultTargets: ['./']
   },
-  claude: {
+  {
     id: 'claude',
-    label: 'Claude Code',
+    label: 'Claude Code Manifest',
     icon: '🟠',
-    description: 'CLAUDE.md and/or .claude/ directory',
-    detect: (dir) => {
-      return fs.existsSync(path.join(dir, 'CLAUDE.md')) ||
-        fs.existsSync(path.join(dir, '.claude'));
-    },
+    paths: [
+      '.claude-plugins/plugin.json',
+      '.claude/plugin.json',
+      '.claude-plugin/plugin.json',
+      '.claude/claude-plugin.json'
+    ],
+    defaultTargets: ['./CLAUDE.md', './.claude/commands', './.claude', './']
+  },
+  {
+    id: 'codex',
+    label: 'Codex / OpenAI Manifest',
+    icon: '🟢',
+    paths: [
+      '.codex-plugins/plugin.json',
+      '.codex/plugin.json',
+      '.openai-plugins/plugin.json',
+      '.openai/plugin.json'
+    ],
+    defaultTargets: ['./AGENTS.md', './codex.md', './.codex', './']
+  },
+  {
+    id: 'cursor',
+    label: 'Cursor Manifest',
+    icon: '🟣',
+    paths: [
+      '.cursor-plugins/plugin.json',
+      '.cursor/plugin.json',
+      '.cursor/rules.json'
+    ],
+    defaultTargets: ['./.cursorrules', './.cursor/rules', './']
+  },
+  {
+    id: 'windsurf',
+    label: 'Windsurf Manifest',
+    icon: '🔵',
+    paths: [
+      '.windsurf-plugins/plugin.json',
+      '.windsurf/plugin.json'
+    ],
+    defaultTargets: ['./.windsurfrules', './']
+  },
+  {
+    id: 'cline',
+    label: 'Cline / Roo Code Manifest',
+    icon: '🟡',
+    paths: [
+      '.cline-plugins/plugin.json',
+      '.cline/plugin.json',
+      '.roo-plugins/plugin.json',
+      '.roo/plugin.json'
+    ],
+    defaultTargets: ['./.clinerules', './.cline', './']
+  },
+  {
+    id: 'copilot',
+    label: 'GitHub Copilot Manifest',
+    icon: '⚫',
+    paths: [
+      '.copilot-plugins/plugin.json',
+      '.github/plugin.json'
+    ],
+    defaultTargets: ['./.github/copilot-instructions.md', './.github', './']
+  },
+  {
+    id: 'standard',
+    label: 'Standard Plugin Manifest',
+    icon: '📦',
+    paths: [
+      'plugin.json',
+      '.plugins/plugin.json'
+    ],
+    defaultTargets: ['./']
+  }
+];
+
+/**
+ * File-based rule fallbacks for repositories that do not provide a plugin.json manifest.
+ */
+export const RULE_SPECS = [
+  {
+    id: 'claude-rules',
+    label: 'Claude Code Rules',
+    icon: '🟠',
+    description: 'CLAUDE.md or .claude/ directory',
+    detect: (dir) => fs.existsSync(path.join(dir, 'CLAUDE.md')) || fs.existsSync(path.join(dir, '.claude')),
     resolve: (dir, repoBase) => {
       const targets = [];
       if (fs.existsSync(path.join(dir, 'CLAUDE.md'))) targets.push('./CLAUDE.md');
       if (fs.existsSync(path.join(dir, '.claude', 'commands'))) targets.push('./.claude/commands');
       if (fs.existsSync(path.join(dir, '.claude'))) {
-        // scan .claude/ for any .md files beyond commands/
         try {
           for (const ent of fs.readdirSync(path.join(dir, '.claude'), { withFileTypes: true })) {
             if (ent.isFile() && ent.name.endsWith('.md')) targets.push(`./.claude/${ent.name}`);
@@ -171,24 +266,19 @@ const FORMATS = {
       return {
         name: sanitizeName(repoBase),
         version: '1.0.0',
-        description: desc || `Claude Code plugin from ${repoBase}`,
+        description: desc || `Claude Code rules from ${repoBase}`,
         author: 'Unknown',
         targetPaths: targets,
         raw: {}
       };
     }
   },
-  codex: {
-    id: 'codex',
-    label: 'Codex / OpenAI',
+  {
+    id: 'codex-rules',
+    label: 'Codex / OpenAI Rules',
     icon: '🟢',
     description: 'AGENTS.md, codex.md, or .codex/ directory',
-    detect: (dir) => {
-      return fs.existsSync(path.join(dir, 'AGENTS.md')) ||
-        fs.existsSync(path.join(dir, 'codex.md')) ||
-        fs.existsSync(path.join(dir, 'CODEX.md')) ||
-        fs.existsSync(path.join(dir, '.codex'));
-    },
+    detect: (dir) => fs.existsSync(path.join(dir, 'AGENTS.md')) || fs.existsSync(path.join(dir, 'codex.md')) || fs.existsSync(path.join(dir, 'CODEX.md')) || fs.existsSync(path.join(dir, '.codex')),
     resolve: (dir, repoBase) => {
       const targets = [];
       for (const f of ['AGENTS.md', 'codex.md', 'CODEX.md']) {
@@ -208,25 +298,21 @@ const FORMATS = {
       return {
         name: sanitizeName(repoBase),
         version: '1.0.0',
-        description: desc || `Codex/OpenAI plugin from ${repoBase}`,
+        description: desc || `Codex/OpenAI rules from ${repoBase}`,
         author: 'Unknown',
         targetPaths: targets,
         raw: {}
       };
     }
   },
-  cursor: {
-    id: 'cursor',
-    label: 'Cursor',
+  {
+    id: 'cursor-rules',
+    label: 'Cursor Rules',
     icon: '🟣',
     description: '.cursorrules or .cursor/rules/ directory',
-    detect: (dir) => {
-      return fs.existsSync(path.join(dir, '.cursorrules')) ||
-        fs.existsSync(path.join(dir, '.cursor', 'rules'));
-    },
+    detect: (dir) => fs.existsSync(path.join(dir, '.cursorrules')) || fs.existsSync(path.join(dir, '.cursor', 'rules')),
     resolve: (dir, repoBase) => {
       const targets = [];
-      // .cursorrules is a plain-text file, wrap it as .md for indexing
       if (fs.existsSync(path.join(dir, '.cursorrules'))) {
         const src = path.join(dir, '.cursorrules');
         const dest = path.join(dir, '.cursorrules.md');
@@ -248,9 +334,9 @@ const FORMATS = {
       };
     }
   },
-  windsurf: {
-    id: 'windsurf',
-    label: 'Windsurf / Codeium',
+  {
+    id: 'windsurf-rules',
+    label: 'Windsurf Rules',
     icon: '🔵',
     description: '.windsurfrules file',
     detect: (dir) => fs.existsSync(path.join(dir, '.windsurfrules')),
@@ -271,15 +357,14 @@ const FORMATS = {
       };
     }
   },
-  copilot: {
-    id: 'copilot',
-    label: 'GitHub Copilot',
+  {
+    id: 'copilot-rules',
+    label: 'GitHub Copilot Rules',
     icon: '⚫',
     description: '.github/copilot-instructions.md',
     detect: (dir) => fs.existsSync(path.join(dir, '.github', 'copilot-instructions.md')),
     resolve: (dir, repoBase) => {
       const targets = ['./.github/copilot-instructions.md'];
-      // Also pick up any .md siblings in .github/
       try {
         for (const ent of fs.readdirSync(path.join(dir, '.github'), { withFileTypes: true })) {
           if (ent.isFile() && ent.name.endsWith('.md') && ent.name !== 'copilot-instructions.md') {
@@ -303,15 +388,12 @@ const FORMATS = {
       };
     }
   },
-  cline: {
-    id: 'cline',
-    label: 'Cline',
+  {
+    id: 'cline-rules',
+    label: 'Cline Rules',
     icon: '🟡',
     description: '.clinerules or .cline/ directory',
-    detect: (dir) => {
-      return fs.existsSync(path.join(dir, '.clinerules')) ||
-        fs.existsSync(path.join(dir, '.cline'));
-    },
+    detect: (dir) => fs.existsSync(path.join(dir, '.clinerules')) || fs.existsSync(path.join(dir, '.cline')),
     resolve: (dir, repoBase) => {
       const targets = [];
       if (fs.existsSync(path.join(dir, '.clinerules'))) {
@@ -335,15 +417,12 @@ const FORMATS = {
       };
     }
   },
-  aider: {
-    id: 'aider',
-    label: 'Aider',
+  {
+    id: 'aider-rules',
+    label: 'Aider Conventions',
     icon: '🟤',
     description: 'CONVENTIONS.md or .aider.conf.yml',
-    detect: (dir) => {
-      return fs.existsSync(path.join(dir, 'CONVENTIONS.md')) ||
-        fs.existsSync(path.join(dir, '.aider.conf.yml'));
-    },
+    detect: (dir) => fs.existsSync(path.join(dir, 'CONVENTIONS.md')) || fs.existsSync(path.join(dir, '.aider.conf.yml')),
     resolve: (dir, repoBase) => {
       const targets = [];
       if (fs.existsSync(path.join(dir, 'CONVENTIONS.md'))) targets.push('./CONVENTIONS.md');
@@ -375,38 +454,83 @@ const FORMATS = {
       };
     }
   }
-};
+];
 
 /**
- * Detect all plugin formats present in a cloned repository directory.
- * Returns an array of { id, label, icon, description } for each detected format.
+ * Scan a repository directory for all manifests and rule configurations.
+ * Returns an array of detected options.
  */
-export function detectFormats(repoDir) {
+export function detectFormats(repoDir, repoBase = '') {
   const detected = [];
-  for (const fmt of Object.values(FORMATS)) {
+  const base = repoBase || path.basename(repoDir);
+
+  // 1. Scan for JSON manifests across CLI ecosystems
+  for (const spec of MANIFEST_SPECS) {
+    for (const relPath of spec.paths) {
+      const fullPath = path.join(repoDir, relPath);
+      if (fs.existsSync(fullPath)) {
+        const meta = readManifest(fullPath, base);
+        if (meta) {
+          detected.push({
+            id: spec.id,
+            type: 'manifest',
+            manifestPath: relPath,
+            manifestFullPath: fullPath,
+            label: `${spec.label}`,
+            icon: spec.icon,
+            description: `${relPath} (name: "${meta.name}")`,
+            meta
+          });
+          break; // Use the highest priority path found for this spec
+        }
+      }
+    }
+  }
+
+  // 2. Scan rule-file based formats if no manifests found, or as secondary options
+  if (!detected.length) {
+    for (const spec of RULE_SPECS) {
+      try {
+        if (spec.detect(repoDir)) {
+          detected.push({
+            id: spec.id,
+            type: 'rules',
+            manifestPath: null,
+            manifestFullPath: null,
+            label: spec.label,
+            icon: spec.icon,
+            description: spec.description || spec.label,
+            resolver: spec.resolve
+          });
+        }
+      } catch {}
+    }
+  }
+
+  // 3. Fallback: check if loose .md files exist in root
+  if (!detected.length) {
     try {
-      if (fmt.detect(repoDir)) {
-        detected.push({ id: fmt.id, label: fmt.label, icon: fmt.icon, description: fmt.description });
+      const entries = fs.readdirSync(repoDir, { withFileTypes: true });
+      if (entries.some(e => e.isFile() && e.name.endsWith('.md'))) {
+        detected.push({
+          id: 'generic',
+          type: 'generic',
+          manifestPath: null,
+          manifestFullPath: null,
+          label: 'Generic Markdown',
+          icon: '📄',
+          description: 'Loose markdown playbooks in repository root'
+        });
       }
     } catch {}
   }
+
   return detected;
 }
 
 /**
  * Install a community plugin from a Git repository.
- *
- * Supports multiple plugin formats:
- *   levi (.levi-plugins/plugin.json), claude (CLAUDE.md), codex (AGENTS.md/codex.md),
- *   cursor (.cursorrules), windsurf (.windsurfrules), copilot (.github/copilot-instructions.md),
- *   cline (.clinerules), aider (CONVENTIONS.md)
- *
- * Lifecycle:
- *   1. Clones into ~/.levi/PLUGINS/.tmp-*
- *   2. Detects available formats
- *   3. If `format` is specified, uses that; if only one detected, uses it; if multiple, returns needsChoice
- *   4. Resolves format → manifest + target paths
- *   5. Renames folder to canonical name, scans & indexes files
+ * Scans for manifests, prompts for choice if multiple are found, and indexes playbooks.
  */
 export async function installPlugin(repoUrl, { onProgress = null, format = null } = {}) {
   if (!repoUrl || typeof repoUrl !== 'string') {
@@ -431,30 +555,36 @@ export async function installPlugin(repoUrl, { onProgress = null, format = null 
     return { ok: false, error: `Failed to clone repository: ${err.message}` };
   }
 
-  // Detect all formats present in the cloned repo
-  onProgress?.('Detecting plugin format...');
-  const detected = detectFormats(tempDirPath);
+  // Detect all manifests and formats present in cloned repo
+  onProgress?.('Scanning repository for plugin manifests...');
+  const detected = detectFormats(tempDirPath, repoBase);
 
   if (!detected.length) {
-    // Fallback: scan for any .md files in root
-    const hasAnyMd = fs.readdirSync(tempDirPath).some(f => f.endsWith('.md'));
-    if (!hasAnyMd) {
-      try { fs.rmSync(tempDirPath, { recursive: true, force: true }); } catch {}
-      return {
-        ok: false,
-        error: 'No recognized plugin format found. Supported: Levi (.levi-plugins/plugin.json), Claude Code (CLAUDE.md), Codex (AGENTS.md/codex.md), Cursor (.cursorrules), Windsurf (.windsurfrules), GitHub Copilot (.github/copilot-instructions.md), Cline (.clinerules), Aider (CONVENTIONS.md).'
-      };
-    }
-    // If there are loose .md files but no format marker, treat as generic
-    detected.push({ id: 'generic', label: 'Generic Markdown', icon: '📄', description: 'Loose .md files in repository root' });
+    try { fs.rmSync(tempDirPath, { recursive: true, force: true }); } catch {}
+    return {
+      ok: false,
+      error: 'No recognized plugin manifest or rules found. Supported: .levi-plugins/plugin.json, .claude-plugins/plugin.json, .codex-plugins/plugin.json, .cursor-plugins/plugin.json, .windsurf-plugins/plugin.json, .cline-plugins/plugin.json, .copilot-plugins/plugin.json, or plugin.json.'
+    };
   }
 
-  // Determine which format to use
-  let chosenFormat = format;
-  if (!chosenFormat && detected.length === 1) {
-    chosenFormat = detected[0].id;
-  } else if (!chosenFormat && detected.length > 1) {
-    // Return so the UI can ask the user to pick
+  // If a specific format was explicitly requested via CLI argument:
+  let chosenTarget = null;
+  if (format) {
+    const fStr = String(format).trim().toLowerCase();
+    chosenTarget = detected.find(d =>
+      d.id.toLowerCase() === fStr ||
+      d.id.toLowerCase().replace(/-rules$/, '') === fStr ||
+      (d.manifestPath && d.manifestPath.toLowerCase().includes(fStr)) ||
+      d.label.toLowerCase().includes(fStr)
+    );
+    if (!chosenTarget) {
+      // Allow passing a format ID directly even if not in the default detected list
+      chosenTarget = fStr;
+    }
+  }
+
+  // If no format specified and multiple manifests found: ask user to choose!
+  if (!chosenTarget && detected.length > 1) {
     return {
       ok: false,
       needsChoice: true,
@@ -465,27 +595,47 @@ export async function installPlugin(repoUrl, { onProgress = null, format = null 
     };
   }
 
-  return finalizeInstall(tempDirPath, cleanUrl, repoBase, chosenFormat, onProgress);
+  // If single format/manifest found, install directly
+  const target = chosenTarget || detected[0];
+  return finalizeInstall(tempDirPath, cleanUrl, repoBase, target, onProgress);
 }
 
 /**
- * Finalize plugin installation after format has been chosen.
- * Can be called directly when the user picks a format from the multi-choice prompt.
+ * Finalize plugin installation after format/manifest has been selected.
  */
-export function finalizeInstall(tempDirPath, cleanUrl, repoBase, chosenFormat, onProgress) {
-  // Resolve format to manifest + targets
-  let resolved;
-  const fmt = FORMATS[chosenFormat];
+export function finalizeInstall(tempDirPath, cleanUrl, repoBase, chosenFormatOrObj, onProgress) {
+  let resolved = null;
+  let chosenId = null;
+  let formatLabel = 'Generic';
+  let manifestRelPath = null;
 
-  if (fmt) {
-    try {
-      resolved = fmt.resolve(tempDirPath, repoBase);
-    } catch (err) {
-      try { fs.rmSync(tempDirPath, { recursive: true, force: true }); } catch {}
-      return { ok: false, error: `Failed to parse ${fmt.label} format: ${err.message}` };
+  if (chosenFormatOrObj && typeof chosenFormatOrObj === 'object') {
+    chosenId = chosenFormatOrObj.id;
+    formatLabel = chosenFormatOrObj.label || chosenId;
+    manifestRelPath = chosenFormatOrObj.manifestPath || null;
+    if (chosenFormatOrObj.meta) {
+      resolved = chosenFormatOrObj.meta;
+    } else if (chosenFormatOrObj.resolver) {
+      resolved = chosenFormatOrObj.resolver(tempDirPath, repoBase);
     }
-  } else {
-    // Generic fallback: index all .md files
+  } else if (typeof chosenFormatOrObj === 'string') {
+    chosenId = chosenFormatOrObj.trim().toLowerCase();
+    const detected = detectFormats(tempDirPath, repoBase);
+    const match = detected.find(d =>
+      d.id === chosenId ||
+      d.id.replace(/-rules$/, '') === chosenId ||
+      (d.manifestPath && d.manifestPath.toLowerCase().includes(chosenId)) ||
+      d.label.toLowerCase().includes(chosenId)
+    );
+    if (match) {
+      formatLabel = match.label;
+      manifestRelPath = match.manifestPath || null;
+      if (match.meta) resolved = match.meta;
+      else if (match.resolver) resolved = match.resolver(tempDirPath, repoBase);
+    }
+  }
+
+  if (!resolved) {
     resolved = {
       name: sanitizeName(repoBase),
       version: '1.0.0',
@@ -515,14 +665,16 @@ export function finalizeInstall(tempDirPath, cleanUrl, repoBase, chosenFormat, o
     return { ok: false, error: `Failed to finalize plugin directory: ${err.message}` };
   }
 
-  onProgress?.(`Installing as ${FORMATS[chosenFormat]?.label || 'Generic'} format...`);
+  onProgress?.(`Configuring playbooks for ${formatLabel}...`);
 
   const files = scanPluginTargets(finalDirPath, resolved.targetPaths);
 
   const meta = readPluginsMeta();
   meta.plugins[canonicalName] = {
     name: canonicalName,
-    format: chosenFormat,
+    format: chosenId || 'generic',
+    formatLabel,
+    manifestPath: manifestRelPath,
     version: resolved.version || '1.0.0',
     description: resolved.description || 'Community plugin',
     author: resolved.author || 'Unknown',
@@ -546,13 +698,12 @@ export function finalizeInstall(tempDirPath, cleanUrl, repoBase, chosenFormat, o
     retrieve({ query: 'sync', limit: 1, rebuild: false }).catch(() => {});
   }).catch(() => {});
 
-  const formatLabel = FORMATS[chosenFormat]?.label || 'Generic';
-
   return {
     ok: true,
     name: canonicalName,
-    format: chosenFormat,
+    format: chosenId || 'generic',
     formatLabel,
+    manifestPath: manifestRelPath,
     version: resolved.version || '1.0.0',
     description: resolved.description || '',
     author: resolved.author || 'Unknown',
@@ -563,7 +714,7 @@ export function finalizeInstall(tempDirPath, cleanUrl, repoBase, chosenFormat, o
 }
 
 /**
- * List all installed plugins.
+ * List all installed plugins. Auto-recovers metadata if missing.
  */
 export function listPlugins() {
   ensurePluginsDir();
@@ -579,21 +730,23 @@ export function listPlugins() {
       if (!ent.isDirectory()) continue;
 
       const pluginDir = path.join(PLUGINS_DIR, ent.name);
-      const manifestPath = path.join(pluginDir, '.levi-plugins', 'plugin.json');
-      if (!fs.existsSync(manifestPath)) continue;
-
       let record = meta.plugins[ent.name];
+
+      // Auto-recover if record was missing from plugins.json
       if (!record) {
-        try {
-          const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf-8'));
-          const targetPaths = Array.isArray(manifest.plugins) ? manifest.plugins : ['./'];
-          const files = scanPluginTargets(pluginDir, targetPaths);
+        const detected = detectFormats(pluginDir, ent.name);
+        if (detected.length) {
+          const first = detected[0];
+          const files = scanPluginTargets(pluginDir, first.meta?.targetPaths || ['./']);
           record = {
             name: ent.name,
-            version: manifest.version || '1.0.0',
-            description: manifest.description || '',
-            author: manifest.author || 'Unknown',
-            targetPaths,
+            format: first.id,
+            formatLabel: first.label,
+            manifestPath: first.manifestPath || null,
+            version: first.meta?.version || '1.0.0',
+            description: first.meta?.description || '',
+            author: first.meta?.author || 'Unknown',
+            targetPaths: first.meta?.targetPaths || ['./'],
             installedAt: new Date().toISOString(),
             updatedAt: new Date().toISOString(),
             filesCount: files.length,
@@ -607,7 +760,7 @@ export function listPlugins() {
           };
           meta.plugins[ent.name] = record;
           changed = true;
-        } catch {}
+        }
       }
 
       if (record) {
@@ -658,22 +811,39 @@ export async function updatePlugin(name, { onProgress = null } = {}) {
     return { ok: false, error: `git pull failed: ${err.message}` };
   }
 
-  const manifestPath = path.join(pluginDir, '.levi-plugins', 'plugin.json');
-  let manifest = {};
-  try {
-    manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf-8'));
-  } catch {}
-
-  const targetPaths = Array.isArray(manifest.plugins) ? manifest.plugins : ['./'];
-  const files = scanPluginTargets(pluginDir, targetPaths);
-
   const meta = readPluginsMeta();
+  const existing = meta.plugins[clean] || {};
+
+  let targetPaths = existing.targetPaths || ['./'];
+  let version = existing.version || '1.0.0';
+  let description = existing.description || '';
+  let author = existing.author || 'Unknown';
+
+  if (existing.manifestPath && fs.existsSync(path.join(pluginDir, existing.manifestPath))) {
+    const manifest = readManifest(path.join(pluginDir, existing.manifestPath), clean);
+    if (manifest) {
+      targetPaths = manifest.targetPaths;
+      version = manifest.version || version;
+      description = manifest.description || description;
+      author = manifest.author || author;
+    }
+  } else {
+    const detected = detectFormats(pluginDir, clean);
+    if (detected.length && detected[0].meta) {
+      targetPaths = detected[0].meta.targetPaths;
+      version = detected[0].meta.version || version;
+      description = detected[0].meta.description || description;
+      author = detected[0].meta.author || author;
+    }
+  }
+
+  const files = scanPluginTargets(pluginDir, targetPaths);
   meta.plugins[clean] = {
-    ...(meta.plugins[clean] || {}),
+    ...existing,
     name: clean,
-    version: manifest.version || meta.plugins[clean]?.version || '1.0.0',
-    description: manifest.description || meta.plugins[clean]?.description || '',
-    author: manifest.author || meta.plugins[clean]?.author || 'Unknown',
+    version,
+    description,
+    author,
     updatedAt: new Date().toISOString(),
     filesCount: files.length,
     files: files.map((f) => ({
@@ -686,7 +856,7 @@ export async function updatePlugin(name, { onProgress = null } = {}) {
   };
   writePluginsMeta(meta);
 
-  return { ok: true, name: clean, filesCount: files.length, version: manifest.version || '1.0.0' };
+  return { ok: true, name: clean, filesCount: files.length, version };
 }
 
 /**
