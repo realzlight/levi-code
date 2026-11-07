@@ -149,6 +149,7 @@ function listSources() {
         out.push({ path: path.join(skillsDir, ent.name), kind: 'skill', session: '' });
       }
     }
+  } catch {}
   try {
     const pluginsMetaFile = path.join(HOME, 'plugins.json');
     if (fs.existsSync(pluginsMetaFile)) {
