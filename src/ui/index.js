@@ -1763,6 +1763,7 @@ function App({ mascot }) {
   if (form && form.mode === 'changelog') {
     return h(ChangelogViewer, {
       content: form.content,
+      title: form.title,
       width: terminalWidth,
       height: terminalHeight,
       scrollRef: changelogScrollRef,

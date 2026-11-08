@@ -3,13 +3,16 @@ import { Box, Text, useInput } from 'ink';
 
 const h = React.createElement;
 
-const CYAN = '#afd7ff';
-const WHITE = '#ffffff';
-const SOFT = '#c4c4c4';
-const GRAY = '#777777';
-const DIM = '#334455';
+const AMBER_LINE = '#f59e0b';
+const CYAN = '#38bdf8';
+const WHITE = '#f8fafc';
+const SOFT = '#cbd5e1';
+const MUTED = '#94a3b8';
+const GRAY = '#888888';
+const DIM = '#64748b';
 const GREEN = '#4ade80';
 const RED = '#f87171';
+const GOLD = '#fbbf24';
 
 function parseDiffToLines(diffText, maxWidth) {
   const rawLines = (diffText || '').split('\n');
@@ -77,12 +80,10 @@ function parseDiffToLines(diffText, maxWidth) {
 export default function DiffViewer({ diffText, onClose, width, height, scrollRef }) {
   const [offset, setOffset] = useState(0);
 
-  const usableWidth = Math.max(10, (width || 80) - 4);
-  const totalHeight = Math.max(6, height || 24);
-
-  const hasDividers = totalHeight >= 12;
-  const fixedRows = hasDividers ? 6 : 4;
-  const visibleLinesCount = Math.max(1, totalHeight - fixedRows);
+  const safeW = Math.max(30, width || 80);
+  const usableWidth = safeW - 2; // account for paddingX: 1
+  const totalHeight = Math.max(8, height || 24);
+  const visibleLinesCount = Math.max(1, totalHeight - 4); // 1 top rule + 1 header + visible + 1 bottom rule + 1 footer = totalHeight
 
   const allVisualLines = useMemo(() => {
     return parseDiffToLines(diffText, usableWidth);
@@ -172,11 +173,12 @@ export default function DiffViewer({ diffText, onClose, width, height, scrollRef
     Box,
     {
       flexDirection: 'column',
-      width,
-      height: totalHeight,
-      borderStyle: 'round',
-      borderColor: CYAN
+      width: safeW,
+      height: totalHeight
     },
+
+    // Top edge-to-edge yellowish-orange line
+    h(Text, { color: AMBER_LINE }, '─'.repeat(safeW)),
 
     // Header bar
     h(
@@ -190,22 +192,21 @@ export default function DiffViewer({ diffText, onClose, width, height, scrollRef
       h(
         Box,
         null,
-        h(Text, { color: CYAN, bold: true }, '☾ LEVI '),
-        h(Text, { color: WHITE, bold: true }, 'DIFF REVIEWER')
+        h(Text, { color: AMBER_LINE, bold: true }, 'DIFF REVIEWER'),
+        h(Text, { color: DIM }, ' · '),
+        h(Text, { color: MUTED }, `${totalLines} lines`)
       ),
-      h(Text, { color: GRAY }, 'Esc/q to close')
+      h(
+        Box,
+        null,
+        maxOffset > 0
+          ? h(Text, { color: GOLD }, `[${clampedOffset + 1}–${Math.min(clampedOffset + visibleLinesCount, totalLines)} of ${totalLines}] · `)
+          : null,
+        h(Text, { color: DIM }, 'esc close')
+      )
     ),
 
-    // Top divider
-    hasDividers
-      ? h(
-          Box,
-          { height: 1, paddingX: 1, flexShrink: 0 },
-          h(Text, { color: DIM }, '─'.repeat(usableWidth))
-        )
-      : null,
-
-    // Content area
+    // Content area (fixed visibleLinesCount rows, height: 1 per line, zero flicker)
     h(
       Box,
       {
@@ -218,14 +219,8 @@ export default function DiffViewer({ diffText, onClose, width, height, scrollRef
       ...renderedLines
     ),
 
-    // Bottom divider
-    hasDividers
-      ? h(
-          Box,
-          { height: 1, paddingX: 1, flexShrink: 0 },
-          h(Text, { color: DIM }, '─'.repeat(usableWidth))
-        )
-      : null,
+    // Bottom edge-to-edge yellowish-orange line
+    h(Text, { color: AMBER_LINE }, '─'.repeat(safeW)),
 
     // Footer bar
     h(
@@ -236,27 +231,12 @@ export default function DiffViewer({ diffText, onClose, width, height, scrollRef
         justifyContent: 'space-between',
         flexShrink: 0
       },
-      maxOffset === 0
-        ? h(
-            Box,
-            null,
-            h(Text, { color: CYAN }, '● All diff shown ('),
-            h(Text, { color: SOFT }, `${totalLines} lines`),
-            h(Text, { color: CYAN }, ')')
-          )
-        : h(
-            Box,
-            null,
-            h(Text, { color: CYAN, bold: true }, '▲ '),
-            h(Text, { color: SOFT }, `${clampedOffset + 1}–${Math.min(clampedOffset + visibleLinesCount, totalLines)}/${totalLines} `),
-            h(Text, { color: CYAN }, `[${bar}] `),
-            h(Text, { color: GRAY }, `${pct}%`)
-          ),
       h(
         Text,
-        { color: GRAY },
-        usableWidth > 55 ? '↑↓/j/k PgUp/Dn Home/End • q/Esc exit' : '↑↓ scroll • q exit'
-      )
+        { color: DIM },
+        '↑↓/j/k scroll · pgup/pgdn page · g/G top/end · esc close'
+      ),
+      h(Text, { color: DIM }, '[esc close]')
     )
   );
 }

@@ -3,11 +3,24 @@ import { Box, Text, useInput } from 'ink';
 
 const h = React.createElement;
 
-const CYAN = '#afd7ff';
-const WHITE = '#ffffff';
-const SOFT = '#c4c4c4';
-const GRAY = '#777777';
-const DIM = '#334455';
+const AMBER_LINE = '#f59e0b'; // Claude Code yellowish-orange edge line
+const CYAN = '#38bdf8';
+const WHITE = '#f8fafc';
+const SOFT = '#cbd5e1';
+const MUTED = '#94a3b8';
+const GRAY = '#888888';
+const DIM = '#64748b';
+const GOLD = '#fbbf24';
+
+function detectGuideTitle(content) {
+  if (!content) return 'WALKTHROUGH GUIDE';
+  if (/Skill System|SKILL-WALKTHROUGH/i.test(content)) return 'SKILL SYSTEM WALKTHROUGH';
+  if (/Plugin System|PLUGIN-WALKTHROUGH/i.test(content)) return 'PLUGIN SYSTEM WALKTHROUGH';
+  if (/CHANGELOG/i.test(content)) return 'CHANGELOG';
+  const m = content.match(/^#\s+(.+)$/m);
+  if (m) return m[1].replace(/[*_#`✦]/g, '').trim();
+  return 'WALKTHROUGH GUIDE';
+}
 
 function parseInline(text, defaultColor = SOFT) {
   const tokens = [];
@@ -34,7 +47,7 @@ function parseInline(text, defaultColor = SOFT) {
   return tokens.length > 0 ? tokens : [{ text, color: defaultColor }];
 }
 
-function wrapTokens(tokens, maxWidth, indent = '    ') {
+function wrapTokens(tokens, maxWidth, indent = '  ') {
   const lines = [];
   let curLine = [];
   let curLen = 0;
@@ -110,8 +123,8 @@ function parseChangelogToLines(content, maxWidth) {
     if (trimmed.startsWith('# ')) {
       const title = trimmed.slice(2).trim();
       const sepLen = Math.min(maxWidth, Math.max(20, title.length + 8));
-      allVisualLines.push([{ text: `✦ ${title.toUpperCase()} ✦`, color: CYAN, bold: true }]);
-      allVisualLines.push([{ text: '═'.repeat(sepLen), color: CYAN }]);
+      allVisualLines.push([{ text: title.toUpperCase(), color: AMBER_LINE, bold: true }]);
+      allVisualLines.push([{ text: '─'.repeat(sepLen), color: AMBER_LINE }]);
       allVisualLines.push([{ text: ' ' }]);
       continue;
     }
@@ -130,28 +143,31 @@ function parseChangelogToLines(content, maxWidth) {
       const text = trimmed.slice(3).trim();
       ensureBlankLine();
       const toks = [
-        { text: '◆  ', color: CYAN, bold: true },
         ...parseInline(text, WHITE)
       ];
       toks.forEach((t) => { t.bold = true; });
-      allVisualLines.push(...wrapTokens(toks, maxWidth, '   '));
-      allVisualLines.push([{ text: '─'.repeat(Math.min(maxWidth, Math.max(16, text.length + 4))), color: GRAY }]);
+      allVisualLines.push(...wrapTokens(toks, maxWidth, ''));
+      allVisualLines.push([{ text: '─'.repeat(Math.min(maxWidth, Math.max(16, text.length + 4))), color: DIM }]);
       continue;
     }
 
     // Category subheaders (e.g. ### Added, ### Fixed, ### Changed)
     if (trimmed.startsWith('### ')) {
       const cat = trimmed.slice(4).trim();
-      const lower = cat.toLowerCase();
-      let icon = '▸ ';
-      if (lower.includes('added')) icon = '▲ ';
-      else if (lower.includes('fixed')) icon = '● ';
-      else if (lower.includes('changed') || lower.includes('updated')) icon = '■ ';
-      else if (lower.includes('removed') || lower.includes('deprecated')) icon = '✖ ';
-      else if (lower.includes('security')) icon = '🔒 ';
-
       ensureBlankLine();
-      allVisualLines.push([{ text: `  ${icon}${cat.toUpperCase()}`, color: CYAN, bold: true }]);
+      allVisualLines.push([{ text: cat.toUpperCase(), color: CYAN, bold: true }]);
+      continue;
+    }
+
+    // Table rows (e.g. | col | col |)
+    if (trimmed.startsWith('|') && trimmed.endsWith('|')) {
+      if (/^\|[-:\s|]+\|$/.test(trimmed)) {
+        allVisualLines.push([{ text: '─'.repeat(Math.min(maxWidth, trimmed.length)), color: DIM }]);
+      } else {
+        const cells = trimmed.split('|').slice(1, -1).map(c => c.trim());
+        const formatted = cells.join('   ·   ');
+        allVisualLines.push(...wrapTokens(parseInline(formatted, SOFT), maxWidth, '  '));
+      }
       continue;
     }
 
@@ -160,10 +176,10 @@ function parseChangelogToLines(content, maxWidth) {
       const text = trimmed.slice(2).trim();
       const inlineTokens = parseInline(text, SOFT);
       const bulletTokens = [
-        { text: '  • ', color: CYAN },
+        { text: '• ', color: CYAN },
         ...inlineTokens
       ];
-      allVisualLines.push(...wrapTokens(bulletTokens, maxWidth, '    '));
+      allVisualLines.push(...wrapTokens(bulletTokens, maxWidth, '  '));
       continue;
     }
 
@@ -172,18 +188,17 @@ function parseChangelogToLines(content, maxWidth) {
     allVisualLines.push(...wrapTokens(pTokens, maxWidth, ''));
   }
 
-  return allVisualLines.length > 0 ? allVisualLines : [[{ text: 'No entries in changelog.' }]];
+  return allVisualLines.length > 0 ? allVisualLines : [[{ text: 'No entries in document.' }]];
 }
 
-export default function ChangelogViewer({ content, onClose, width, height, scrollRef }) {
+export default function ChangelogViewer({ content, title, onClose, width, height, scrollRef }) {
   const [offset, setOffset] = useState(0);
 
-  const usableWidth = Math.max(10, (width || 80) - 4);
-  const totalHeight = Math.max(6, height || 24);
-
-  const hasDividers = totalHeight >= 12;
-  const fixedRows = hasDividers ? 6 : 4;
-  const visibleLinesCount = Math.max(1, totalHeight - fixedRows);
+  const displayTitle = title || detectGuideTitle(content);
+  const safeW = Math.max(30, width || 80);
+  const usableWidth = safeW - 2; // account for paddingX: 1
+  const totalHeight = Math.max(8, height || 24);
+  const visibleLinesCount = Math.max(1, totalHeight - 4); // 1 top line + 1 header + visibleLinesCount + 1 bottom line + 1 footer = totalHeight
 
   const allVisualLines = useMemo(() => {
     return parseChangelogToLines(content, usableWidth);
@@ -246,7 +261,7 @@ export default function ChangelogViewer({ content, onClose, width, height, scrol
     if (lineIndex < totalLines) {
       const tokens = allVisualLines[lineIndex];
       renderedLines.push(
-        h(Box, { key: `l-${lineIndex}`, height: 1 },
+        h(Box, { key: `l-${lineIndex}`, height: 1, width: '100%' },
           ...tokens.map((tok, j) =>
             h(Text, {
               key: `t-${j}`,
@@ -261,28 +276,23 @@ export default function ChangelogViewer({ content, onClose, width, height, scrol
       );
     } else {
       renderedLines.push(
-        h(Box, { key: `empty-${i}`, height: 1 },
+        h(Box, { key: `empty-${i}`, height: 1, width: '100%' },
           h(Text, null, ' ')
         )
       );
     }
   }
 
-  // Scrollbar track indicator
-  const pct = maxOffset > 0 ? Math.round((clampedOffset / maxOffset) * 100) : 100;
-  const barLength = Math.min(10, Math.max(5, Math.floor(usableWidth / 10)));
-  const thumbPos = maxOffset > 0 ? Math.min(barLength - 1, Math.round((clampedOffset / maxOffset) * (barLength - 1))) : barLength - 1;
-  const bar = '─'.repeat(thumbPos) + '█' + '─'.repeat(Math.max(0, barLength - 1 - thumbPos));
-
   return h(
     Box,
     {
       flexDirection: 'column',
-      width,
-      height: totalHeight,
-      borderStyle: 'round',
-      borderColor: CYAN
+      width: safeW,
+      height: totalHeight
     },
+
+    // Full edge-to-edge yellowish-orange line (Claude Code style)
+    h(Text, { color: AMBER_LINE }, '─'.repeat(safeW)),
 
     // Header bar
     h(
@@ -296,22 +306,21 @@ export default function ChangelogViewer({ content, onClose, width, height, scrol
       h(
         Box,
         null,
-        h(Text, { color: CYAN, bold: true }, '☾ LEVI '),
-        h(Text, { color: WHITE, bold: true }, 'CHANGELOG')
+        h(Text, { color: AMBER_LINE, bold: true }, displayTitle.toUpperCase()),
+        h(Text, { color: DIM }, ' · '),
+        h(Text, { color: MUTED }, `${totalLines} lines`)
       ),
-      h(Text, { color: GRAY }, 'Esc/q to close')
+      h(
+        Box,
+        null,
+        maxOffset > 0
+          ? h(Text, { color: GOLD }, `[${clampedOffset + 1}–${Math.min(clampedOffset + visibleLinesCount, totalLines)} of ${totalLines}] · `)
+          : null,
+        h(Text, { color: DIM }, 'esc close')
+      )
     ),
 
-    // Top divider
-    hasDividers
-      ? h(
-          Box,
-          { height: 1, paddingX: 1, flexShrink: 0 },
-          h(Text, { color: DIM }, '─'.repeat(usableWidth))
-        )
-      : null,
-
-    // Content area (guaranteed exact row height)
+    // Content area (strictly fixed visibleLinesCount rows, height: 1 per line, zero flicker)
     h(
       Box,
       {
@@ -324,14 +333,8 @@ export default function ChangelogViewer({ content, onClose, width, height, scrol
       ...renderedLines
     ),
 
-    // Bottom divider
-    hasDividers
-      ? h(
-          Box,
-          { height: 1, paddingX: 1, flexShrink: 0 },
-          h(Text, { color: DIM }, '─'.repeat(usableWidth))
-        )
-      : null,
+    // Bottom edge-to-edge yellowish-orange line
+    h(Text, { color: AMBER_LINE }, '─'.repeat(safeW)),
 
     // Footer bar
     h(
@@ -342,27 +345,12 @@ export default function ChangelogViewer({ content, onClose, width, height, scrol
         justifyContent: 'space-between',
         flexShrink: 0
       },
-      maxOffset === 0
-        ? h(
-            Box,
-            null,
-            h(Text, { color: CYAN }, '● All content shown ('),
-            h(Text, { color: SOFT }, `${totalLines} lines`),
-            h(Text, { color: CYAN }, ')')
-          )
-        : h(
-            Box,
-            null,
-            h(Text, { color: CYAN, bold: true }, '▲ '),
-            h(Text, { color: SOFT }, `${clampedOffset + 1}–${Math.min(clampedOffset + visibleLinesCount, totalLines)}/${totalLines} `),
-            h(Text, { color: CYAN }, `[${bar}] `),
-            h(Text, { color: GRAY }, `${pct}%`)
-          ),
       h(
         Text,
-        { color: GRAY },
-        usableWidth > 55 ? '↑↓/j/k PgUp/Dn Home/End • q/Esc exit' : '↑↓ scroll • q exit'
-      )
+        { color: DIM },
+        '↑↓/j/k scroll · pgup/pgdn page · g/G top/end · esc close'
+      ),
+      h(Text, { color: DIM }, '[esc close]')
     )
   );
 }

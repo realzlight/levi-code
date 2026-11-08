@@ -770,7 +770,7 @@ defineCommand({
     const clPath = nodePath.join(nodePath.dirname(__filename), '../../CHANGELOG.md');
     if (!existsSync(clPath)) return ctx.print('CHANGELOG.md not found at ' + clPath);
     const content = readFileSync(clPath, 'utf-8');
-    ctx.openForm({ mode: 'changelog', content });
+    ctx.openForm({ mode: 'changelog', title: 'Levi Changelog', content });
   }
 });
 
@@ -837,7 +837,7 @@ defineCommand({
     if (!existsSync(guidePath)) return ctx.print('SKILL-WALKTHROUGH.md not found at ' + guidePath);
     const content = readFileSync(guidePath, 'utf-8');
     if (ctx.openForm) {
-      ctx.openForm({ mode: 'changelog', content });
+      ctx.openForm({ mode: 'changelog', title: 'Skill System Walkthrough', content });
     } else {
       ctx.print(content);
     }
@@ -1052,7 +1052,7 @@ defineCommand({
     if (!existsSync(guidePath)) return ctx.print('PLUGIN-WALKTHROUGH.md not found at ' + guidePath);
     const content = readFileSync(guidePath, 'utf-8');
     if (ctx.openForm) {
-      ctx.openForm({ mode: 'changelog', content });
+      ctx.openForm({ mode: 'changelog', title: 'Plugin System Walkthrough', content });
     } else {
       ctx.print(content);
     }
@@ -1072,7 +1072,7 @@ defineCommand({
       const __filename = fileURLToPath(import.meta.url);
       const guidePath = nodePath.resolve(nodePath.dirname(__filename), '../../PLUGIN-WALKTHROUGH.md');
       if (existsSync(guidePath) && ctx.openForm) {
-        return ctx.openForm({ mode: 'changelog', content: readFileSync(guidePath, 'utf-8') });
+        return ctx.openForm({ mode: 'changelog', title: 'Plugin System Walkthrough', content: readFileSync(guidePath, 'utf-8') });
       }
       return ctx.print('No community plugins installed.\nUse /plugin:install <git-url> to install one, or run /plugin to view the guide.');
     }

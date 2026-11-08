@@ -73,6 +73,10 @@ program.action(async () => {
         await promptOptionalToolsInstall();
       }
     } catch {}
+
+    const { promptWorkspaceTrust } = await import('../src/ui/trust.js');
+    await promptWorkspaceTrust();
+
     await import('../src/ui/index.js');
   }
 });
