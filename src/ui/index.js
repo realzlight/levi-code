@@ -161,9 +161,14 @@ const CP_EFFORTS = {
   xhigh:  { glyph: '◉', label: 'xhigh · /effort' },
   max:    { glyph: '◈', label: 'max · /effort' },
 };
-function ClaudePrompt({ value, width }) {
-  const display = value + '\u2588';
-  const lines = display.split('\n');
+function ClaudePrompt({ value, cursor, width }) {
+  const cPos = typeof cursor === 'number' ? Math.max(0, Math.min(cursor, value.length)) : value.length;
+  const beforeCursor = value.slice(0, cPos);
+  const cursorLineIdx = (beforeCursor.match(/\n/g) || []).length;
+  const lastNl = beforeCursor.lastIndexOf('\n');
+  const cursorCol = lastNl === -1 ? cPos : cPos - lastNl - 1;
+
+  const lines = value.split('\n');
   const ruleWidth = Math.max(10, (width || 80) - 2);
 
   return h(Box, { flexDirection: 'column' },
@@ -171,7 +176,29 @@ function ClaudePrompt({ value, width }) {
     h(Text, { color: CP_RULE }, '\u2500'.repeat(ruleWidth)),
     // input lines
     h(Box, { flexDirection: 'column', paddingLeft: 0 },
-      lines.map((line, i) => h(Text, { key: i, color: CP_FG }, (i === 0 ? '\u276F ' : '  ') + line))
+      lines.map((line, i) => {
+        const prefix = (i === 0 ? '\u276F ' : '  ');
+        if (i !== cursorLineIdx) {
+          return h(Text, { key: i, color: CP_FG }, prefix + line);
+        }
+        const left = line.slice(0, cursorCol);
+        const charAt = line[cursorCol];
+        const right = line.slice(cursorCol + 1);
+
+        if (charAt !== undefined) {
+          return h(Text, { key: i },
+            h(Text, { color: CP_FG }, prefix + left),
+            h(Text, { backgroundColor: '#ffffff', color: '#000000', bold: true }, charAt),
+            h(Text, { color: CP_FG }, right)
+          );
+        } else {
+          return h(Text, { key: i },
+            h(Text, { color: CP_FG }, prefix + left),
+            h(Text, { color: '#ffffff', bold: true }, '\u2588'),
+            h(Text, { color: CP_FG }, right)
+          );
+        }
+      })
     ),
     // bottom rule
     h(Text, { color: CP_RULE }, '\u2500'.repeat(ruleWidth))
@@ -1131,6 +1158,7 @@ function App({ mascot }) {
   useEffect(() => { savedMessages = messages; }, [messages]);
 
   const [input, setInput] = useState('');
+  const [cursor, setCursor] = useState(0);
   const [scrollOffset, setScrollOffset] = useState(0);
   const targetScrollRef = React.useRef(0);
   const animTimerRef = React.useRef(null);
@@ -1152,6 +1180,11 @@ function App({ mascot }) {
   const { exit } = useApp();
   const { columns: terminalWidth, rows: terminalHeight } = useTerminalSize();
 
+  // Keep cursor clamped to input bounds
+  useEffect(() => {
+    setCursor((c) => Math.min(c, input.length));
+  }, [input]);
+
   // When the terminal resizes (keyboard up/down), snap to latest messages
   useEffect(() => {
     if (animTimerRef.current) clearTimeout(animTimerRef.current);
@@ -1170,7 +1203,11 @@ function App({ mascot }) {
   const matches = paletteOn ? filterCommands(input.slice(1)) : [];
   const active = Math.min(sel, Math.max(matches.length - 1, 0));
   useEffect(() => { setSel(0); setClosed(false); if (input.startsWith('/')) { setCommandOutput(null); setCommandScroll(0); } }, [input]);
-  const fill = (cmd) => setInput('/' + cmd.name + ' ');
+  const fill = (cmd) => {
+    const text = '/' + cmd.name + ' ';
+    setInput(text);
+    setCursor(text.length);
+  };
 
   async function runSlash(text) {
     const isAsyncJob = /^\/(plugin|plugins):(install|update)/i.test(text.trim());
@@ -1218,6 +1255,7 @@ function App({ mascot }) {
     setCommandOutput(null);
     setCommandScroll(0);
     setInput('');
+    setCursor(0);
     targetScrollRef.current = 0;
     setScrollOffset(0);
     setLatestInput(text);
@@ -1484,6 +1522,7 @@ function App({ mascot }) {
       // 3. If a slash command is being typed in the prompt, clear it without interrupting the agent
       if (input.startsWith('/')) {
         setInput('');
+        setCursor(0);
         setClosed(true);
         return;
       }
@@ -1526,16 +1565,61 @@ function App({ mascot }) {
       scrollTo(targetScrollRef.current - 6);
       return;
     }
+
+    if (key.leftArrow) {
+      setCursor((c) => Math.max(0, c - 1));
+      return;
+    }
+    if (key.rightArrow) {
+      setCursor((c) => Math.min(input.length, c + 1));
+      return;
+    }
+    if (key.name === 'home' || (key.ctrl && (char === 'a' || char === 'A')) || char === '\x01') {
+      const before = input.slice(0, cursor);
+      const lineStart = before.lastIndexOf('\n');
+      setCursor(lineStart === -1 ? 0 : lineStart + 1);
+      return;
+    }
+    if (key.name === 'end' || (key.ctrl && (char === 'e' || char === 'E')) || char === '\x05') {
+      const nextNl = input.indexOf('\n', cursor);
+      setCursor(nextNl === -1 ? input.length : nextNl);
+      return;
+    }
+
     if (key.upArrow) {
+      if (input.includes('\n')) {
+        const before = input.slice(0, cursor);
+        const lastNl = before.lastIndexOf('\n');
+        if (lastNl !== -1) {
+          const col = cursor - lastNl - 1;
+          const prevNl = input.lastIndexOf('\n', lastNl - 1);
+          const prevLineStart = prevNl === -1 ? 0 : prevNl + 1;
+          const prevLineLen = lastNl - prevLineStart;
+          setCursor(prevLineStart + Math.min(col, prevLineLen));
+          return;
+        }
+      }
       scrollTo(targetScrollRef.current + 2);
       return;
     }
     if (key.downArrow) {
+      if (input.includes('\n')) {
+        const nextNl = input.indexOf('\n', cursor);
+        if (nextNl !== -1) {
+          const before = input.slice(0, cursor);
+          const lastNl = before.lastIndexOf('\n');
+          const col = lastNl === -1 ? cursor : cursor - lastNl - 1;
+          const lineAfterNext = input.indexOf('\n', nextNl + 1);
+          const nextLineEnd = lineAfterNext === -1 ? input.length : lineAfterNext;
+          const nextLineLen = nextLineEnd - (nextNl + 1);
+          setCursor(nextNl + 1 + Math.min(col, nextLineLen));
+          return;
+        }
+      }
       scrollTo(targetScrollRef.current - 2);
       return;
     }
 
-    if (!key.return && (char === '\r' || char === '\n')) { submit(input); return; }
     if (key.return) {
       if (input.startsWith('/')) { submit(input); return; }
       if (key.ctrl || key.meta) {
@@ -1547,15 +1631,29 @@ function App({ mascot }) {
       if (atTouchesText) {
         submit(input.slice(0, -1));
       } else {
-        setInput((value) => value + '\n');
+        targetScrollRef.current = 0;
+        setScrollOffset(0);
+        setInput((value) => value.slice(0, cursor) + '\n' + value.slice(cursor));
+        setCursor((c) => c + 1);
       }
       return;
     }
 
-    if (key.backspace || key.delete) {
+    if (key.backspace) {
       targetScrollRef.current = 0;
       setScrollOffset(0);
-      setInput((value) => value.slice(0, -1));
+      if (cursor > 0) {
+        setInput((value) => value.slice(0, cursor - 1) + value.slice(cursor));
+        setCursor((c) => Math.max(0, c - 1));
+      }
+      return;
+    }
+    if (key.delete) {
+      targetScrollRef.current = 0;
+      setScrollOffset(0);
+      if (cursor < input.length) {
+        setInput((value) => value.slice(0, cursor) + value.slice(cursor + 1));
+      }
       return;
     }
 
@@ -1564,10 +1662,19 @@ function App({ mascot }) {
     }
 
     if (char) {
-      if (/[\x00-\x08\x0b-\x1f\x7f]/.test(char) || char.startsWith('\x1b')) return;
+      // Strip bracketed paste markers \x1b[200~ and \x1b[201~
+      let text = char.replace(/\x1b\[200~|\x1b\[201~/g, '');
+      if (text.startsWith('\x1b')) return;
+      // Normalize carriage returns: \r\n -> \n, \r -> \n
+      text = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+      // Strip control characters except newline and tab
+      text = text.replace(/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/g, '');
+      if (!text) return;
+
       targetScrollRef.current = 0;
       setScrollOffset(0);
-      setInput((value) => value + char);
+      setInput((value) => value.slice(0, cursor) + text + value.slice(cursor));
+      setCursor((c) => c + text.length);
     }
   });
 
@@ -1800,7 +1907,7 @@ function App({ mascot }) {
                 onCancel: () => setForm(null)
               })
             : h(ModelForm, { key: form.mode + (form.name ?? ''), mode: form.mode, name: form.name, onDone: () => setForm(null) }))
-        : h(ClaudePrompt, { value: input, width: terminalWidth })
+        : h(ClaudePrompt, { value: input, cursor, width: terminalWidth })
     ),
 
     h(Footer, { width: terminalWidth, model: activeModel() })
