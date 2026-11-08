@@ -6,7 +6,7 @@ import terminalImage from 'terminal-image';
 import { execaSync } from 'execa';
 import { setLatestInput } from './state.js';
 import { getCommands } from './commands.js';
-import Footer, { activeModel } from './Footer.js';
+import Footer, { activeModel, refreshGitDiff } from './Footer.js';
 import ModelForm from './ModelForm.js';
 import SessionPicker from './SessionPicker.js';
 import EffortPicker from './EffortPicker.js';
@@ -1209,6 +1209,7 @@ function App({ mascot }) {
     setCommandScroll(0);
     if (panel) setCommandOutput({ kind: 'panel', ...panel });
     else if (out) setCommandOutput({ kind: 'text', text: out });
+    refreshGitDiff(true);
   }
 
   function submit(raw) {
@@ -1315,6 +1316,7 @@ function App({ mascot }) {
             { role: 'agent', text: '...' }
           ]);
         } else if (kind === 'tool_result') {
+          refreshGitDiff(true);
           if (data.call?.name === 'spawn_subagent' || data.call?.name === 'message_subagent') {
             const role = data.call?.args?.role || 'subagent';
             setActiveSubagents((prev) => prev.filter((s) => s.role !== role));
@@ -1366,6 +1368,7 @@ function App({ mascot }) {
         }
       } finally {
         setActiveSubagents([]);
+        refreshGitDiff(true);
         if (abortControllerRef.current === abortController) {
           abortControllerRef.current = null;
         }
