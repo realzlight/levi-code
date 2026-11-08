@@ -1440,17 +1440,22 @@ function App({ mascot }) {
   const inputLines = (input + '\u2588').split('\n').length;
   // ClaudePrompt: 1 top rule + inputLines + 1 bottom rule = 2 + inputLines
   const inputAreaHeight = 2 + inputLines;
-  const footerHeight = 1;
+  const footerHeight = commandOutput ? 0 : 1;
   const commandOutputHeight = commandOutput
-    ? (commandOutput.kind === 'init'
-        ? 7 + (commandOutput.fields ? commandOutput.fields.length : 0)
-        : 3 + (commandOutput.fields ? 1 + commandOutput.fields.length : commandOutput.text.split('\n').length))
+    ? (commandOutput.kind === 'loading'
+        ? 2
+        : commandOutput.kind === 'panel' || commandOutput.kind === 'init'
+        ? 3 + (commandOutput.fields ? commandOutput.fields.length : 0)
+        : 3 + Math.min(
+            Math.min(Math.max((terminalHeight || 24) - 10, 5), 14),
+            (commandOutput.text ? commandOutput.text.split('\n').length : 1)
+          ))
     : 0;
 
   const formHeight = form
     ? (form.mode === 'compact' ? 9 : (form.mode === 'effort' ? 9 : (form.mode === 'find' ? 14 : (form.mode === 'config' || form.mode === 'settings' ? 11 : (form.mode.startsWith('mem-') ? 7 : 4)))))
     : 0;
-  const bottomAreaHeight = form ? formHeight : inputAreaHeight;
+  const bottomAreaHeight = commandOutput ? 0 : (form ? formHeight : inputAreaHeight);
   const subagentsHeight = activeSubagents.length > 0 ? activeSubagents.length * 4 : 0;
   const fixedHeight = headerHeight + headerMargin + bottomAreaHeight + footerHeight + (paletteOn ? slashMenuHeight(matches, active, terminalWidth) : 0) + commandOutputHeight + subagentsHeight;
   const rawAvailable = Math.max(1, terminalHeight - fixedHeight);
@@ -1539,6 +1544,11 @@ function App({ mascot }) {
     }
 
     if (commandOutput) {
+      if (char === 'q' || char === 'Q') {
+        setCommandOutput(null);
+        setCommandScroll(0);
+        return;
+      }
       if (key.pageUp) {
         setCommandScroll((s) => Math.max(0, s - 6));
         return;
@@ -1639,7 +1649,12 @@ function App({ mascot }) {
       return;
     }
 
-    if (key.backspace) {
+    // In Linux/Android/Termux, Backspace sends \x7f or \b, which Ink parses as key.name='delete' with code=undefined!
+    // The physical PC Forward-Delete key sends escape sequence \x1b[3~ with code='[3~'.
+    const isForwardDelete = Boolean(key.delete && key.code === '[3~');
+    const isBackspace = Boolean(key.backspace || (!isForwardDelete && (key.delete || char === '\x7f' || char === '\b')));
+
+    if (isBackspace) {
       targetScrollRef.current = 0;
       setScrollOffset(0);
       if (cursor > 0) {
@@ -1648,7 +1663,7 @@ function App({ mascot }) {
       }
       return;
     }
-    if (key.delete) {
+    if (isForwardDelete) {
       targetScrollRef.current = 0;
       setScrollOffset(0);
       if (cursor < input.length) {
@@ -1907,10 +1922,10 @@ function App({ mascot }) {
                 onCancel: () => setForm(null)
               })
             : h(ModelForm, { key: form.mode + (form.name ?? ''), mode: form.mode, name: form.name, onDone: () => setForm(null) }))
-        : h(ClaudePrompt, { value: input, cursor, width: terminalWidth })
+        : (commandOutput ? null : h(ClaudePrompt, { value: input, cursor, width: terminalWidth }))
     ),
 
-    h(Footer, { width: terminalWidth, model: activeModel() })
+    commandOutput ? null : h(Footer, { width: terminalWidth, model: activeModel() })
   );
 }
 

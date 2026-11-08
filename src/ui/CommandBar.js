@@ -2,15 +2,15 @@ import React, { useState, useEffect } from 'react';
 import { Box, Text } from 'ink';
 
 const h = React.createElement;
-const CARD_COLOR = '#afd7ff';
+const AMBER_LINE = '#f59e0b'; // Claude Code yellowish-orange edge line
 const GRAY = '#888888';
 const GREEN = '#4ade80';
-const GOLD = '#ffd700';
+const GOLD = '#fbbf24';
 const CYAN = '#38bdf8';
 const DIM = '#64748b';
-const WHITE = '#f3f4f6';
-
-const SPARKS = ['✦', '✧', '★', '☆', '✶', '✸', '✹', '✺'];
+const WHITE = '#f8fafc';
+const MUTED = '#94a3b8';
+const RED = '#f87171';
 
 function detectTitle(text) {
   if (!text) return 'Command Output';
@@ -145,76 +145,74 @@ export default function CommandBar({ output, scrollOffset = 0, width = 80, heigh
     return () => clearInterval(timer);
   }, [isAnimated]);
 
-  const spark = SPARKS[frame % SPARKS.length];
   const spinner = SPINNERS[frame % SPINNERS.length];
   const safeWidth = Math.max(30, width || 80);
-  const contentWidth = safeWidth - 4; // account for border + padding
+  const contentWidth = safeWidth - 2;
 
+  // 1. Text Output (e.g. /help, /cs, shell output, markdown)
   if (output.kind === 'text') {
     const title = output.title || detectTitle(output.text);
     const rows = parseAndWrapLines(output.text, contentWidth);
-    const maxRows = Math.min(Math.max((height || 24) - 9, 5), 14);
+    const maxRows = Math.min(Math.max((height || 24) - 10, 5), 14);
     const maxScroll = Math.max(0, rows.length - maxRows);
     const currentScroll = Math.min(Math.max(0, scrollOffset || 0), maxScroll);
     const visibleRows = rows.slice(currentScroll, currentScroll + maxRows);
-
     const isScrollable = rows.length > maxRows;
-    const pct = isScrollable ? Math.round(((currentScroll + visibleRows.length) / rows.length) * 100) : 100;
 
-    // Mini scrollbar indicator (8 chars)
-    const barLen = 8;
-    const fillLen = Math.max(1, Math.round((visibleRows.length / rows.length) * barLen));
-    const startPos = Math.round((currentScroll / Math.max(1, rows.length)) * (barLen - fillLen));
-    const scrollbar = isScrollable
-      ? '░'.repeat(Math.max(0, startPos)) + '█'.repeat(fillLen) + '░'.repeat(Math.max(0, barLen - startPos - fillLen))
-      : '';
+    return h(Box, { flexDirection: 'column', width: '100%' },
+      // Full edge-to-edge yellowish-orange line (Claude Code style)
+      h(Text, { color: AMBER_LINE }, '─'.repeat(safeWidth)),
 
-    return h(Box, { flexDirection: 'column', borderStyle: 'round', borderColor: CARD_COLOR, paddingX: 1, width: '100%' },
-      // Header
-      h(Box, { justifyContent: 'space-between', marginBottom: 1 },
-        h(Text, { color: CARD_COLOR, bold: true }, `✦ ${title}`),
-        h(Text, { color: GRAY },
+      // Clean top header bar
+      h(Box, { justifyContent: 'space-between', width: '100%', paddingX: 1 },
+        h(Box, null,
+          h(Text, { color: AMBER_LINE, bold: true }, title.toUpperCase()),
+          h(Text, { color: DIM }, ' · '),
+          h(Text, { color: MUTED }, `${rows.length} ${rows.length === 1 ? 'item' : 'items'}`)
+        ),
+        h(Box, null,
           isScrollable
-            ? `[${currentScroll + 1}-${currentScroll + visibleRows.length} of ${rows.length}]`
-            : `[${rows.length} ${rows.length === 1 ? 'line' : 'lines'}]`
+            ? h(Text, { color: GOLD }, `[${currentScroll + 1}-${currentScroll + visibleRows.length} of ${rows.length}]`)
+            : null,
+          h(Text, { color: DIM }, isScrollable ? ' · ↑↓ scroll' : ' · done')
         )
       ),
 
-      // Scrollable content area
-      h(Box, { flexDirection: 'column', marginBottom: 1 },
+      // Scrollable content area (clean typography, no clutter symbols)
+      h(Box, { flexDirection: 'column', width: '100%', paddingX: 1, marginY: 0 },
         visibleRows.map((r, i) => {
           if (r.type === 'code_match') {
-            return h(Box, { key: i, flexDirection: 'row' },
-              h(Text, { color: CYAN, bold: true }, r.loc + ' '),
+            return h(Box, { key: i, flexDirection: 'row', width: '100%' },
+              h(Text, { color: CYAN, bold: true }, r.loc.padEnd(28, ' ')),
               h(Text, { color: WHITE }, r.text)
             );
           }
           if (r.type === 'continuation') {
-            return h(Box, { key: i, flexDirection: 'row' },
+            return h(Box, { key: i, flexDirection: 'row', width: '100%' },
               h(Text, { color: DIM }, '    '),
               h(Text, { color: '#cbd5e1' }, r.text)
             );
           }
           if (r.type === 'header_tag') {
-            return h(Box, { key: i, flexDirection: 'row' },
-              h(Text, { color: CARD_COLOR, bold: true }, r.tag + ' '),
+            return h(Box, { key: i, flexDirection: 'row', width: '100%' },
+              h(Text, { color: AMBER_LINE, bold: true }, r.tag + ' '),
               h(Text, { color: WHITE, bold: true }, r.text)
             );
           }
           if (r.type === 'tag') {
-            return h(Box, { key: i, flexDirection: 'row' },
+            return h(Box, { key: i, flexDirection: 'row', width: '100%' },
               h(Text, { color: GREEN, bold: true }, r.tag + ' '),
               h(Text, { color: '#e2e8f0' }, r.text)
             );
           }
           if (r.type === 'cmd') {
-            return h(Box, { key: i, flexDirection: 'row' },
-              h(Text, { color: CYAN, bold: true }, r.cmd + '  '),
-              h(Text, { color: '#94a3b8' }, r.text)
+            return h(Box, { key: i, flexDirection: 'row', width: '100%' },
+              h(Text, { color: CYAN, bold: true }, r.cmd.padEnd(22, ' ')),
+              h(Text, { color: MUTED }, r.text)
             );
           }
           if (r.type === 'error') {
-            return h(Text, { key: i, color: '#f87171', bold: true }, r.text);
+            return h(Text, { key: i, color: RED, bold: true }, r.text);
           }
           if (r.type === 'empty') {
             return h(Text, { key: i }, ' ');
@@ -223,100 +221,68 @@ export default function CommandBar({ output, scrollOffset = 0, width = 80, heigh
         })
       ),
 
-      // Footer
-      h(Box, { justifyContent: 'space-between' },
-        isScrollable
-          ? h(Box, null,
-              h(Text, { color: CYAN }, scrollbar + ' '),
-              h(Text, { color: GOLD }, `${pct}% `),
-              h(Text, { color: GRAY }, '· ↑↓ / swipe to scroll')
-            )
-          : h(Text, { color: GRAY }, 'Done'),
-        h(Text, { color: GRAY }, 'Esc to close')
+      // Clean bottom helper bar
+      h(Box, { justifyContent: 'space-between', width: '100%', paddingX: 1 },
+        h(Text, { color: DIM }, isScrollable ? '↑↓ line · pgup/pgdn page · esc close' : 'Ready · esc to return to prompt'),
+        h(Text, { color: DIM }, '[esc close]')
       )
     );
   }
 
-  // Specialized animated init layout
-  if (output.kind === 'init') {
-    const barLength = Math.min(22, Math.max(12, Math.floor(contentWidth * 0.4)));
-    const fillCount = Math.min(barLength, Math.max(3, Math.floor(((frame % 30) + 1) * 2.5)));
-    const pct = Math.min(100, Math.floor((fillCount / barLength) * 100));
-
-    return h(Box, { flexDirection: 'column', borderStyle: 'round', borderColor: CARD_COLOR, paddingX: 1, width: '100%' },
-      h(Box, { justifyContent: 'space-between', marginBottom: 1 },
-        h(Text, { color: CARD_COLOR, bold: true },
-          `${spark} `,
-          output.title || 'LEVI Workspace Initialized'
-        ),
-        h(Text, { color: GREEN, bold: true }, '[✓ Ready]')
-      ),
-      h(Box, { marginBottom: 1 },
-        h(Text, { color: CARD_COLOR }, '  Progress: '),
-        h(Text, { color: GREEN }, '█'.repeat(fillCount)),
-        h(Text, { color: '#333333' }, '░'.repeat(Math.max(0, barLength - fillCount))),
-        h(Text, { color: pct === 100 ? GREEN : GOLD }, ` ${pct}%`)
-      ),
-      (output.fields || []).map((f, i) =>
-        h(Box, { key: i, flexDirection: 'row' },
-          h(Text, { color: CARD_COLOR }, '  ▸ '),
-          h(Text, { color: CARD_COLOR }, (f.label + ': ').padEnd(16, ' ')),
-          h(Text, { color: f.color || 'white', wrap: 'wrap' }, f.value)
-        )
-      ),
-      h(Box, { marginTop: 1 },
-        h(Text, { color: GRAY }, '  Esc to close · Ready for pair programming')
-      )
-    );
-  }
-
-  // Animated loading card
-  if (output.kind === 'loading') {
-    return h(Box, { flexDirection: 'column', borderStyle: 'round', borderColor: '#38bdf8', paddingX: 1, width: '100%' },
-      h(Box, { justifyContent: 'space-between', marginBottom: 1 },
-        h(Box, null,
-          h(Text, { color: '#38bdf8', bold: true }, `${spinner} `),
-          h(Text, { color: 'white', bold: true }, output.title || 'Working...')
-        ),
-        h(Text, { color: '#fbbf24', bold: true }, '[In Progress]')
-      ),
-      output.subtitle
-        ? h(Box, { marginBottom: 1 },
-            h(Text, { color: '#38bdf8' }, '  ▸ '),
-            h(Text, { color: '#cbd5e1' }, output.subtitle)
-          )
-        : null,
-      h(Box, { marginTop: 1, justifyContent: 'flex-end' },
-        h(Text, { color: '#64748b' }, 'Please wait · Esc to dismiss')
-      )
-    );
-  }
-
-  // Standard panel
+  // 2. Structured panel (e.g. /plugin:list, /config, /init)
   const isInstalled = output.status === 'INSTALLED';
   const isUpdated = output.status === 'UPDATED';
   const isRemoved = output.status === 'REMOVED';
   const isCatalog = output.status === 'CATALOG';
 
-  const borderColor = isRemoved ? '#f87171' : (isInstalled || isUpdated) ? '#4ade80' : isCatalog ? '#a78bfa' : CARD_COLOR;
-  const statusColor = isRemoved ? '#f87171' : (isInstalled || isUpdated) ? '#4ade80' : isCatalog ? '#a78bfa' : GREEN;
+  const statusColor = isRemoved ? RED : (isInstalled || isUpdated) ? GREEN : isCatalog ? '#a78bfa' : GOLD;
 
-  return h(Box, { flexDirection: 'column', borderStyle: 'round', borderColor, paddingX: 1, width: '100%' },
-    h(Box, { justifyContent: 'space-between', marginBottom: 1 },
-      h(Text, { color: borderColor, bold: true }, `✦ ${output.title || 'LEVI'}`),
-      output.status
-        ? h(Text, { color: statusColor, bold: true }, `[${output.status}]`)
-        : h(Text, { color: GRAY }, '[Esc to close]')
-    ),
-    (output.fields || []).map((f, i) =>
-      h(Box, { key: i, flexDirection: 'row' },
-        h(Text, { color: f.labelColor || borderColor }, '▸ '),
-        h(Text, { color: f.labelColor || borderColor }, f.label + ': '),
-        h(Text, { color: f.color || 'white', wrap: 'wrap' }, f.value)
+  if (output.kind === 'panel' || output.kind === 'init') {
+    return h(Box, { flexDirection: 'column', width: '100%' },
+      // Full edge-to-edge yellowish-orange line
+      h(Text, { color: AMBER_LINE }, '─'.repeat(safeWidth)),
+
+      // Clean header
+      h(Box, { justifyContent: 'space-between', width: '100%', paddingX: 1 },
+        h(Box, null,
+          h(Text, { color: AMBER_LINE, bold: true }, (output.title || 'LEVI').toUpperCase()),
+          output.status ? h(Text, { color: statusColor, bold: true }, ` · ${output.status}`) : null
+        ),
+        h(Text, { color: DIM }, 'esc close')
+      ),
+
+      // Clean field rows (no clutter symbols!)
+      h(Box, { flexDirection: 'column', width: '100%', paddingX: 1, marginY: 0 },
+        (output.fields || []).map((f, i) =>
+          h(Box, { key: i, flexDirection: 'row', width: '100%' },
+            h(Text, { color: CYAN, bold: true }, (f.label + ':').padEnd(18, ' ')),
+            h(Text, { color: f.color || WHITE, wrap: 'wrap' }, f.value)
+          )
+        )
+      ),
+
+      // Bottom bar
+      h(Box, { justifyContent: 'space-between', width: '100%', paddingX: 1 },
+        h(Text, { color: DIM }, 'Ready · esc to return to prompt'),
+        h(Text, { color: DIM }, '[esc close]')
       )
-    ),
-    h(Box, { marginTop: 1, justifyContent: 'flex-end' },
-      h(Text, { color: GRAY }, 'Esc to close')
-    )
-  );
+    );
+  }
+
+  // 3. Animated loading state (e.g. /plugin:install)
+  if (output.kind === 'loading') {
+    return h(Box, { flexDirection: 'column', width: '100%' },
+      h(Text, { color: AMBER_LINE }, '─'.repeat(safeWidth)),
+      h(Box, { justifyContent: 'space-between', width: '100%', paddingX: 1 },
+        h(Box, null,
+          h(Text, { color: GOLD, bold: true }, `${spinner} `),
+          h(Text, { color: WHITE, bold: true }, output.title || 'Working...'),
+          output.subtitle ? h(Text, { color: MUTED }, ` — ${output.subtitle}`) : null
+        ),
+        h(Text, { color: DIM }, 'esc dismiss')
+      )
+    );
+  }
+
+  return null;
 }
