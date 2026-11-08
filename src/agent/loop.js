@@ -286,13 +286,13 @@ const SUB_TOOLS = ['spawn_subagent', 'list_subagents', 'message_subagent'];
 const LITE_NAMES = ['bash', 'read_file', 'write_file', 'edit_file', 'find', 'list_dir', 'read_lines', 'grep_search', 'code_search', 'google_search', 'fetch', ...PLAYWRIGHT_WEB_TOOLS, ...DESKTOP_TOOLS, ...SUB_TOOLS, 'ask', 'remember', 'retrieve', 'raw_memory_search', 'read_raw_memory', 'diary', 'learn_skill', 'get_tasks', 'set_task_done', 'add_task_cluster', 'mcp_search', 'mcp_list'];
 const LITE_TOOLS = toolDefs.filter((t) => LITE_NAMES.includes(t.function.name));
 const LITE_GROUPS = {
-  none: [],
-  memory: ['remember', 'retrieve', 'raw_memory_search', 'read_raw_memory', 'diary', 'learn_skill'],
-  web: ['google_search', 'fetch', ...PLAYWRIGHT_WEB_TOOLS],
-  desktop: [...DESKTOP_TOOLS],
+  none: ['ask'],
+  memory: ['remember', 'retrieve', 'raw_memory_search', 'read_raw_memory', 'diary', 'learn_skill', 'ask'],
+  web: ['google_search', 'fetch', ...PLAYWRIGHT_WEB_TOOLS, 'ask'],
+  desktop: [...DESKTOP_TOOLS, 'ask'],
   shell: ['bash', 'read_file', 'write_file', 'edit_file', 'find', 'list_dir', 'read_lines', 'grep_search', 'code_search', 'ask', 'diary'],
   all: ['bash', 'read_file', 'write_file', 'edit_file', 'find', 'list_dir', 'read_lines', 'grep_search', 'code_search', 'google_search', 'fetch', ...SUB_TOOLS, 'ask', 'remember', 'retrieve', 'raw_memory_search', 'read_raw_memory', 'diary', 'learn_skill', 'get_tasks', 'set_task_done'],
-  tasks: ['get_tasks', 'set_task_done', 'add_task_cluster'],
+  tasks: ['get_tasks', 'set_task_done', 'add_task_cluster', 'ask'],
   mcp: ['mcp_search', 'mcp_list', 'bash', 'read_file', 'write_file', 'edit_file', 'find', 'list_dir', 'read_lines', 'grep_search', 'code_search', 'ask', 'diary']
 };
 const MORE_TOOL = { type: 'function', function: { name: 'more_tools', description: 'Load browser automation and desktop tools when web browser or GUI automation is needed.', parameters: { type: 'object', properties: {} } } };
@@ -336,7 +336,7 @@ async function runLite(routed, sessionId, onStep, system, { signal } = {}) {
   } else if (typeof routed.mcp === 'string') {
     mcpHint = `Use MCP server "${routed.mcp}" — call mcp_search("<action>") to load tools.`;
   }
-  const context = buildContext({ userName: currentUserName(), insight: routed.insight, hint: mcpHint, recent: routed.recentMessages, exchange: routed.exchange, memory: readMemoryDigest({ prefsOnly: true }), mcpServers: mcpNames });
+  const context = buildContext({ userName: currentUserName(), insight: routed.insight, hint: mcpHint, recent: routed.recentMessages, exchange: routed.exchange, memory: readMemoryDigest(), mcpServers: mcpNames });
   const messages = [{ role: 'user', content: context + routed.query }];
   let webCalls = 0;
   let budgetNoted = false;
@@ -360,7 +360,13 @@ async function runLite(routed, sessionId, onStep, system, { signal } = {}) {
     if (!isDiaryEnabled()) names = names.filter(n => n !== 'diary');
     // Direct-action mode: suppress list_dir at step 0 to force surgical edits
     if (step === 0 && isActionMode) names = names.filter(n => n !== 'list_dir');
+    // Always expose ask tool in all states
+    names = [...new Set([...names, 'ask'])];
     let tools = LITE_TOOLS.filter((t) => names.includes(t.function.name));
+    if (!tools.some((t) => (t.function?.name || t.name) === 'ask')) {
+      const askDef = toolDefs.find((t) => (t.function?.name || t.name) === 'ask');
+      if (askDef) tools.push(askDef);
+    }
     if (isSoloOnly()) tools = tools.filter(t => !SUB_TOOLS.includes(t.function?.name || t.name));
     if (!isDiaryEnabled()) tools = tools.filter(t => (t.function?.name || t.name) !== 'diary');
     if (mcpMod) tools = [...tools, ...mcpMod.getLoadedMcpDefs()];
@@ -685,6 +691,10 @@ async function runAgentInner(userMessage, { onStep, maxSteps, forceAgent, signal
     let all = [...BASE_TOOLS, ...toolDefs.filter((t) => unlocked.has(t.function.name) && !BASE_TOOLS.includes(t)), ...(customMcp ? toolDefs.filter((t) => t.function.name === 'mcp_search' || t.function.name === 'mcp_list') : []), ...(mcpMod ? mcpMod.getLoadedMcpDefs() : [])];
     if (isSoloOnly()) all = all.filter((t) => !SUB.includes(t.function?.name || t.name));
     if (!isDiaryEnabled()) all = all.filter((t) => (t.function?.name || t.name) !== 'diary');
+    if (!all.some((t) => (t.function?.name || t.name) === 'ask')) {
+      const askDef = toolDefs.find((t) => (t.function?.name || t.name) === 'ask');
+      if (askDef) all.push(askDef);
+    }
     return all;
   };
   // give the tool-calling loop real conversation history, including executed tools

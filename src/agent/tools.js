@@ -442,7 +442,7 @@ export const toolDefs = [
     type: 'function',
     function: {
       name: 'ask',
-      description: 'Ask the user a question with clickable options (e.g. yes/no). Ends your turn; their pick comes back as the next message.',
+      description: 'Ask the user a clarifying question with clickable options (e.g. choice of directory, architecture decision, yes/no). ALWAYS use this whenever the target directory or project path is unknown or ambiguous, or when facing real forks. Ends your turn; their pick comes back as the next message.',
       parameters: {
         type: 'object',
         properties: {

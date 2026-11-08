@@ -92,6 +92,43 @@ defineCommand({
   }
 });
 
+defineCommand({
+  name: 'cd',
+  description: 'Change working directory',
+  args: [{ name: 'path', required: false, rest: true }],
+  run: async ({ path: targetPath }, ctx) => {
+    const fs = await import('node:fs');
+    const path = await import('node:path');
+    const os = await import('node:os');
+    const { refreshGitDiff } = await import('./Footer.js');
+
+    const raw = (targetPath || '').trim();
+    let dest = raw;
+    if (!dest || dest === '~') {
+      dest = os.homedir();
+    } else if (dest.startsWith('~/')) {
+      dest = path.join(os.homedir(), dest.slice(2));
+    } else {
+      dest = path.resolve(process.cwd(), dest);
+    }
+
+    try {
+      if (!fs.existsSync(dest)) {
+        return ctx.print(`Directory not found: ${dest}`);
+      }
+      const stat = fs.statSync(dest);
+      if (!stat.isDirectory()) {
+        return ctx.print(`Not a directory: ${dest}`);
+      }
+      process.chdir(dest);
+      refreshGitDiff(true);
+      ctx.print(`Changed directory to: ${dest}`);
+    } catch (err) {
+      ctx.print(`Failed to change directory: ${err.message}`);
+    }
+  }
+});
+
 // wired in a later step
 defineCommand({ name: 'models:list', description: 'List models' });
 defineCommand({ name: 'models:create', description: 'Add a model', args: [{ name: 'name' }] });
