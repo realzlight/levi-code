@@ -1174,6 +1174,7 @@ function App({ mascot }) {
   const [commandScroll, setCommandScroll] = useState(0);
   const commandOutputRef = React.useRef(commandOutput);
   commandOutputRef.current = commandOutput;
+  const lastEscRef = React.useRef(0);
   const [closed, setClosed] = useState(false);
   const [compactTools, setCompactTools] = useState(false);
   const [activeSubagents, setActiveSubagents] = useState([]);
@@ -1517,11 +1518,13 @@ function App({ mascot }) {
       if (commandOutput) {
         setCommandOutput(null);
         setCommandScroll(0);
+        lastEscRef.current = 0;
         return;
       }
       // 2. If the slash command menu/palette is open, close it without interrupting the agent
       if (paletteOn) {
         setClosed(true);
+        lastEscRef.current = 0;
         return;
       }
       // 3. If a slash command is being typed in the prompt, clear it without interrupting the agent
@@ -1529,17 +1532,20 @@ function App({ mascot }) {
         setInput('');
         setCursor(0);
         setClosed(true);
+        lastEscRef.current = 0;
         return;
       }
       // 4. Only interrupt the running agent if no command window, palette, or command input is open
       if (abortControllerRef.current) {
         abortControllerRef.current.abort();
         abortControllerRef.current = null;
+        lastEscRef.current = 0;
         return;
       }
       setClosed(true);
       setCommandOutput(null);
       setCommandScroll(0);
+      lastEscRef.current = Date.now();
       return;
     }
 
@@ -1630,12 +1636,31 @@ function App({ mascot }) {
       return;
     }
 
-    if (key.return) {
+    const isCsiEnter = char === '[13;3~' || char === '[13;2~' || char === '[13;5~' || char === '[27;3;13~' || char === '[27;5;13~';
+    const isSingleEnter = char === '\r' || char === '\n' || char === '\x1b\r' || char === '\x1b\n' || isCsiEnter;
+    const isEnter = Boolean(key.return || isSingleEnter);
+
+    if (isEnter) {
       if (input.startsWith('/')) { submit(input); return; }
-      if (key.ctrl || key.meta) {
+
+      const isEscRecent = lastEscRef.current > 0 && (Date.now() - lastEscRef.current < 450);
+      lastEscRef.current = 0;
+
+      const isAltOrCtrl = Boolean(
+        key.ctrl ||
+        key.meta ||
+        isEscRecent ||
+        ((char === '\r' || char === '\n') && !key.return) ||
+        char === '\x1b\r' ||
+        char === '\x1b\n' ||
+        isCsiEnter
+      );
+
+      if (isAltOrCtrl) {
         submit(input);
         return;
       }
+
       const beforeAt = input.length > 1 ? input[input.length - 2] : '';
       const atTouchesText = input.endsWith('@') && beforeAt !== '' && !/\s/.test(beforeAt);
       if (atTouchesText) {
