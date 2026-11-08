@@ -55,14 +55,16 @@ function routerSystem() {
 agent = a project or big job: building or scaffolding an app, big fixes or refactors across 3+ files, complex reasoning or debugging, git workflows, deep multi-source research, planning or reorganizing task plans, sub-agents, or continues agent work (e.g. "yes", "the second one" when last_route is agent).
 light = any other job that needs tools, up to about 10 tool calls: code reviews, small fixes and edits (1-2 files), running commands, web lookups, saving facts, recalling past sessions, notes, or conversations, task cluster views, using MCP tools. Mixed jobs: tools = all.
 conversation = plain casual chat, simple questions/explanations without tools, short follow-ups.
-tools (conversation or light): none = plain chat or thanks, memory = ONLY for passive queries about past facts/sessions ("what did we talk about", "remember this"), web = live info/browser, desktop = mouse/keyboard/window/app control, shell = one file or shell action, tasks = show or tick off task clusters, all = continuation, completion, building, unsure or mixed.
+tools (conversation or light): none = plain chat or thanks, memory = save rules/preferences/facts with remember OR recall past sessions with retrieve/raw_memory_search, web = live info/browser, desktop = mouse/keyboard/window/app control, shell = one file or shell action, tasks = show or tick off task clusters, all = continuation, completion, building, unsure or mixed.
 ${mcpLine}
 When unsure between light and agent, choose light unless a project, big refactor, or complex reasoning is involved.
 Recalling past sessions, notes, or past conversations passively must route light with tools=memory.
+When the user states a rule, preference, habit, or correction (e.g. "stop saying X", "from now on Y", "I prefer Z", "never use W"): route light with tools=memory.
 CRITICAL: Continuing, finishing, completing, or building work (e.g. "continue", "finish it", "complete my request", "do it") must ALWAYS route with tools=all or tools=shell, NEVER tools=memory.
 INSIGHT = a compact work plan the agent sees before step 1. Be specific — name file paths, exact commands, or query terms so the agent skips discovery calls.
 Format for code/file jobs: "Target: <exact file or folder path>. Action: <what to change/add>. Tool: <first tool to use> [then <next tool>]. Skip: list_dir."
 Format for commands/servers: "Run: <exact command>. Check: <what to verify after>."
+Format for saving preferences/rules: "Save preference: <exact rule>. Tool: remember(kind: 'preference', fact: '<rule>')."
 Format for lookups/memory: "Search: <exact query term>. Tool: retrieve or raw_memory_search."
 Format for web/info: "Query: <dense technical keywords, no conversational filler>. Tool: google_search or fetch."
 Keep insight under 60 words. Never vague. Name the actual file or folder when you know it from the query. If the dir preview is attached, use it to name the exact file to edit.`;
@@ -143,7 +145,9 @@ export async function route(query, { recentUser = [], forceAgent = false, sessio
   }
   else if (/^(search|google|lookup)\s+(about|for|how|what|why|who)\b/i.test(q)) r = { route: 'light', tools: 'web', mcp: false, insight: 'fast-path: web lookup' };
   else if (FILE_HINT.test(q)) r = { route: 'agent', insight: 'mentions code or file paths' };
-  else if (/^(remember|note that|from now on|btw|fyi)\b|\bi (always|never|usually|prefer|like|love|hate|enjoy|use|play|work (as|at|on)|live in) |\bmy (name is|favou?rite|setup is)/i.test(q)) r = { route: 'conversation', tools: 'memory', mcp: false, insight: 'durable fact or preference: save with remember' };
+  else if (/\b(from now on|stop saying|don't say|do not say|never say|stop using|don't use|do not use|stop calling|don't call|always remember|remember that|remember to|keep in mind|my preference is|i prefer|i want you to (always|never|stop))\b|^(remember|note that|btw|fyi)\b|\bi (always|never|usually|prefer|like|love|hate|enjoy|dislike)\b|\bmy (name is|favou?rite|setup is)/i.test(q)) {
+    r = { route: 'light', tools: 'memory', mcp: false, insight: `durable preference/rule: call remember("preference", "${q.replace(/"/g, "'").slice(0, 100)}") immediately before answering` };
+  }
   else if (TASK_VIEW.test(q)) r = { route: 'light', tools: 'tasks', mcp: false, insight: 'show or update task clusters' };
   else r = await classify(q, recent, sessionId, signal);
 

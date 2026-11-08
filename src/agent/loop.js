@@ -288,7 +288,7 @@ const LITE_NAMES = ['bash', 'read_file', 'write_file', 'edit_file', 'find', 'lis
 
 const LITE_TOOLS = toolDefs.filter((t) => LITE_NAMES.includes(t.function.name));
 const LITE_GROUPS = {
-  none: ['ask'],
+  none: ['ask', 'remember'],
   memory: ['remember', 'retrieve', 'raw_memory_search', 'read_raw_memory', 'diary', 'learn_skill', 'load_skill', 'ask'],
 
   web: ['google_search', 'fetch', ...PLAYWRIGHT_WEB_TOOLS, 'ask'],
@@ -363,12 +363,16 @@ async function runLite(routed, sessionId, onStep, system, { signal } = {}) {
     if (!isDiaryEnabled()) names = names.filter(n => n !== 'diary');
     // Direct-action mode: suppress list_dir at step 0 to force surgical edits
     if (step === 0 && isActionMode) names = names.filter(n => n !== 'list_dir');
-    // Always expose ask tool in all states
-    names = [...new Set([...names, 'ask'])];
+    // Always expose ask and remember tools in all states
+    names = [...new Set([...names, 'ask', 'remember'])];
     let tools = LITE_TOOLS.filter((t) => names.includes(t.function.name));
     if (!tools.some((t) => (t.function?.name || t.name) === 'ask')) {
       const askDef = toolDefs.find((t) => (t.function?.name || t.name) === 'ask');
       if (askDef) tools.push(askDef);
+    }
+    if (!tools.some((t) => (t.function?.name || t.name) === 'remember')) {
+      const remDef = toolDefs.find((t) => (t.function?.name || t.name) === 'remember');
+      if (remDef) tools.push(remDef);
     }
     if (isSoloOnly()) tools = tools.filter(t => !SUB_TOOLS.includes(t.function?.name || t.name));
     if (!isDiaryEnabled()) tools = tools.filter(t => (t.function?.name || t.name) !== 'diary');
@@ -697,6 +701,10 @@ async function runAgentInner(userMessage, { onStep, maxSteps, forceAgent, signal
     if (!all.some((t) => (t.function?.name || t.name) === 'ask')) {
       const askDef = toolDefs.find((t) => (t.function?.name || t.name) === 'ask');
       if (askDef) all.push(askDef);
+    }
+    if (!all.some((t) => (t.function?.name || t.name) === 'remember')) {
+      const remDef = toolDefs.find((t) => (t.function?.name || t.name) === 'remember');
+      if (remDef) all.push(remDef);
     }
     return all;
   };

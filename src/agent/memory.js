@@ -21,38 +21,44 @@ export function scorePreference(raw, isProject = false) {
 
   // Explicit weight tag: "weight: 10", "w: 8"
   const mWeight = line.match(/\b(?:weight|w):\s*(\d+)/i);
-  if (mWeight) score += parseInt(mWeight[1], 10) * 2;
+  if (mWeight) score += parseInt(mWeight[1], 10) * 3;
 
   // Priority tags: [critical], priority: high, etc.
   if (/\[(?:critical|high|urgent|p0)\]|\bpriority:\s*(?:critical|high|urgent)\b/i.test(line)) {
-    score += 8;
+    score += 10;
   } else if (/\[(?:medium|normal|p1)\]|\bpriority:\s*(?:medium|normal)\b/i.test(line)) {
-    score += 4;
+    score += 5;
   } else if (/\[(?:low|p2)\]|\bpriority:\s*low\b/i.test(line)) {
     score += 1;
   }
 
   // Prefix exclamation mark: ! Important rule
-  if (/^!/.test(line)) score += 4;
+  if (/^!/.test(line)) score += 6;
+
+  // Negative constraints & explicit bans (user says "stop", "never", "do not", "don't", "avoid", "no longer")
+  // These are the most critical instructions that override any default persona behaviors
+  if (/\b(never|do not|don't|stop|strictly|avoid|no longer|forbidden|prohibit)\b/i.test(line)) {
+    score += 12;
+  }
 
   // Directive & rule keywords
-  if (/\b(always|never|must|do not|don't|stop|strictly|require|critical|important|avoid)\b/i.test(line)) {
-    score += 6;
+  if (/\b(always|must|require|critical|important|rule)\b/i.test(line)) {
+    score += 7;
   }
 
   // Preference verbs
-  if (/\b(prefers?|wants?|likes?|favor|rule)\b/i.test(line)) {
+  if (/\b(prefers?|wants?|likes?|favor)\b/i.test(line)) {
     score += 3;
   }
 
   // Dev & workflow relevance
-  if (/\b(npm|pnpm|yarn|install|globally|code|summary|concise|short|direct|dark mode|light mode|ui|terminal|mobile|clean|format|test|directory|git)\b/i.test(line)) {
-    score += 3;
+  if (/\b(npm|pnpm|yarn|install|globally|code|summary|concise|short|direct|dark mode|light mode|ui|terminal|mobile|clean|format|test|directory|git|alright|say less)\b/i.test(line)) {
+    score += 4;
   }
 
-  // Deprioritize casual food / chit-chat items compared to dev rules
+  // Deprioritize casual food / chit-chat items compared to dev & behavioral rules
   if (/\b(pizza|ramen|tacos|pasta)\b/i.test(line)) {
-    score -= 3;
+    score -= 4;
   }
 
   // Project-specific preferences are more localized and take precedence
@@ -60,10 +66,12 @@ export function scorePreference(raw, isProject = false) {
 
   // Strip metadata tags for clean, token-efficient prompt inclusion
   const cleanLine = line
+    .replace(/\(\s*(?:weight|w):\s*\d+\s*\)/gi, '')
     .replace(/\b(?:weight|w):\s*\d+\b/gi, '')
     .replace(/\[(?:critical|high|urgent|medium|normal|low|p0|p1|p2)\]/gi, '')
     .replace(/\bpriority:\s*(?:critical|high|urgent|medium|normal|low)\b/gi, '')
     .replace(/^!\s*/, '')
+    .replace(/\s{2,}/g, ' ')
     .trim();
 
   return { line: cleanLine, score };
@@ -83,7 +91,7 @@ function packItems(items, budget) {
   return selected;
 }
 
-function getTopUserFacts(filePath, budget = 140) {
+function getTopUserFacts(filePath, budget = 210) {
   const lines = readLines(filePath);
   const facts = [];
   for (const l of lines) {
@@ -100,7 +108,7 @@ function getTopUserFacts(filePath, budget = 140) {
   return packItems(facts.map((f) => f.line), budget);
 }
 
-function getTopPatterns(filePath, isProject = false, budget = 130) {
+function getTopPatterns(filePath, isProject = false, budget = 210) {
   const lines = readLines(filePath);
   const patterns = [];
   let inSummary = false;
@@ -129,9 +137,9 @@ function getTopPatterns(filePath, isProject = false, budget = 130) {
   return packItems(patterns.map((p) => p.line), budget);
 }
 
-// Memory digest strictly bounded to 100-150 tokens (~400-550 characters)
+// Memory digest strictly bounded to 200 tokens (~800 characters)
 // Always loads weighted PREFERENCE.md, USER.md, and PATTERNS.md
-export function readMemoryDigest({ prefsOnly = false, maxChars = 540 } = {}) {
+export function readMemoryDigest({ prefsOnly = false, maxChars = 800 } = {}) {
   let project = null;
   try {
     const id = currentSessionId();
@@ -157,21 +165,21 @@ export function readMemoryDigest({ prefsOnly = false, maxChars = 540 } = {}) {
     return sections.join('\n').slice(0, maxChars);
   }
 
-  // Allocate token budget (~100-150 tokens = ~400-550 chars):
-  // Preferences: ~250 chars (~60 tokens)
-  // User facts: ~140 chars (~35 tokens)
-  // Patterns: ~130 chars (~35 tokens)
-  const topPrefs = packItems(allPrefs.map((p) => p.line), 250);
+  // Allocate 200 token budget (~800 chars):
+  // Preferences: ~380 chars (~95 tokens)
+  // User facts: ~210 chars (~50 tokens)
+  // Patterns: ~210 chars (~50 tokens)
+  const topPrefs = packItems(allPrefs.map((p) => p.line), 380);
   if (topPrefs.length) sections.push('preferences: ' + topPrefs.join(' | '));
 
-  const userFacts = getTopUserFacts(path.join(G, 'USER.md'), 140);
+  const userFacts = getTopUserFacts(path.join(G, 'USER.md'), 210);
   if (userFacts.length) sections.push('user: ' + userFacts.join(' | '));
 
   const allPatterns = [
-    ...(P ? getTopPatterns(path.join(P, 'PATTERNS.md'), true, 60) : []),
-    ...getTopPatterns(path.join(G, 'PATTERNS.md'), false, 120)
+    ...(P ? getTopPatterns(path.join(P, 'PATTERNS.md'), true, 90) : []),
+    ...getTopPatterns(path.join(G, 'PATTERNS.md'), false, 180)
   ];
-  const topPatterns = packItems(allPatterns, 130);
+  const topPatterns = packItems(allPatterns, 210);
   if (topPatterns.length) sections.push('patterns: ' + topPatterns.join(' | '));
 
   return sections.join('\n').slice(0, maxChars);
