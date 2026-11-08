@@ -132,17 +132,61 @@ function scanPluginTargets(pluginDir, targetPaths = []) {
 // ---- Multi-Manifest & Multi-Format Plugin System ----
 
 /**
- * Universal reader for plugin.json manifests across all ecosystems.
- * Extracts canonical metadata and normalizes playbook target paths.
+ * Extract clean plugin source files from source directory into destination directory.
+ * Omits .git, .github, node_modules, and temporary build caches.
+ */
+export function extractPluginSourceFiles(sourceDir, destDir) {
+  if (!fs.existsSync(destDir)) {
+    fs.mkdirSync(destDir, { recursive: true });
+  }
+
+  const IGNORE_PATTERNS = new Set([
+    '.git', '.github', 'node_modules', '.tmp', '.DS_Store'
+  ]);
+
+  function copyDirRecursive(src, dst) {
+    if (!fs.existsSync(dst)) fs.mkdirSync(dst, { recursive: true });
+    let entries = [];
+    try {
+      entries = fs.readdirSync(src, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const ent of entries) {
+      if (IGNORE_PATTERNS.has(ent.name) || ent.name.startsWith('.tmp-')) continue;
+      const sPath = path.join(src, ent.name);
+      const dPath = path.join(dst, ent.name);
+      if (ent.isDirectory()) {
+        copyDirRecursive(sPath, dPath);
+      } else if (ent.isFile()) {
+        try {
+          fs.copyFileSync(sPath, dPath);
+        } catch {}
+      }
+    }
+  }
+
+  copyDirRecursive(sourceDir, destDir);
+}
+
+/**
+ * Universal reader for plugin.json manifests across all ecosystems (Claude Code, Levi, etc.).
+ * Extracts canonical metadata and normalizes playbook/skill/command target paths.
  */
 export function readManifest(filePath, repoBase) {
   try {
     const raw = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
-    let targets = raw.plugins || raw.skills || raw.rules || raw.commands || raw.agents || raw.playbooks || raw.prompts || raw.instructions || raw.files;
-    if (typeof targets === 'string') targets = [targets];
-    if (!Array.isArray(targets) || !targets.length) {
-      targets = ['./'];
+    let targets = [];
+    const fields = ['plugins', 'skills', 'rules', 'commands', 'agents', 'playbooks', 'prompts', 'instructions', 'files', 'targets', 'source'];
+    for (const f of fields) {
+      if (raw[f]) {
+        if (typeof raw[f] === 'string') targets.push(raw[f]);
+        else if (Array.isArray(raw[f])) targets.push(...raw[f]);
+      }
     }
+    if (!targets.length) targets = ['./'];
+    targets = [...new Set(targets)];
+
     const name = sanitizeName(raw.name) || sanitizeName(repoBase);
     let author = 'Unknown';
     if (typeof raw.author === 'string') author = raw.author;
@@ -162,6 +206,88 @@ export function readManifest(filePath, repoBase) {
 }
 
 /**
+ * Reader for marketplace.json catalog manifests (Claude Code & Levi marketplace standard).
+ * Extracts list of community plugins with names, descriptions, and source directories.
+ */
+export function readMarketplace(filePath, repoBase) {
+  try {
+    const raw = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
+    const name = raw.name || sanitizeName(repoBase) || 'marketplace';
+    const description = raw.description || '';
+    const pluginsRaw = Array.isArray(raw.plugins) ? raw.plugins : (raw.items || []);
+    const plugins = [];
+
+    for (const p of pluginsRaw) {
+      if (!p) continue;
+      const pName = typeof p === 'string' ? p : (p.name || p.id);
+      if (!pName) continue;
+      const cleanName = sanitizeName(pName);
+      const pSource = typeof p === 'string' ? `./${p}` : (p.source || p.path || p.folder || p.dir || `./${cleanName}`);
+      let author = 'Unknown';
+      if (typeof p.author === 'string') author = p.author;
+      else if (p.author && typeof p.author.name === 'string') author = p.author.name;
+
+      plugins.push({
+        name: cleanName,
+        displayName: p.displayName || p.name || cleanName,
+        description: p.description || '',
+        version: p.version || '1.0.0',
+        author,
+        source: pSource,
+        category: p.category || 'general',
+        tags: Array.isArray(p.tags) ? p.tags : (Array.isArray(p.keywords) ? p.keywords : []),
+        raw: p
+      });
+    }
+
+    return {
+      name,
+      description,
+      owner: raw.owner || raw.author || 'Unknown',
+      plugins,
+      raw
+    };
+  } catch (err) {
+    return null;
+  }
+}
+
+/**
+ * Marketplace catalog specifications on the repository top level.
+ */
+export const MARKETPLACE_SPECS = [
+  {
+    id: 'levi',
+    label: 'Levi Marketplace',
+    icon: '🔷',
+    paths: [
+      '.levi-plugin/marketplace.json',
+      '.levi-plugins/marketplace.json',
+      '.levi/marketplace.json'
+    ]
+  },
+  {
+    id: 'claude',
+    label: 'Claude Code Marketplace',
+    icon: '🟠',
+    paths: [
+      '.claude-plugin/marketplace.json',
+      '.claude-plugins/marketplace.json',
+      '.claude/marketplace.json'
+    ]
+  },
+  {
+    id: 'standard',
+    label: 'Standard Marketplace',
+    icon: '🏪',
+    paths: [
+      'marketplace.json',
+      '.plugins/marketplace.json'
+    ]
+  }
+];
+
+/**
  * Manifest definitions for all supported AI CLI ecosystems.
  */
 export const MANIFEST_SPECS = [
@@ -169,7 +295,11 @@ export const MANIFEST_SPECS = [
     id: 'levi',
     label: 'Levi Manifest',
     icon: '🔷',
-    paths: ['.levi-plugins/plugin.json', '.levi/plugin.json'],
+    paths: [
+      '.levi-plugin/plugin.json',
+      '.levi-plugins/plugin.json',
+      '.levi/plugin.json'
+    ],
     defaultTargets: ['./']
   },
   {
@@ -177,12 +307,12 @@ export const MANIFEST_SPECS = [
     label: 'Claude Code Manifest',
     icon: '🟠',
     paths: [
+      '.claude-plugin/plugin.json',
       '.claude-plugins/plugin.json',
       '.claude/plugin.json',
-      '.claude-plugin/plugin.json',
       '.claude/claude-plugin.json'
     ],
-    defaultTargets: ['./CLAUDE.md', './.claude/commands', './.claude', './']
+    defaultTargets: ['./CLAUDE.md', './commands', './skills', './rules', './.claude', './']
   },
   {
     id: 'codex',
@@ -473,14 +603,38 @@ export const RULE_SPECS = [
 ];
 
 /**
- * Scan a repository directory for all manifests and rule configurations.
+ * Scan a repository directory for all manifests, marketplaces, and rule configurations.
  * Returns an array of detected options.
  */
 export function detectFormats(repoDir, repoBase = '') {
   const detected = [];
   const base = repoBase || path.basename(repoDir);
 
-  // 1. Scan for JSON manifests across CLI ecosystems
+  // 1. Scan for Marketplace Manifest on repo top (.levi-plugin/marketplace.json, .claude-plugin/marketplace.json, etc.)
+  for (const mSpec of MARKETPLACE_SPECS) {
+    for (const relPath of mSpec.paths) {
+      const fullPath = path.join(repoDir, relPath);
+      if (fs.existsSync(fullPath)) {
+        const mp = readMarketplace(fullPath, base);
+        if (mp && mp.plugins.length > 0) {
+          detected.push({
+            id: 'marketplace',
+            type: 'marketplace',
+            specId: mSpec.id,
+            manifestPath: relPath,
+            manifestFullPath: fullPath,
+            label: `${mSpec.label} (${mp.plugins.length} plugin${mp.plugins.length === 1 ? '' : 's'})`,
+            icon: '🏪',
+            description: `${relPath} — ${mp.description || `${mp.plugins.length} community plugins`}`,
+            marketplace: mp
+          });
+          break;
+        }
+      }
+    }
+  }
+
+  // 2. Scan for JSON manifests across CLI ecosystems
   for (const spec of MANIFEST_SPECS) {
     for (const relPath of spec.paths) {
       const fullPath = path.join(repoDir, relPath);
@@ -497,13 +651,13 @@ export function detectFormats(repoDir, repoBase = '') {
             description: `${relPath} (name: "${meta.name}")`,
             meta
           });
-          break; // Use the highest priority path found for this spec
+          break; // Use highest priority path found for this spec
         }
       }
     }
   }
 
-  // 2. Scan rule-file based formats if no manifests found, or as secondary options
+  // 3. Scan rule-file based formats if no manifests found, or as secondary options
   if (!detected.length) {
     for (const spec of RULE_SPECS) {
       try {
@@ -523,7 +677,7 @@ export function detectFormats(repoDir, repoBase = '') {
     }
   }
 
-  // 3. Fallback: check if loose .md files exist in root
+  // 4. Fallback: check if loose .md files exist in root
   if (!detected.length) {
     try {
       const entries = fs.readdirSync(repoDir, { withFileTypes: true });
@@ -545,10 +699,130 @@ export function detectFormats(repoDir, repoBase = '') {
 }
 
 /**
- * Install a community plugin from a Git repository.
- * Scans for manifests, prompts for choice if multiple are found, and indexes playbooks.
+ * Finalize installation of a specific plugin from a marketplace catalog.
+ * Extracts the plugin's source files from its subfolder into ~/.levi/PLUGINS/<name>.
  */
-export async function installPlugin(repoUrl, { onProgress = null, format = null } = {}) {
+export function finalizeMarketplaceInstall(tempDirPath, cleanUrl, repoBase, pluginEntry, onProgress) {
+  const pluginRelSource = pluginEntry.source || `./${pluginEntry.name}`;
+  let pluginFolder = path.resolve(tempDirPath, pluginRelSource);
+
+  // If source path doesn't exist directly, check common subfolder patterns
+  if (!fs.existsSync(pluginFolder)) {
+    const candidates = [
+      path.join(tempDirPath, pluginEntry.name),
+      path.join(tempDirPath, 'plugins', pluginEntry.name),
+      path.join(tempDirPath, 'packages', pluginEntry.name)
+    ];
+    const found = candidates.find(c => fs.existsSync(c));
+    if (found) {
+      pluginFolder = found;
+    } else {
+      try { fs.rmSync(tempDirPath, { recursive: true, force: true }); } catch {}
+      return { ok: false, error: `Could not find source directory for plugin "${pluginEntry.name}" at ${pluginRelSource}.` };
+    }
+  }
+
+  // Look for plugin manifest inside the plugin's folder
+  let manifest = null;
+  let manifestPath = null;
+  const manifestCandidates = [
+    '.levi-plugin/plugin.json',
+    '.claude-plugin/plugin.json',
+    '.claude/plugin.json',
+    '.levi-plugins/plugin.json',
+    '.claude-plugins/plugin.json',
+    'plugin.json'
+  ];
+
+  for (const rel of manifestCandidates) {
+    const full = path.join(pluginFolder, rel);
+    if (fs.existsSync(full)) {
+      manifest = readManifest(full, pluginEntry.name);
+      if (manifest) {
+        manifestPath = rel;
+        break;
+      }
+    }
+  }
+
+  const canonicalName = sanitizeName(manifest?.name || pluginEntry.name);
+  if (!canonicalName) {
+    try { fs.rmSync(tempDirPath, { recursive: true, force: true }); } catch {}
+    return { ok: false, error: 'Could not determine a valid plugin name.' };
+  }
+
+  const finalDirPath = path.join(PLUGINS_DIR, canonicalName);
+  if (fs.existsSync(finalDirPath)) {
+    try { fs.rmSync(finalDirPath, { recursive: true, force: true }); } catch {}
+  }
+
+  onProgress?.(`Extracting source files for "${canonicalName}"...`);
+  try {
+    extractPluginSourceFiles(pluginFolder, finalDirPath);
+  } catch (err) {
+    try { fs.rmSync(tempDirPath, { recursive: true, force: true }); } catch {}
+    return { ok: false, error: `Failed to extract source files: ${err.message}` };
+  }
+
+  // Clean up temporary clone directory
+  try { fs.rmSync(tempDirPath, { recursive: true, force: true }); } catch {}
+
+  const targetPaths = manifest?.targetPaths || ['./'];
+  const files = scanPluginTargets(finalDirPath, targetPaths);
+
+  const meta = readPluginsMeta();
+  meta.plugins[canonicalName] = {
+    name: canonicalName,
+    format: 'marketplace-plugin',
+    formatLabel: 'Claude Code / Levi Marketplace',
+    manifestPath,
+    version: manifest?.version || pluginEntry.version || '1.0.0',
+    description: manifest?.description || pluginEntry.description || 'Marketplace plugin',
+    author: manifest?.author || pluginEntry.author || 'Unknown',
+    url: cleanUrl,
+    marketplace: {
+      repo: repoBase,
+      source: pluginRelSource
+    },
+    targetPaths,
+    installedAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+    filesCount: files.length,
+    files: files.map((f) => ({
+      id: `${canonicalName}/${f.relToPlugin.replace(/\.md$/, '')}`,
+      relPath: `${canonicalName}/${f.relToPlugin}`,
+      path: f.filePath,
+      title: f.title,
+      summary: f.summary
+    }))
+  };
+  writePluginsMeta(meta);
+
+  // Background retrieval sync
+  import('./retrieval.js').then(({ retrieve }) => {
+    retrieve({ query: 'sync', limit: 1, rebuild: false }).catch(() => {});
+  }).catch(() => {});
+
+  return {
+    ok: true,
+    name: canonicalName,
+    format: 'marketplace-plugin',
+    formatLabel: 'Claude Code / Levi Marketplace',
+    manifestPath,
+    version: manifest?.version || pluginEntry.version || '1.0.0',
+    description: manifest?.description || pluginEntry.description || '',
+    author: manifest?.author || pluginEntry.author || 'Unknown',
+    filesCount: files.length,
+    path: finalDirPath,
+    manifest: manifest?.raw || pluginEntry.raw || {}
+  };
+}
+
+/**
+ * Install a community plugin from a Git repository.
+ * Scans for marketplaces and manifests, prompts for choice if needed, and extracts source files.
+ */
+export async function installPlugin(repoUrl, { onProgress = null, format = null, pluginName = null } = {}) {
   if (!repoUrl || typeof repoUrl !== 'string') {
     return { ok: false, error: 'A valid Git repository URL is required.' };
   }
@@ -571,53 +845,90 @@ export async function installPlugin(repoUrl, { onProgress = null, format = null 
     return { ok: false, error: `Failed to clone repository: ${err.message}` };
   }
 
-  // Detect all manifests and formats present in cloned repo
-  onProgress?.('Scanning repository for plugin manifests...');
+  // Detect all marketplaces, manifests, and formats present in cloned repo
+  onProgress?.('Scanning repository for plugin manifests & marketplace catalogs...');
   const detected = detectFormats(tempDirPath, repoBase);
 
   if (!detected.length) {
     try { fs.rmSync(tempDirPath, { recursive: true, force: true }); } catch {}
     return {
       ok: false,
-      error: 'No recognized plugin manifest or rules found. Supported: .levi-plugins/plugin.json, .claude-plugins/plugin.json, .codex-plugins/plugin.json, .cursor-plugins/plugin.json, .windsurf-plugins/plugin.json, .cline-plugins/plugin.json, .copilot-plugins/plugin.json, or plugin.json.'
+      error: 'No recognized plugin manifest or rules found. Supported: .levi-plugin/marketplace.json, .claude-plugin/marketplace.json, .levi-plugin/plugin.json, .claude-plugin/plugin.json, or rules.'
     };
   }
 
-  // If a specific format was explicitly requested via CLI argument:
-  let chosenTarget = null;
-  if (format) {
-    const fStr = String(format).trim().toLowerCase();
-    chosenTarget = detected.find(d =>
-      d.id.toLowerCase() === fStr ||
-      d.id.toLowerCase().replace(/-rules$/, '') === fStr ||
-      (d.manifestPath && d.manifestPath.toLowerCase().includes(fStr)) ||
-      d.label.toLowerCase().includes(fStr)
-    );
-    if (!chosenTarget) {
-      // Allow passing a format ID directly even if not in the default detected list
-      chosenTarget = fStr;
-    }
-  }
+  // 1. Handle Marketplace Repositories
+  const mpEntry = detected.find(d => d.type === 'marketplace');
+  if (mpEntry && mpEntry.marketplace) {
+    const mp = mpEntry.marketplace;
+    const requested = pluginName || (format && !['levi', 'claude', 'codex', 'cursor', 'windsurf', 'cline', 'copilot', 'aider', 'generic'].includes(String(format).toLowerCase()) ? format : null);
 
-  // If no format specified and multiple manifests found: ask user to choose!
-  if (!chosenTarget && detected.length > 1) {
+    if (requested) {
+      const q = String(requested).trim().toLowerCase();
+      const match = mp.plugins.find(p =>
+        p.name.toLowerCase() === q ||
+        p.displayName.toLowerCase() === q ||
+        p.source.toLowerCase().includes(q)
+      );
+      if (match) {
+        return finalizeMarketplaceInstall(tempDirPath, cleanUrl, repoBase, match, onProgress);
+      }
+      try { fs.rmSync(tempDirPath, { recursive: true, force: true }); } catch {}
+      return {
+        ok: false,
+        error: `Plugin "${requested}" not found in marketplace "${mp.name}". Available plugins: ${mp.plugins.map(p => p.name).join(', ')}`
+      };
+    }
+
+    // Auto-select if marketplace contains exactly one plugin
+    if (mp.plugins.length === 1) {
+      return finalizeMarketplaceInstall(tempDirPath, cleanUrl, repoBase, mp.plugins[0], onProgress);
+    }
+
+    // Multiple plugins available in marketplace: prompt user
     return {
       ok: false,
-      needsChoice: true,
-      formats: detected,
+      needsMarketplaceChoice: true,
+      marketplace: mp,
+      plugins: mp.plugins,
       tempDir: tempDirPath,
       repoUrl: cleanUrl,
       repoBase
     };
   }
 
-  // If single format/manifest found, install directly
-  const target = chosenTarget || detected[0];
+  // 2. Handle Standalone Plugin Repositories
+  const nonMarketplace = detected.filter(d => d.type !== 'marketplace');
+  let chosenTarget = null;
+  if (format) {
+    const fStr = String(format).trim().toLowerCase();
+    chosenTarget = nonMarketplace.find(d =>
+      d.id.toLowerCase() === fStr ||
+      d.id.toLowerCase().replace(/-rules$/, '') === fStr ||
+      (d.manifestPath && d.manifestPath.toLowerCase().includes(fStr)) ||
+      d.label.toLowerCase().includes(fStr)
+    );
+    if (!chosenTarget) chosenTarget = fStr;
+  }
+
+  if (!chosenTarget && nonMarketplace.length > 1) {
+    return {
+      ok: false,
+      needsChoice: true,
+      formats: nonMarketplace,
+      tempDir: tempDirPath,
+      repoUrl: cleanUrl,
+      repoBase
+    };
+  }
+
+  const target = chosenTarget || nonMarketplace[0];
   return finalizeInstall(tempDirPath, cleanUrl, repoBase, target, onProgress);
 }
 
 /**
- * Finalize plugin installation after format/manifest has been selected.
+ * Finalize standalone plugin installation after format/manifest has been selected.
+ * Extracts clean source files into ~/.levi/PLUGINS/<name>.
  */
 export function finalizeInstall(tempDirPath, cleanUrl, repoBase, chosenFormatOrObj, onProgress) {
   let resolved = null;
@@ -669,16 +980,17 @@ export function finalizeInstall(tempDirPath, cleanUrl, repoBase, chosenFormatOrO
   }
 
   const finalDirPath = path.join(PLUGINS_DIR, canonicalName);
-
   if (fs.existsSync(finalDirPath)) {
     try { fs.rmSync(finalDirPath, { recursive: true, force: true }); } catch {}
   }
 
+  onProgress?.(`Extracting source files for "${canonicalName}"...`);
   try {
-    fs.renameSync(tempDirPath, finalDirPath);
+    extractPluginSourceFiles(tempDirPath, finalDirPath);
+    fs.rmSync(tempDirPath, { recursive: true, force: true });
   } catch (err) {
     try { fs.rmSync(tempDirPath, { recursive: true, force: true }); } catch {}
-    return { ok: false, error: `Failed to finalize plugin directory: ${err.message}` };
+    return { ok: false, error: `Failed to extract plugin directory: ${err.message}` };
   }
 
   onProgress?.(`Configuring playbooks for ${formatLabel}...`);
@@ -975,3 +1287,66 @@ export function getPluginsPromptList(query = '') {
     };
   });
 }
+
+/**
+ * Scaffolding helper to create a plugin manifest in Claude Code or Levi format.
+ * Writes to <dirPath>/.levi-plugin/plugin.json (or .claude-plugin/plugin.json).
+ */
+export function createPluginManifest(dirPath, {
+  name = '',
+  version = '1.0.0',
+  description = '',
+  author = '',
+  skills = ['./skills'],
+  commands = ['./commands'],
+  rules = ['./rules'],
+  format = 'levi'
+} = {}) {
+  const pluginName = sanitizeName(name || path.basename(dirPath));
+  const subfolder = format === 'claude' ? '.claude-plugin' : '.levi-plugin';
+  const targetDir = path.join(dirPath, subfolder);
+  fs.mkdirSync(targetDir, { recursive: true });
+
+  const manifest = {
+    name: pluginName,
+    version,
+    description,
+    author: author || 'Community',
+    skills: Array.isArray(skills) ? skills : [skills],
+    commands: Array.isArray(commands) ? commands : [commands],
+    rules: Array.isArray(rules) ? rules : [rules]
+  };
+
+  const filePath = path.join(targetDir, 'plugin.json');
+  fs.writeFileSync(filePath, JSON.stringify(manifest, null, 2) + '\n', 'utf-8');
+  return { ok: true, path: filePath, manifest };
+}
+
+/**
+ * Scaffolding helper to create a marketplace manifest in Claude Code or Levi format.
+ * Writes to <dirPath>/.levi-plugin/marketplace.json (or .claude-plugin/marketplace.json).
+ */
+export function createMarketplaceManifest(dirPath, {
+  name = '',
+  description = '',
+  owner = '',
+  plugins = [],
+  format = 'levi'
+} = {}) {
+  const marketplaceName = sanitizeName(name || path.basename(dirPath));
+  const subfolder = format === 'claude' ? '.claude-plugin' : '.levi-plugin';
+  const targetDir = path.join(dirPath, subfolder);
+  fs.mkdirSync(targetDir, { recursive: true });
+
+  const manifest = {
+    name: marketplaceName,
+    description: description || 'Plugin marketplace catalog',
+    owner: owner || 'Community',
+    plugins: Array.isArray(plugins) ? plugins : []
+  };
+
+  const filePath = path.join(targetDir, 'marketplace.json');
+  fs.writeFileSync(filePath, JSON.stringify(manifest, null, 2) + '\n', 'utf-8');
+  return { ok: true, path: filePath, manifest };
+}
+

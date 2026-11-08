@@ -1194,20 +1194,70 @@ defineCommand({
   description: 'Install a community plugin from a Git repo — auto-detects Levi, Claude Code, Codex, Cursor, Windsurf, Copilot, Cline, Aider formats',
   args: [
     { name: 'url', required: true, description: 'Git repository URL' },
-    { name: 'format', required: false, description: 'Optional format override: levi, claude, codex, cursor, windsurf, copilot, cline, aider' }
+    { name: 'format', required: false, description: 'Optional format or plugin name (for marketplaces): e.g. levi, claude, or <plugin-name>' }
   ],
   run: async ({ url, format }, ctx) => {
     const cleanUrl = String(url || '').trim();
     if (!cleanUrl) return ctx.print('Please provide a Git repository URL.');
-    const { installPlugin, finalizeInstall } = await pluginsMod();
+    const { installPlugin, finalizeInstall, finalizeMarketplaceInstall } = await pluginsMod();
 
     ctx.print(`Cloning and detecting format from "${cleanUrl}"...`);
     const res = await installPlugin(cleanUrl, {
       onProgress: (msg) => ctx.print(msg),
-      format: format ? String(format).trim().toLowerCase() : null
+      format: format ? String(format).trim() : null,
+      pluginName: format ? String(format).trim() : null
     });
 
-    // Multiple manifests detected — prompt the user which one to use!
+    // Marketplace repository with multiple plugins — prompt user to choose plugin!
+    if (!res.ok && res.needsMarketplaceChoice) {
+      const plugins = res.plugins;
+      const mpName = res.marketplace?.name || res.repoBase;
+      if (ctx.openForm) {
+        const optionMap = new Map();
+        const options = plugins.map((p) => {
+          const optText = `📦 ${p.displayName || p.name}${p.description ? ` — ${p.description}` : ''}`;
+          optionMap.set(optText, p);
+          return optText;
+        });
+
+        return ctx.openForm({
+          mode: 'plugin-marketplace',
+          question: `Marketplace "${mpName}" contains multiple plugins. Which plugin would you like to install?`,
+          options,
+          onPick: async (pickedText) => {
+            const picked = optionMap.get(pickedText) || plugins[0];
+            ctx.print(`Installing "${picked.name}" from marketplace...`);
+            const final = finalizeMarketplaceInstall(res.tempDir, res.repoUrl, res.repoBase, picked, (msg) => ctx.print(msg));
+            if (!final.ok) return ctx.print(`❌ Installation failed: ${final.error}`);
+            return showInstallResult(final, ctx);
+          },
+          onCancel: async () => {
+            try {
+              const { rmSync } = await import('node:fs');
+              rmSync(res.tempDir, { recursive: true, force: true });
+            } catch {}
+            ctx.print('Marketplace installation cancelled.');
+          }
+        });
+      }
+
+      // Non-interactive / headless fallback
+      const lines = [
+        '',
+        `  Marketplace "${mpName}" contains ${plugins.length} plugins:`,
+        ''
+      ];
+      for (let i = 0; i < plugins.length; i++) {
+        lines.push(`    📦  [${i + 1}] ${plugins[i].name}  —  ${plugins[i].description || plugins[i].source}`);
+      }
+      lines.push('');
+      lines.push(`  Re-run specifying the plugin name:  /plugin:install ${cleanUrl} <plugin-name>`);
+      lines.push(`  Available plugins: ${plugins.map(p => p.name).join(', ')}`);
+      lines.push('');
+      return ctx.print(lines.join('\n'));
+    }
+
+    // Multiple standalone manifests detected — prompt the user which one to use!
     if (!res.ok && res.needsChoice) {
       const fmts = res.formats;
       if (ctx.openForm) {
@@ -1421,6 +1471,35 @@ defineCommand({
   args: [{ name: 'name', required: true, description: 'Plugin name to delete' }],
   run: async ({ name }, ctx) => runCommand(`plugin:remove ${name}`, ctx)
 });
+
+defineCommand({
+  name: 'plugin:init',
+  description: 'Scaffold a new plugin manifest (.levi-plugin/plugin.json or marketplace.json) in current directory',
+  args: [
+    { name: 'name', required: false, description: 'Plugin or marketplace name' },
+    { name: 'type', required: false, description: 'Type: "plugin" (default) or "marketplace"' }
+  ],
+  run: async ({ name, type }, ctx) => {
+    const { createPluginManifest, createMarketplaceManifest } = await pluginsMod();
+    const { existsSync, mkdirSync } = await import('node:fs');
+    const nodePath = await import('node:path');
+    const isMarketplace = String(type || '').toLowerCase() === 'marketplace' || String(name || '').toLowerCase() === 'marketplace';
+    const targetDir = process.cwd();
+
+    if (isMarketplace) {
+      const res = createMarketplaceManifest(targetDir, { name: name && name !== 'marketplace' ? name : undefined });
+      ctx.print(`✓ Created marketplace manifest at ${res.path}`);
+      return ctx.print(`Edit .levi-plugin/marketplace.json to register your plugins and their subfolder sources.`);
+    }
+
+    const res = createPluginManifest(targetDir, { name });
+    const skillsDir = nodePath.join(targetDir, 'skills');
+    if (!existsSync(skillsDir)) mkdirSync(skillsDir, { recursive: true });
+    ctx.print(`✓ Created plugin manifest at ${res.path}`);
+    ctx.print(`Place your markdown playbooks into ./skills/ or ./rules/ and share your repo!`);
+  }
+});
+
 
 defineCommand({
   name: 'learn',
