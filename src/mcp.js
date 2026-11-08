@@ -608,69 +608,43 @@ export async function runMcpTool(name, args = {}) {
 }
 
 /**
- * Summarizes web search, fetch, and browsing results before returning them to the agent.
- * Uses the active model selected in ~/.levi/config.json with a concise prompt.
+ * Synthesizes web search, fetch, and browsing results deterministically (0 LLM tokens).
+ * Preserves URLs, code blocks, and key facts without lossy LLM compression.
  */
 async function summarizeWebOutput(content, { toolName, args = {} } = {}) {
   if (!content || typeof content !== 'string') return content;
-  if (content.startsWith('Error:') || content.trim().length < 1500) return content;
+  if (content.startsWith('Error:')) return content;
 
-  // Tools that should have their output summarized
   const isSearch = toolName === 'google_search' || toolName === 'serper_search' || toolName === 'brave_web_search';
   const isFetch = toolName === 'fetch' || toolName === 'scrape';
-  const isWebActivity = toolName.startsWith('playwright_') || isSearch || isFetch;
 
-  if (!isWebActivity) return content;
-
-  let context = '';
   if (isSearch) {
-    const q = args.q || args.query || '';
-    context = q ? `Web Search Query: "${q}"` : 'Web Search';
-  } else if (isFetch) {
-    const url = args.url || '';
-    context = url ? `Fetched URL: ${url}` : 'Web Page Content';
-  } else {
-    context = `Browser Activity: ${toolName}`;
+    try {
+      const { formatSearchResults } = await import('./agent/search.js');
+      const q = args.q || args.query || '';
+      return formatSearchResults(content, { query: q, maxResults: 5 });
+    } catch {
+      return content.slice(0, 3000);
+    }
   }
 
-  // Cap content length to prevent model context limits
-  const maxChars = 8000;
-  const truncated = content.length > maxChars
-    ? content.slice(0, maxChars) + '\n\n[... Remaining content truncated for summary]'
-    : content;
-
-  const system = `You are an expert, concise web content summarizer for an AI assistant.
-Summarize the key information, factual answers, data, and relevant URLs from the provided raw web content.
-Rules:
-- Be dense, direct, and factual.
-- Retain important specifics (names, code snippets, numbers, versions, URLs).
-- Do NOT include unnecessary filler, conversational intro, or boilerplate.`;
-
-  const prompt = `Context: ${context}
-
-Raw Content:
-${truncated}
-
-Provide a concise, high-signal summary of the above content focusing on the key information. Max 150 words.`;
-
-  try {
-    const { chat } = await import('./agent/client.js');
-    const res = await chat([{ role: 'user', content: prompt }], {
-      system,
-      maxTokens: 450
-    });
+  if (isFetch) {
     try {
-      const { currentSessionId } = await import('./agent/session.js');
-      const { recordUsage } = await import('./agent/usage.js');
-      const sid = currentSessionId();
-      if (sid && res && res.usage) recordUsage(sid, res.usage);
-    } catch {}
-    if (res?.text && res.text.trim()) {
-      return res.text.trim();
+      const { extractCleanWebContent } = await import('./agent/search.js');
+      return extractCleanWebContent(content, { url: args.url || '', maxLength: 4500 });
+    } catch {
+      return content.slice(0, 4500);
     }
-  } catch (err) {
-    // If summarization fails (e.g. offline, rate limit), return raw output gracefully
-    return content;
+  }
+
+  // Other web/browser activity (e.g. playwright)
+  if (toolName?.startsWith('playwright_') && content.length > 5000) {
+    try {
+      const { extractCleanWebContent } = await import('./agent/search.js');
+      return extractCleanWebContent(content, { maxLength: 4500 });
+    } catch {
+      return content.slice(0, 5000);
+    }
   }
 
   return content;

@@ -64,7 +64,7 @@ INSIGHT = a compact work plan the agent sees before step 1. Be specific — name
 Format for code/file jobs: "Target: <exact file or folder path>. Action: <what to change/add>. Tool: <first tool to use> [then <next tool>]. Skip: list_dir."
 Format for commands/servers: "Run: <exact command>. Check: <what to verify after>."
 Format for lookups/memory: "Search: <exact query term>. Tool: retrieve or raw_memory_search."
-Format for web/info: "Query: <exact search string>. Tool: google_search or fetch."
+Format for web/info: "Query: <dense technical keywords, no conversational filler>. Tool: google_search or fetch."
 Keep insight under 60 words. Never vague. Name the actual file or folder when you know it from the query. If the dir preview is attached, use it to name the exact file to edit.`;
   return cachedSystem;
 }

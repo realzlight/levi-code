@@ -472,13 +472,13 @@ export const toolDefs = [
     type: 'function',
     function: {
       name: 'google_search',
-      description: 'Google search (Serper) for live info, docs, news, examples.',
+      description: 'Search Google via Serper API. Provide concise, dense technical keywords, error identifiers in quotes, or package names (e.g. "css backdrop-filter blur text fix" or "\\"ERR_MODULE_NOT_FOUND\\" esm"). NEVER use conversational filler ("how to", "can you"). Use the site parameter or site: operator to target official docs (developer.mozilla.org, github.com, npmjs.com).',
       parameters: {
         type: 'object',
         properties: {
-          q: { type: 'string', description: 'Search query' },
-          num: { type: 'number', description: 'Result count (default 10)' },
-          site: { type: 'string', description: 'Limit to a domain, e.g. github.com' }
+          q: { type: 'string', description: 'Technical keywords or exact quoted tokens to search' },
+          num: { type: 'number', description: 'Number of organic results (default 5, max 10)' },
+          site: { type: 'string', description: 'Domain filter, e.g. "developer.mozilla.org" or "github.com"' }
         },
         required: ['q']
       }
@@ -493,7 +493,7 @@ export const toolDefs = [
         type: 'object',
         properties: {
           query: { type: 'string', description: 'Search query' },
-          num: { type: 'number', description: 'Number of results (default: 10)' }
+          num: { type: 'number', description: 'Number of results (default: 5)' }
         },
         required: ['query']
       }
@@ -503,14 +503,14 @@ export const toolDefs = [
     type: 'function',
     function: {
       name: 'fetch',
-      description: 'Fetch a web page as readable markdown.',
+      description: 'Fetch web page content as clean, high-signal Markdown. Strips navigation, footers, scripts, and cookie boilerplate to maximize token efficiency. Use with URLs found via google_search.',
       parameters: {
         type: 'object',
         properties: {
-          url: { type: 'string', description: 'URL to fetch' },
-          max_length: { type: 'number', description: 'Max chars (default 5000)' },
+          url: { type: 'string', description: 'Absolute HTTP/HTTPS URL to fetch' },
+          max_length: { type: 'number', description: 'Max chars to return (default 4500)' },
           start_index: { type: 'number', description: 'Start offset (default 0)' },
-          raw: { type: 'boolean', description: 'Raw HTML if true' }
+          raw: { type: 'boolean', description: 'Return raw unprocessed HTML if true' }
         },
         required: ['url']
       }
@@ -1623,6 +1623,13 @@ if (name === 'mcp_search') {
     }
 
     if (name === 'google_search' || name === 'serper_search' || name === 'brave_web_search') {
+      const q = args.q || args.query || '';
+      try {
+        const { executeSerperSearch } = await import('./search.js');
+        const res = await executeSerperSearch(q, { num: args.num, site: args.site });
+        if (res.ok) return res.content;
+      } catch {}
+      // Fallback to MCP if direct search failed
       const { runMcpTool, getSearchApiKey } = await import('../mcp.js');
       const apiKey = getSearchApiKey();
       if (!apiKey) {
@@ -1632,6 +1639,21 @@ if (name === 'mcp_search') {
     }
 
     if (name === 'fetch') {
+      const url = args.url || '';
+      if (!url) return 'Error: url required';
+      try {
+        const { extractCleanWebContent } = await import('./search.js');
+        const res = await fetch(url, {
+          headers: { 'User-Agent': 'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36' },
+          signal: AbortSignal.timeout(10000)
+        });
+        if (res.ok) {
+          const raw = await res.text();
+          if (args.raw) return raw.slice(0, args.max_length || 5000);
+          return extractCleanWebContent(raw, { url, maxLength: args.max_length || 4500 });
+        }
+      } catch {}
+      // Fallback to MCP fetch server if direct fetch had issues
       const { runMcpTool } = await import('../mcp.js');
       return await runMcpTool(name, args);
     }
