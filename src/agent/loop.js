@@ -423,7 +423,7 @@ async function runLite(routed, sessionId, onStep, system, { signal } = {}) {
           continue;
         }
         const hasToolsRun = messages.some((m) => m.role === 'tool');
-        const isAnnouncement = !hasToolsRun && STALL_REGEX.test(out) && !out.slice(-160).includes('?');
+        const isAnnouncement = !hasToolsRun && out.length < 180 && out.split('\n').filter(Boolean).length <= 2 && STALL_REGEX.test(out) && !out.slice(-160).includes('?');
         if (step < 3 && isAnnouncement) {
           if (out.length > 8) onStep?.('narrate', out);
           messages.push({ role: 'assistant', content: out });
@@ -834,7 +834,7 @@ async function runAgentInner(userMessage, { onStep, maxSteps, forceAgent, signal
         return fallback;
       }
       const hasToolsRun = messages.some((m) => m.role === 'tool');
-      const isAnnouncement = !hasToolsRun && STALL_REGEX.test(text.trim()) && !text.trim().slice(-160).includes('?');
+      const isAnnouncement = !hasToolsRun && text.trim().length < 180 && text.trim().split('\n').filter(Boolean).length <= 2 && STALL_REGEX.test(text.trim()) && !text.trim().slice(-160).includes('?');
       if (stallNudges < 3 && step < effectiveMaxSteps - 1 && isAnnouncement) {
         stallNudges++;
         onStep?.('stall_nudge', { attempt: stallNudges, step });
