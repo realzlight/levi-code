@@ -16,6 +16,8 @@ function detectGuideTitle(content) {
   if (!content) return 'WALKTHROUGH GUIDE';
   if (/Skill System|SKILL-WALKTHROUGH/i.test(content)) return 'SKILL SYSTEM WALKTHROUGH';
   if (/Plugin System|PLUGIN-WALKTHROUGH/i.test(content)) return 'PLUGIN SYSTEM WALKTHROUGH';
+  if (/Model Context Protocol|MCP-WALKTHROUGH/i.test(content)) return 'MCP SYSTEM WALKTHROUGH';
+  if (/Model Management|MODELS-WALKTHROUGH/i.test(content)) return 'MODELS & PROVIDERS WALKTHROUGH';
   if (/CHANGELOG/i.test(content)) return 'CHANGELOG';
   const m = content.match(/^#\s+(.+)$/m);
   if (m) return m[1].replace(/[*_#`✦]/g, '').trim();

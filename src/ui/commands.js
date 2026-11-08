@@ -162,6 +162,41 @@ const cfg = {
 const modelsMod = () => import('../commands/models.js');
 
 defineCommand({
+  name: 'models',
+  description: 'View the complete walkthrough guide for Models and AI Providers (fullscreen, Esc to close)',
+  run: async (_, ctx) => {
+    const { readFileSync, existsSync } = await import('node:fs');
+    const { fileURLToPath } = await import('node:url');
+    const nodePath = await import('node:path');
+    const __filename = fileURLToPath(import.meta.url);
+    const guidePath = nodePath.resolve(nodePath.dirname(__filename), '../../MODELS-WALKTHROUGH.md');
+    if (!existsSync(guidePath)) return ctx.print('MODELS-WALKTHROUGH.md not found at ' + guidePath);
+    const content = readFileSync(guidePath, 'utf-8');
+    if (ctx.openForm) {
+      ctx.openForm({ mode: 'changelog', title: 'Models & Providers Walkthrough', content });
+    } else {
+      ctx.print(content);
+    }
+  }
+});
+
+defineCommand({
+  name: 'model',
+  description: 'View model walkthrough or status',
+  run: async (_, ctx) => {
+    const { readFileSync, existsSync } = await import('node:fs');
+    const { fileURLToPath } = await import('node:url');
+    const nodePath = await import('node:path');
+    const __filename = fileURLToPath(import.meta.url);
+    const guidePath = nodePath.resolve(nodePath.dirname(__filename), '../../MODELS-WALKTHROUGH.md');
+    if (existsSync(guidePath) && ctx.openForm) {
+      return ctx.openForm({ mode: 'changelog', title: 'Models & Providers Walkthrough', content: readFileSync(guidePath, 'utf-8') });
+    }
+    return runCommand('models:list', ctx);
+  }
+});
+
+defineCommand({
   name: 'models:list',
   description: 'List your models',
   run: async (_, ctx) => {
@@ -584,7 +619,25 @@ defineCommand({
 
 
 // --------------------------------------------------------------
-// ---- mcp commands ----
+defineCommand({
+  name: 'mcp',
+  description: 'View the complete walkthrough guide for Model Context Protocol (fullscreen, Esc to close)',
+  run: async (_, ctx) => {
+    const { readFileSync, existsSync } = await import('node:fs');
+    const { fileURLToPath } = await import('node:url');
+    const nodePath = await import('node:path');
+    const __filename = fileURLToPath(import.meta.url);
+    const guidePath = nodePath.resolve(nodePath.dirname(__filename), '../../MCP-WALKTHROUGH.md');
+    if (!existsSync(guidePath)) return ctx.print('MCP-WALKTHROUGH.md not found at ' + guidePath);
+    const content = readFileSync(guidePath, 'utf-8');
+    if (ctx.openForm) {
+      ctx.openForm({ mode: 'changelog', title: 'MCP System Walkthrough', content });
+    } else {
+      ctx.print(content);
+    }
+  }
+});
+
 defineCommand({
   name: 'mcp:list',
   description: 'List MCP servers',
