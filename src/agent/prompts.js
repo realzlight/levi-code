@@ -102,9 +102,9 @@ PROJECTS
 - New substantial project only: if [context] shows no matching existing project AND the work is multi-session and substantial, then set_project with a short name. If the code location is unknown ask once, then record it as Location in DATA.md. In bash use $HOME or an unquoted ~ (a quoted ~ does not expand); file tools accept ~ directly.
 
 SKILLS (~/.levi/SKILLS/<folder>/<file>.md)
-- Available personal skills are organized in topic folders and lazy-loaded. [context] lists each skill's id (folder/name), relative path, and 1-line summary.
-- Based on the user's request, decide whether to use a skill: if relevant, use read_file('~/.levi/SKILLS/<folder>/<file>.md') to read its full instructions on-demand, then follow them.
-- SELF-LEARNING (SKILL CREATION): When you solve a non-trivial problem, discover an obscure workaround, or build a working multi-step recipe, save it into an organized skill folder using learn_skill(name, folder, title, when_to_use, recipe). Future sessions and turns will automatically see and use it.
+- Available personal skills are organized in topic folders and lazy-loaded. [context] lists each skill's id (folder/name) and 1-line summary ONLY when relevant to your query.
+- Based on the user's request, decide whether to use a skill: if [context] shows a matching skill, call load_skill("id") to activate the full playbook — recipes, commands, and gotchas in one step. Only use read_file for skills NOT listed in context.
+- SELF-LEARNING (SKILL CREATION): When you solve a non-trivial problem, discover an obscure workaround, or build a working multi-step recipe, save it using learn_skill(name, folder, title, when_to_use, recipe). Include keyword triggers (2-4 word phrases) in the recipe frontmatter so future sessions can auto-detect when to surface it.
 
 PLUGINS (~/.levi/PLUGINS/<name>/)
 - Available community plugins provide external skills and playbooks. [context] lists installed plugin capabilities and relative paths.
@@ -120,7 +120,8 @@ THINK TOOL
 
 FAILURES
 - If you already built or changed real files, a later failing check (missing dependency, command not found, test can't run) doesn't erase that. Say what you built, name the specific missing thing and how to fix it, or offer a no-dependency alternative.`;
-export function buildContext({ userName, insight, dataContent, taskSummary, hint, recent, memory, exchange, mcpServers, skills } = {}) {
+export function buildContext({ userName, insight, dataContent, taskSummary, hint, recent, memory, exchange, mcpServers, skills, skillQuery } = {}) {
+
   const lines = ['date: ' + new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' })];
   lines.push(`home directory: ${os.homedir()}`);
   lines.push(`current directory: ${process.cwd()}`);
@@ -128,9 +129,9 @@ export function buildContext({ userName, insight, dataContent, taskSummary, hint
   if (insight) lines.push(`router: ${insight}`);
   if (hint) lines.push(`hint: ${hint}`);
   if (mcpServers?.length) lines.push('MCP servers: ' + mcpServers.join(', ') + ' — use mcp_search(query) to load tools');
-  const skillsList = skills !== undefined ? skills : getSkillsPromptList();
+  const skillsList = skills !== undefined ? skills : getSkillsPromptList(skillQuery || '', []);
   if (skillsList?.length) {
-    lines.push('available skills (lazy-loaded; decide whether to use based on the user\'s request; to use one, read its instructions with read_file("~/.levi/SKILLS/<folder>/<file>.md") and follow them):\n' + skillsList.map((s) => s.line || `- ${s.id || s.name}: ${s.summary || s.title || s.name}`).join('\n'));
+    lines.push('available skills (call load_skill("id") to activate full playbook):\n' + skillsList.map((s) => s.line || `- ${s.id || s.name}: ${s.summary || s.title || s.name} — call load_skill("${s.id || s.name}") to activate`).join('\n'));
   }
   const pluginsList = getPluginsPromptList();
   if (pluginsList?.length) {

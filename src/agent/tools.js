@@ -30,7 +30,7 @@ export const CATEGORIES = {
   web: ['web_launch','web_close','web_new_tab','web_goto','web_back','web_reload','web_click','web_dblclick','web_fill','web_press','web_hover','web_drag','web_scroll','web_screenshot','web_get_text','web_get_url','web_wait'],
   desktop: ['desktop_click','desktop_type','desktop_press','desktop_scroll','desktop_drag','desktop_screenshot','desktop_get_window_state','desktop_list_apps','desktop_launch_app'],
   tasks: ['add_task_cluster','get_tasks','set_task_done','edit_task','delete_task','delete_cluster','add_task_to_cluster'],
-  memory: ['retrieve','raw_memory_search','read_raw_memory','diary','set_project','search_sessions','read_session','learn_skill'],
+  memory: ['retrieve','raw_memory_search','read_raw_memory','diary','set_project','search_sessions','read_session','learn_skill','load_skill'],
   meta: ['list_commands','list_fs_commands','list_web_commands','list_desktop_commands','list_task_commands','list_memory_commands','list_meta_commands','list_subagent_commands','list_mcp_commands','ask'],
   subagent: ['spawn_subagent','list_subagents','message_subagent'],
   mcp: ['mcp_search','mcp_list']
@@ -212,6 +212,20 @@ export const toolDefs = [
           recipe: { type: 'string', description: 'Step-by-step markdown recipe with exact commands, configs, and gotchas to avoid' }
         },
         required: ['name', 'when_to_use', 'recipe']
+      }
+    }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'load_skill',
+      description: 'Load the full playbook of a saved personal skill into context. Use when a skill stub is shown in [context] and you need its full recipe. Records usage. Example: load_skill("ANDROID-TERMUX/background-http-server")',
+      parameters: {
+        type: 'object',
+        properties: {
+          id: { type: 'string', description: 'Skill ID as shown in context, e.g. "ANDROID-TERMUX/background-http-server" or "UI-UX-SKILLS/glassmorphic-redesign"' }
+        },
+        required: ['id']
       }
     }
   },
@@ -1011,10 +1025,20 @@ if (name === 'mcp_search') {
   return `Tools [${name}] now loaded, call them directly:\n${tools}`;
 }
     if (name === 'learn_skill') {
-      const { saveLearnedSkill } = await import('./skills.js');
-      const res = saveLearnedSkill(args || {});
+      const { saveLearnedSkillStructured, saveLearnedSkill } = await import('./skills.js');
+      const save = saveLearnedSkillStructured || saveLearnedSkill;
+      const res = save(args || {});
       if (!res.ok) return `Error saving skill: ${res.error}`;
-      return `Successfully learned skill "${res.id}" (${res.title}). It is saved to ~/.levi/SKILLS/${res.relPath} and active in context.`;
+      return `Successfully learned skill "${res.id}" (${res.title}). Saved to ~/.levi/SKILLS/${res.relPath} and active in context.`;
+    }
+
+    if (name === 'load_skill') {
+      const { loadSkill } = await import('./skills.js');
+      const id = String(args?.id || '').trim();
+      if (!id) return 'Error: skill id required. Example: load_skill("ANDROID-TERMUX/background-http-server")';
+      const res = loadSkill(id);
+      if (!res.ok) return `Error: ${res.error}`;
+      return res.content;
     }
 
     if (name === 'remember') {

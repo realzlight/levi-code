@@ -8,6 +8,44 @@ const LEVI_HOME = path.join(os.homedir(), '.levi');
 const SKILLS_DIR = path.join(LEVI_HOME, 'SKILLS');
 const META_FILE = path.join(LEVI_HOME, 'skills.json');
 
+// --- Frontmatter helpers ---
+export function parseFrontmatter(content) {
+  if (!content.startsWith('---')) return { meta: {}, body: content };
+  const end = content.indexOf('---', 3);
+  if (end === -1) return { meta: {}, body: content };
+  const raw = content.slice(3, end).trim();
+  const meta = {};
+  for (const line of raw.split('\n')) {
+    const col = line.indexOf(':');
+    if (col === -1) continue;
+    const key = line.slice(0, col).trim();
+    const val = line.slice(col + 1).trim();
+    if (val.startsWith('[')) {
+      try { meta[key] = JSON.parse(val); } catch { meta[key] = val.slice(1, -1).split(',').map(s => s.trim().replace(/^['"]|['"]$/g, '')); }
+    } else if (val === 'true') {
+      meta[key] = true;
+    } else if (val === 'false') {
+      meta[key] = false;
+    } else if (!isNaN(Number(val)) && val !== '') {
+      meta[key] = Number(val);
+    } else {
+      meta[key] = val;
+    }
+  }
+  return { meta, body: content.slice(end + 3).trim() };
+}
+
+export function serializeFrontmatter(meta, body) {
+  if (!meta || !Object.keys(meta).length) return body;
+  const lines = Object.entries(meta)
+    .filter(([, v]) => v !== undefined && v !== null)
+    .map(([k, v]) => {
+      if (Array.isArray(v)) return `${k}: [${v.map(x => `"${x}"`).join(', ')}]`;
+      return `${k}: ${v}`;
+    });
+  return `---\n${lines.join('\n')}\n---\n\n${body}`;
+}
+
 export function getSkillsDir() {
   return SKILLS_DIR;
 }
@@ -283,9 +321,10 @@ export function listSkills(filterFolder = null) {
     if (!meta.skills[f.id]) {
       let content = '';
       try { content = fs.readFileSync(f.filePath, 'utf-8'); } catch {}
-      const lines = content.split('\n').map((l) => l.trim()).filter(Boolean);
+      const { meta: fmMeta, body: fmBody } = parseFrontmatter(content);
+      const lines = (fmBody || content).split('\n').map((l) => l.trim()).filter(Boolean);
       const h1 = lines.find((l) => l.startsWith('#'));
-      const title = h1 ? h1.replace(/^#+\s*/, '').trim() : f.name;
+      const title = fmMeta.title || (h1 ? h1.replace(/^#+\s*/, '').trim() : f.name);
       const body = lines.find((l) => !l.startsWith('#') && !l.startsWith('---') && !l.startsWith('>'));
       const summary = body ? body.slice(0, 120) : `Skill instructions for ${f.id}`;
       meta.skills[f.id] = {
@@ -296,11 +335,26 @@ export function listSkills(filterFolder = null) {
         relPath: f.relPath,
         title,
         summary,
+        triggers: fmMeta.triggers || [],
+        patterns: fmMeta.patterns || [],
+        platforms: fmMeta.platforms || [],
+        confidence: fmMeta.confidence || 0.8,
         disabled: false,
+        usedCount: fmMeta.used_count || 0,
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString()
       };
       changed = true;
+    } else if (!meta.skills[f.id].triggers) {
+      try {
+        const raw = fs.readFileSync(f.filePath, 'utf-8');
+        const { meta: fmMeta } = parseFrontmatter(raw);
+        meta.skills[f.id].triggers = fmMeta.triggers || [];
+        meta.skills[f.id].patterns = fmMeta.patterns || [];
+        meta.skills[f.id].platforms = fmMeta.platforms || [];
+        if (fmMeta.title) meta.skills[f.id].title = fmMeta.title;
+        changed = true;
+      } catch {}
     }
 
     const rec = meta.skills[f.id];
@@ -627,41 +681,77 @@ export function recordSkillUsage(target) {
  * Supplies ONLY names, relative file paths, and 1-line descriptions.
  * The full instructions are loaded on-demand via read_file.
  */
-export function getSkillsPromptList(query = '') {
-  const skills = listSkills().filter((s) => !s.disabled);
-  let selected = skills;
+// findMatchingSkills: high-precision semantic match against triggers, patterns, and platforms
+export function findMatchingSkills(query = '', fileContext = [], { max = 2, minScore = 1.0 } = {}) {
+  if (!query && !fileContext.length) return [];
+  const skills = listSkills().filter(s => !s.disabled);
+  if (!skills.length) return [];
 
-  // Progressive disclosure: If many skills exist and a query is available, filter top candidates
-  if (skills.length > 12 && query && typeof query === 'string') {
-    const qTokens = query.toLowerCase().split(/\W+/).filter((t) => t.length > 2);
-    if (qTokens.length) {
-      const scored = skills.map((s) => {
-        const text = `${s.id} ${s.folder} ${s.name} ${s.title || ''} ${s.summary || ''}`.toLowerCase();
-        let score = 0;
-        for (const t of qTokens) {
-          if (text.includes(t)) score += 1;
-        }
-        if (s.usedCount) score += Math.min(s.usedCount * 0.2, 1);
-        return { s, score };
-      });
-      scored.sort((a, b) => b.score - a.score);
-      const matches = scored.filter((x) => x.score > 0).map((x) => x.s);
-      selected = matches.length ? matches.slice(0, 8) : scored.slice(0, 8).map((x) => x.s);
-    }
-  }
+  const qLower = (query || '').toLowerCase().trim();
+  const qTokens = qLower.split(/\W+/).filter(t => t.length > 2);
+  const extSet = new Set(fileContext.map(f => f.split('.').pop()?.toLowerCase()).filter(Boolean));
 
-  return selected.map((s) => {
-    let desc = '';
-    if (s.title && s.summary) {
-      if (s.summary.toLowerCase().startsWith(s.title.toLowerCase())) {
-        desc = s.summary;
+  const scored = skills.map(s => {
+    let score = 0;
+    const triggers = s.triggers || [];
+    const patterns = s.patterns || [];
+    const platforms = s.platforms || [];
+
+    // 1. Trigger keyword match
+    for (const trigger of triggers) {
+      const tLower = trigger.toLowerCase();
+      if (qLower.includes(tLower)) {
+        score += 3.0; // exact phrase match
       } else {
-        desc = `${s.title} — ${s.summary}`;
+        const tWords = tLower.split(/\W+/).filter(w => w.length > 2);
+        if (tWords.length > 1) {
+          const matched = tWords.filter(w => qLower.includes(w));
+          if (matched.length >= 2 && matched.length >= tWords.length * 0.6) {
+            score += 1.5;
+          }
+        }
       }
-    } else {
-      desc = s.summary || s.title || `Instructions for ${s.id}`;
     }
-    const usage = s.usedCount ? ` [used ${s.usedCount}x]` : '';
+
+    // 2. File extension pattern match
+    for (const pat of patterns) {
+      const ext = pat.replace('*.', '').toLowerCase();
+      if (extSet.has(ext)) score += 1.0;
+    }
+
+    // 3. Platform relevance (Termux/Android) - boost only if there's already positive score
+    if (platforms.length && (qLower.includes('termux') || qLower.includes('android'))) {
+      if (platforms.some(p => qLower.includes(p)) && score > 0) score += 0.5;
+    }
+
+    // 4. Slug / title match for specific technical terms (>3 chars)
+    const titleAndSlug = `${s.id} ${s.title || ''}`.toLowerCase();
+    for (const t of qTokens) {
+      if (t.length > 3 && titleAndSlug.includes(t)) {
+        score += 0.4;
+      }
+    }
+
+    // 5. Usage boost (only for items with prior relevance)
+    if (score > 0 && s.usedCount) {
+      score += Math.min(s.usedCount * 0.1, 0.5);
+    }
+
+    return { s, score };
+  });
+
+  scored.sort((a, b) => b.score - a.score);
+  return scored.filter(x => x.score >= minScore).slice(0, max).map(x => x.s);
+}
+
+// getSkillsPromptList: zero-waste — returns [] when no query or match, at most 2 stubs when triggered
+export function getSkillsPromptList(query = '', fileContext = []) {
+  if (!query && !fileContext.length) return [];
+  const selected = findMatchingSkills(query, fileContext, { max: 2, minScore: 1.0 });
+  if (!selected.length) return [];
+
+  return selected.map(s => {
+    const desc = s.summary || s.title || `Instructions for ${s.id}`;
     return {
       id: s.id,
       name: s.name,
@@ -670,7 +760,7 @@ export function getSkillsPromptList(query = '') {
       filePath: s.filePath,
       title: s.title || s.name,
       summary: s.summary,
-      line: `- ${s.id}${usage} (file: ~/.levi/SKILLS/${s.relPath}): ${desc}`
+      line: `- ${s.id} (file: ~/.levi/SKILLS/${s.relPath}): ${desc} — call load_skill("${s.id}") to activate`
     };
   });
 }
@@ -678,7 +768,12 @@ export function getSkillsPromptList(query = '') {
 /**
  * Save a learned recipe directly into ~/.levi/SKILLS/<folder>/<name>.md
  */
-export function saveLearnedSkill({ folder: rawFolder, name: rawName, title, when_to_use, recipe }) {
+export function saveLearnedSkill({ folder, name, title, when_to_use, recipe, triggers = [], patterns = [], platforms = [] }) {
+  return saveLearnedSkillStructured({ folder, name, title, when_to_use, recipe, triggers, patterns, platforms });
+}
+
+// Save a new learned skill with YAML frontmatter and structured playbook
+export function saveLearnedSkillStructured({ folder: rawFolder, name: rawName, title, when_to_use, recipe, triggers = [], patterns = [], platforms = [] }) {
   const target = rawFolder && rawName ? `${rawFolder}/${rawName}` : (rawName || rawFolder || 'learned-recipe');
   const parsed = parseSkillTarget(target);
   if (!parsed || !parsed.folder) return { ok: false, error: 'Invalid skill or folder name.' };
@@ -689,35 +784,47 @@ export function saveLearnedSkill({ folder: rawFolder, name: rawName, title, when
   const folderPath = path.dirname(parsed.filePath);
 
   ensureSkillsDir();
-  if (!fs.existsSync(folderPath)) {
-    fs.mkdirSync(folderPath, { recursive: true });
-  }
+  if (!fs.existsSync(folderPath)) fs.mkdirSync(folderPath, { recursive: true });
 
   const cleanTitle = (title || file).trim().replace(/[\r\n]+/g, ' ');
   const cleanSummary = (when_to_use || `Instructions for ${cleanTitle}`).trim().replace(/[\r\n]+/g, ' ');
 
-  const meta = readSkillsMeta();
-  let content;
+  const meta2 = readSkillsMeta();
   const existing = fs.existsSync(parsed.filePath) ? fs.readFileSync(parsed.filePath, 'utf-8') : null;
+  const { meta: existingMeta } = existing ? parseFrontmatter(existing) : { meta: {} };
 
+  // Merge triggers (deduplicated)
+  const allTriggers = [...new Set([...(existingMeta.triggers || []), ...triggers])];
+  const allPatterns = [...new Set([...(existingMeta.patterns || []), ...patterns])];
+  const allPlatforms = [...new Set([...(existingMeta.platforms || []), ...platforms])];
+
+  const fm = {
+    name: file,
+    folder,
+    title: cleanTitle,
+    triggers: allTriggers.length ? allTriggers : undefined,
+    patterns: allPatterns.length ? allPatterns : undefined,
+    platforms: allPlatforms.length ? allPlatforms : undefined,
+    confidence: 0.9,
+    used_count: meta2.skills[id]?.usedCount || 0
+  };
+
+  let body;
   if (existing && existing.length > 50) {
+    const { body: existingBody } = parseFrontmatter(existing);
     const dateStr = new Date().toISOString().slice(0, 10);
-    content = existing.trim() + `\n\n### Additional Recipe (${dateStr})\n${(recipe || '').trim()}\n`;
+    body = existingBody.trim() + `\n\n### Updated Recipe (${dateStr})\n${(recipe || '').trim()}\n`;
   } else {
-    content = `# ${cleanTitle}
-
-> ${cleanSummary}
-
-## When to use
-${cleanSummary}
-
-## Recipe & Playbook
-${(recipe || '').trim()}
-`;
+    body = `> ${cleanSummary}\n\n## When to Use\n${cleanSummary}\n\n## Recipe & Playbook\n${(recipe || '').trim()}\n`;
   }
 
+  const content = serializeFrontmatter(
+    Object.fromEntries(Object.entries(fm).filter(([, v]) => v !== undefined)),
+    body
+  );
+
   fs.writeFileSync(parsed.filePath, content, 'utf-8');
-  meta.skills[id] = {
+  meta2.skills[id] = {
     id,
     name: file,
     folder,
@@ -725,70 +832,132 @@ ${(recipe || '').trim()}
     relPath: parsed.relPath,
     title: cleanTitle,
     summary: cleanSummary,
+    triggers: allTriggers,
+    patterns: allPatterns,
+    platforms: allPlatforms,
     disabled: false,
-    usedCount: meta.skills[id]?.usedCount || 0,
-    createdAt: meta.skills[id]?.createdAt || new Date().toISOString(),
+    usedCount: meta2.skills[id]?.usedCount || 0,
+    createdAt: meta2.skills[id]?.createdAt || new Date().toISOString(),
     updatedAt: new Date().toISOString()
   };
-  writeSkillsMeta(meta);
+  writeSkillsMeta(meta2);
 
   return { ok: true, id, folder, file, name: file, title: cleanTitle, summary: cleanSummary, path: parsed.filePath, relPath: parsed.relPath };
 }
 
-export async function distillSkillFromExchange({ userQuery, toolCalls, resultText, requestedTarget }) {
-  if (!toolCalls || toolCalls.length < 2) return null;
+// Refine an existing skill: merge new nuance without duplicating the full recipe
+export async function refineExistingSkill(existingId, { newNuance, triggers: newTriggers = [] }) {
+  const meta = readSkillsMeta();
+  const rec = meta.skills[existingId];
+  if (!rec) return { ok: false, error: `Skill ${existingId} not found for refinement.` };
 
-  const trace = toolCalls.map((c) => {
-    const fn = c.name;
-    const a = JSON.stringify(c.args || {});
-    return `${fn}(${a.slice(0, 150)})`;
-  }).join(' -> ');
+  const filePath = path.join(SKILLS_DIR, rec.relPath || `${existingId}.md`);
+  if (!fs.existsSync(filePath)) return { ok: false, error: `Skill file not found: ${filePath}` };
 
-  const prompt = `You are a self-learning skill distillation engine for Levi, an AI coding assistant.
-Analyze this completed, successful task and determine if it represents a REUSABLE skill, recipe, or non-obvious workaround that would save time and tokens if encountered again.
+  const raw = fs.readFileSync(filePath, 'utf-8');
+  const { meta: fm, body } = parseFrontmatter(raw);
 
-Task: "${userQuery}"
-Actions taken: ${trace}
-Outcome: "${(resultText || '').slice(0, 300)}"
-${requestedTarget ? `Requested target: "${requestedTarget}"` : ''}
+  // Merge triggers
+  const allTriggers = [...new Set([...(fm.triggers || []), ...newTriggers])];
+  fm.triggers = allTriggers;
 
-Rules:
-1. ONLY distill if this is a generalizable, non-trivial recipe, bug fix, configuration, or CLI workflow.
-2. If this is a one-off edit, trivial question, or simple file read, return {"should_learn": false}.
-3. If it IS reusable, return:
-{
-  "should_learn": true,
-  "folder": "CATEGORY-NAME (e.g. UI-UX-SKILLS, BACKEND-RECIPES, DEVOPS, ANDROID-TERMUX)",
-  "name": "kebab-case-slug",
-  "title": "Short Descriptive Title",
-  "when_to_use": "Clear 1-line condition for when to activate this skill (max 20 words)",
-  "recipe": "Concise step-by-step markdown recipe with exact commands and gotchas"
+  const dateStr = new Date().toISOString().slice(0, 10);
+  const newBody = body.trim() + `\n\n### Refinement (${dateStr})\n${newNuance.trim()}\n`;
+  const content = serializeFrontmatter(fm, newBody);
+
+  fs.writeFileSync(filePath, content, 'utf-8');
+  rec.triggers = allTriggers;
+  rec.updatedAt = new Date().toISOString();
+  writeSkillsMeta(meta);
+
+  return { ok: true, id: existingId, folder: rec.folder, file: rec.name, name: rec.name, title: rec.title, summary: rec.summary, path: filePath, relPath: rec.relPath };
 }
 
-Output strictly valid JSON:`;
+export async function distillSkillFromExchange({ userQuery, toolCalls, resultText, requestedTarget, errorCycles = [] }) {
+  if (!toolCalls || toolCalls.length < 2) return null;
+
+  // Build a richer trajectory including errors and fixes
+  const trace = toolCalls.map(c => {
+    const fn = c.name;
+    const a = JSON.stringify(c.args || {}).slice(0, 180);
+    return `${fn}(${a})`;
+  }).join(' -> ');
+
+  const errorCtx = errorCycles.length
+    ? `\nErrors encountered and fixed:\n${errorCycles.map(e => `- ${e}`).join('\n')}`
+    : '';
+
+  // Load existing skills for dedup comparison
+  const existingSkills = listSkills().filter(s => !s.disabled).map(s => `${s.id}: ${s.summary || ''}`);
+  const existingCtx = existingSkills.length
+    ? `\nExisting skills (check for duplicates):\n${existingSkills.slice(0, 20).map(s => `- ${s}`).join('\n')}`
+    : '';
+
+  const prompt = `You are a self-learning skill distillation engine for Levi, an AI coding assistant.
+Analyze this completed task and decide: distill new skill, refine existing, or skip.
+
+Task: "${userQuery}"
+Actions: ${trace}${errorCtx}
+Outcome: "${(resultText || '').slice(0, 400)}"${existingCtx}
+
+Rules:
+1. ONLY distill if this is a generalizable, non-trivial recipe, bug fix, CLI workflow, or config pattern.
+2. Skip one-off edits, trivial questions, project-specific paths/names, or single file reads.
+3. If >65% similar to an existing skill, set "mode":"refine" and name the existing skill in "existing_id" — provide only the NEW nuance to merge.
+4. If novel, set "mode":"create".
+5. Never hardcode project-specific paths (~/stardew-memory-match, ~/the-isle-evrima-fandom, etc.) in recipes. Use placeholders like <project-dir>.
+6. Triggers must be short keyword phrases (2-4 words) that activate retrieval of this skill.
+
+Return ONLY valid JSON:
+{
+  "should_learn": true|false,
+  "mode": "create"|"refine",
+  "existing_id": "folder/name" (only if mode=refine),
+  "folder": "CATEGORY-NAME",
+  "name": "kebab-case-slug",
+  "title": "Short Title (3-6 words)",
+  "triggers": ["keyword phrase 1", "keyword phrase 2", "keyword phrase 3"],
+  "patterns": ["*.ext"] (file extensions this skill applies to, or []),
+  "platforms": ["linux", "android", "termux"] (or []),
+  "when_to_use": "1-line condition (max 20 words)",
+  "recipe": "Concise step-by-step markdown recipe with commands and gotchas"
+}`;
 
   try {
-    const res = await chat([{ role: 'user', content: prompt }], { maxTokens: 450 });
+    const res = await chat([{ role: 'user', content: prompt }], { maxTokens: 600 });
     const raw = res?.text?.trim()?.replace(/^```(?:json)?\s*/i, '')?.replace(/\s*```$/i, '') || '';
     const parsed = JSON.parse(raw);
-    if (parsed.should_learn && parsed.name && parsed.recipe) {
-      let folder = parsed.folder || 'LEARNED-SKILLS';
-      let name = parsed.name;
-      if (requestedTarget) {
-        const p = parseSkillTarget(requestedTarget);
-        if (p?.folder) folder = p.folder;
-        if (p?.file) name = p.file;
-      }
-      return saveLearnedSkill({
-        folder,
-        name,
-        title: parsed.title,
-        when_to_use: parsed.when_to_use,
-        recipe: parsed.recipe
+
+    if (!parsed.should_learn) return null;
+
+    let folder = parsed.folder || 'LEARNED-SKILLS';
+    let name = parsed.name;
+    if (requestedTarget) {
+      const p = parseSkillTarget(requestedTarget);
+      if (p?.folder) folder = p.folder;
+      if (p?.file) name = p.file;
+    }
+
+    if (parsed.mode === 'refine' && parsed.existing_id) {
+      // Refine: merge new nuance into existing skill file
+      return await refineExistingSkill(parsed.existing_id, {
+        newNuance: parsed.recipe,
+        triggers: parsed.triggers || [],
       });
     }
-  } catch {}
-  return null;
+
+    // Create new structured skill with frontmatter
+    return saveLearnedSkillStructured({
+      folder,
+      name,
+      title: parsed.title,
+      when_to_use: parsed.when_to_use,
+      recipe: parsed.recipe,
+      triggers: parsed.triggers || [],
+      patterns: parsed.patterns || [],
+      platforms: parsed.platforms || []
+    });
+  } catch { return null; }
 }
 
 export async function distillLastSessionSkill(sessionId, requestedTarget) {
@@ -831,7 +1000,38 @@ export async function distillLastSessionSkill(sessionId, requestedTarget) {
   }
 }
 
-export async function autoLearnIfEligible({ userQuery, toolCalls, resultText, onStep }) {
+// Load full skill playbook into context and record usage
+export function loadSkill(idOrSlug) {
+  const all = listSkills();
+  const slug = String(idOrSlug || '').toLowerCase().replace(/\s+/g, '-');
+
+  // Exact match first
+  let rec = all.find(s => s.id === idOrSlug);
+  // Fuzzy: id contains the slug, or slug contains id fragment
+  if (!rec) rec = all.find(s => s.id.toLowerCase().includes(slug) || slug.includes(s.id.toLowerCase().replace(/\//g, '-')));
+  if (!rec) return { ok: false, error: `Skill "${idOrSlug}" not found in ~/.levi/SKILLS/` };
+
+  const filePath = path.join(SKILLS_DIR, rec.relPath);
+  if (!fs.existsSync(filePath)) return { ok: false, error: `Skill file missing: ${filePath}` };
+
+  try {
+    const raw = fs.readFileSync(filePath, 'utf-8');
+    const { body } = parseFrontmatter(raw);
+    // Record usage
+    const meta2 = readSkillsMeta();
+    if (meta2.skills[rec.id]) {
+      meta2.skills[rec.id].usedCount = (meta2.skills[rec.id].usedCount || 0) + 1;
+      meta2.skills[rec.id].lastUsedAt = new Date().toISOString();
+      writeSkillsMeta(meta2);
+    }
+    const header = `# Skill: ${rec.title || rec.name}\n`;
+    return { ok: true, id: rec.id, path: filePath, content: header + body };
+  } catch (err) {
+    return { ok: false, error: err.message };
+  }
+}
+
+export async function autoLearnIfEligible({ userQuery, toolCalls, resultText, onStep, errorCycles = [] }) {
   if (!toolCalls || toolCalls.length < 3) return;
   const hasModifier = toolCalls.some((c) => ['write_file', 'edit_file', 'bash'].includes(c.name));
   if (!hasModifier) return;
@@ -839,9 +1039,9 @@ export async function autoLearnIfEligible({ userQuery, toolCalls, resultText, on
 
   setTimeout(async () => {
     try {
-      const res = await distillSkillFromExchange({ userQuery, toolCalls, resultText });
+      const res = await distillSkillFromExchange({ userQuery, toolCalls, resultText, errorCycles });
       if (res && res.ok) {
-        onStep?.('narrate', `✦ Distilled new skill: "${res.id}" (~/.levi/SKILLS/${res.relPath})`);
+        onStep?.('narrate', `✦ Distilled skill: "${res.id}" (~/.levi/SKILLS/${res.relPath})`);
       }
     } catch {}
   }, 100);

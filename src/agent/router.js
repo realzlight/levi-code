@@ -4,6 +4,8 @@ import path from 'node:path';
 import { chat } from './client.js';
 import { recordUsage } from './usage.js';
 import { getEffort } from './effort.js';
+import { findMatchingSkills } from './skills.js';
+
 
 // Generate a compact directory tree preview (max ~50 tokens) to skip find/list_dir calls
 function dirPreview(dirPath) {
@@ -177,6 +179,18 @@ export async function route(query, { recentUser = [], forceAgent = false, sessio
     }
   }
 
+  // Skill trigger detection: attach recommended skill to insight if matched
+  if (r.route !== 'conversation') {
+    try {
+      const matches = findMatchingSkills(q, [], { max: 1, minScore: 0.5 });
+      if (matches.length) {
+        const sk = matches[0];
+        r.skillHint = sk.id;
+        r.insight = (r.insight ? r.insight + ' · ' : '') + `[skill: ${sk.id}]`;
+      }
+    } catch {}
+  }
+
   lastRoute = r.route;
-  return { route: r.route, tools: r.tools || 'all', mcp: r.mcp || false, query: q, recentMessages: recent, insight: r.insight };
+  return { route: r.route, tools: r.tools || 'all', mcp: r.mcp || false, query: q, recentMessages: recent, insight: r.insight, skillHint: r.skillHint };
 }

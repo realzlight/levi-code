@@ -73,7 +73,8 @@ function compactSupersededReads(messages, writtenPath) {
 
 // Minimal tool set for pure coding steps (step > 0 in coding loops).
 // Strips ~400 tokens of unused tool schemas per step.
-const CODING_ONLY_NAMES = new Set(['bash', 'read_file', 'write_file', 'edit_file', 'list_dir', 'find', 'read_lines', 'grep_search', 'code_search', 'ask']);
+const CODING_ONLY_NAMES = new Set(['bash', 'read_file', 'write_file', 'edit_file', 'list_dir', 'find', 'read_lines', 'grep_search', 'code_search', 'ask', 'load_skill']);
+
 
 // Generate 1-2 fluent, meaningful Claude-style narration lines from tool calls
 // when the model doesn't provide its own prose alongside tool_calls.
@@ -283,15 +284,17 @@ const SUB_TOOLS = ['spawn_subagent', 'list_subagents', 'message_subagent'];
 
 // messages = [{ role: 'user'|'assistant', content: string }]
 // onStep(kind, data) — optional progress callback: 'tool_call' | 'tool_result' | 'done' | 'thought'
-const LITE_NAMES = ['bash', 'read_file', 'write_file', 'edit_file', 'find', 'list_dir', 'read_lines', 'grep_search', 'code_search', 'google_search', 'fetch', ...PLAYWRIGHT_WEB_TOOLS, ...DESKTOP_TOOLS, ...SUB_TOOLS, 'ask', 'remember', 'retrieve', 'raw_memory_search', 'read_raw_memory', 'diary', 'learn_skill', 'get_tasks', 'set_task_done', 'add_task_cluster', 'mcp_search', 'mcp_list'];
+const LITE_NAMES = ['bash', 'read_file', 'write_file', 'edit_file', 'find', 'list_dir', 'read_lines', 'grep_search', 'code_search', 'google_search', 'fetch', ...PLAYWRIGHT_WEB_TOOLS, ...DESKTOP_TOOLS, ...SUB_TOOLS, 'ask', 'remember', 'retrieve', 'raw_memory_search', 'read_raw_memory', 'diary', 'learn_skill', 'load_skill', 'get_tasks', 'set_task_done', 'add_task_cluster', 'mcp_search', 'mcp_list'];
+
 const LITE_TOOLS = toolDefs.filter((t) => LITE_NAMES.includes(t.function.name));
 const LITE_GROUPS = {
   none: ['ask'],
-  memory: ['remember', 'retrieve', 'raw_memory_search', 'read_raw_memory', 'diary', 'learn_skill', 'ask'],
+  memory: ['remember', 'retrieve', 'raw_memory_search', 'read_raw_memory', 'diary', 'learn_skill', 'load_skill', 'ask'],
+
   web: ['google_search', 'fetch', ...PLAYWRIGHT_WEB_TOOLS, 'ask'],
   desktop: [...DESKTOP_TOOLS, 'ask'],
   shell: ['bash', 'read_file', 'write_file', 'edit_file', 'find', 'list_dir', 'read_lines', 'grep_search', 'code_search', 'ask', 'diary'],
-  all: ['bash', 'read_file', 'write_file', 'edit_file', 'find', 'list_dir', 'read_lines', 'grep_search', 'code_search', 'google_search', 'fetch', ...SUB_TOOLS, 'ask', 'remember', 'retrieve', 'raw_memory_search', 'read_raw_memory', 'diary', 'learn_skill', 'get_tasks', 'set_task_done'],
+  all: ['bash', 'read_file', 'write_file', 'edit_file', 'find', 'list_dir', 'read_lines', 'grep_search', 'code_search', 'google_search', 'fetch', ...SUB_TOOLS, 'ask', 'remember', 'retrieve', 'raw_memory_search', 'read_raw_memory', 'diary', 'learn_skill', 'load_skill', 'get_tasks', 'set_task_done'],
   tasks: ['get_tasks', 'set_task_done', 'add_task_cluster', 'ask'],
   mcp: ['mcp_search', 'mcp_list', 'bash', 'read_file', 'write_file', 'edit_file', 'find', 'list_dir', 'read_lines', 'grep_search', 'code_search', 'ask', 'diary']
 };
@@ -336,7 +339,7 @@ async function runLite(routed, sessionId, onStep, system, { signal } = {}) {
   } else if (typeof routed.mcp === 'string') {
     mcpHint = `Use MCP server "${routed.mcp}" — call mcp_search("<action>") to load tools.`;
   }
-  const context = buildContext({ userName: currentUserName(), insight: routed.insight, hint: mcpHint, recent: routed.recentMessages, exchange: routed.exchange, memory: readMemoryDigest(), mcpServers: mcpNames });
+  const context = buildContext({ userName: currentUserName(), insight: routed.insight, hint: mcpHint, recent: routed.recentMessages, exchange: routed.exchange, memory: readMemoryDigest(), mcpServers: mcpNames, skillQuery: routed.query });
   const messages = [{ role: 'user', content: context + routed.query }];
   let webCalls = 0;
   let budgetNoted = false;
@@ -724,7 +727,7 @@ async function runAgentInner(userMessage, { onStep, maxSteps, forceAgent, signal
   } else if (typeof routed.mcp === 'string') {
     mcpHint = `Use MCP server "${routed.mcp}" — call mcp_search("<action>") to load tools.`;
   }
-  const context = buildContext({ userName: currentUserName(), insight: routed.insight, dataContent: project.dataContent, taskSummary: project.taskSummary, hint: mcpHint, memory: readMemoryDigest(), mcpServers: mcpNames });
+  const context = buildContext({ userName: currentUserName(), insight: routed.insight, dataContent: project.dataContent, taskSummary: project.taskSummary, hint: mcpHint, memory: readMemoryDigest(), mcpServers: mcpNames, skillQuery: routed.query });
   const messages = [...history];
   const cur = context + userMessage;
   if (messages.length && messages[messages.length - 1].role === 'user') messages[messages.length - 1] = { role: 'user', content: messages[messages.length - 1].content + '\n\n' + cur };
