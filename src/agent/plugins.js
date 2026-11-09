@@ -1487,3 +1487,34 @@ export function createMarketplaceManifest(dirPath, {
   return { ok: true, path: filePath, manifest };
 }
 
+/**
+ * Detect which installed plugins are relevant to a given user query.
+ * Matches keywords against plugin names, descriptions, file IDs, titles, and summaries.
+ * Returns array of plugin names that have relevant content.
+ */
+export function getRelevantPlugins(query = '') {
+  if (!query || typeof query !== 'string') return [];
+  const qTokens = query.toLowerCase().split(/\W+/).filter((t) => t.length > 2);
+  if (!qTokens.length) return [];
+  const plugins = listPlugins();
+  const matched = new Set();
+  for (const p of plugins) {
+    const pTokens = `${p.name} ${p.description || ''}`.toLowerCase();
+    let hit = false;
+    for (const t of qTokens) {
+      if (pTokens.includes(t)) { hit = true; break; }
+    }
+    if (!hit && Array.isArray(p.files)) {
+      for (const f of p.files) {
+        const fText = `${f.id || ''} ${f.title || ''} ${f.summary || ''}`.toLowerCase();
+        for (const t of qTokens) {
+          if (fText.includes(t)) { hit = true; break; }
+        }
+        if (hit) break;
+      }
+    }
+    if (hit) matched.add(p.name);
+  }
+  return [...matched];
+}
+

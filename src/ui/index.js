@@ -139,6 +139,12 @@ function Message({ role, text, tool, arg, result, status, todos, width }) {
       h(ClaudeMessage, { role: 'assistant', width }, text || ' ')
     );
   }
+  if (role === 'plugin_badge') {
+    return h(Box, { marginBottom: 1, paddingLeft: 2 },
+      h(Text, { color: '#e879f9' }, '⚡ Using plugin: '),
+      h(Text, { color: '#38bdf8', bold: true }, text)
+    );
+  }
 
   return h(ClaudeMessage, { role: role === 'agent' ? 'assistant' : 'user', width }, text);
 }
@@ -771,7 +777,12 @@ function formatToolArg(name, args) {
     return args.command || '';
   }
   if (name === 'read_file' || name === 'write_file' || name === 'edit_file') {
-    return args.path || '';
+    const p = args.path || '';
+    if (p.includes('PLUGINS/')) {
+      const seg = p.split('PLUGINS/')[1]?.split('/')[0];
+      if (seg) return `${p} [plugin: ${seg}]`;
+    }
+    return p;
   }
   if (name === 'set_project') {
     return args.name || '';
@@ -1074,6 +1085,23 @@ function buildDisplayLines(messages, width, compactTools = false) {
       return;
     }
 
+    // Plugin badge — rendered when a plugin skill was relevant to the query
+    if (msg.role === 'plugin_badge') {
+      const text = typeof msg.text === 'string' ? msg.text : '';
+      lines.push({
+        key: `msg-${msgIdx}-plugin-badge`,
+        node: h(Box, { key: `msg-${msgIdx}-plugin-badge`, paddingLeft: 2, height: 1, overflow: 'hidden' },
+          h(Text, { color: '#e879f9' }, '⚡ Using plugin: '),
+          h(Text, { color: '#38bdf8', bold: true }, text)
+        )
+      });
+      lines.push({
+        key: `msg-${msgIdx}-plugin-badge-sep`,
+        node: h(Box, { key: `msg-${msgIdx}-plugin-badge-sep`, height: 1, overflow: 'hidden' }, h(Text, null, ' '))
+      });
+      return;
+    }
+
     // Tool summary message (restored from session buffer)
     if (msg.role === 'tool') {
       const text = typeof msg.text === 'string' ? msg.text : '';
@@ -1303,6 +1331,16 @@ function App({ mascot }) {
             const withoutDots = last && last.role === 'agent' && last.text === '...' ? prev.slice(0, -1) : prev;
             return [...withoutDots, { role: 'narrate', text: data }, { role: 'agent', text: '...' }];
           });
+        } else if (kind === 'plugin_badge') {
+          const plugins = Array.isArray(data?.plugins) ? data.plugins : (data?.plugin ? [data.plugin] : []);
+          const label = plugins.map(p => typeof p === 'string' ? p : (p.name || p.id || '')).filter(Boolean).join(', ');
+          if (label) {
+            setMessages((prev) => {
+              const last = prev[prev.length - 1];
+              const withoutDots = last && last.role === 'agent' && last.text === '...' ? prev.slice(0, -1) : prev;
+              return [...withoutDots, { role: 'plugin_badge', text: label }, { role: 'agent', text: '...' }];
+            });
+          }
         } else if (kind === 'subagent_start') {
           setActiveSubagents((prev) => [
             ...prev.filter((s) => s.role !== data.role),

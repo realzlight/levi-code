@@ -2,7 +2,7 @@ import os from 'node:os';
 import fs from 'node:fs';
 import path from 'node:path';
 import { getSkillsPromptList } from './skills.js';
-import { getPluginsPromptList } from './plugins.js';
+import { getPluginsPromptList, getRelevantPlugins } from './plugins.js';
 import { getCustomAgentsPromptList } from './custom-agents.js';
 import { readProjectPlaybook } from './project.js';
 
@@ -143,7 +143,7 @@ export function buildContext({ userName, insight, dataContent, taskSummary, hint
   if (skillsList?.length) {
     lines.push('available skills (call load_skill("id") to activate full playbook):\n' + skillsList.map((s) => s.line || `- ${s.id || s.name}: ${s.summary || s.title || s.name} — call load_skill("${s.id || s.name}") to activate`).join('\n'));
   }
-  const pluginsList = getPluginsPromptList();
+  const pluginsList = getPluginsPromptList(skillQuery || '');
   if (pluginsList?.length) {
     lines.push('available plugins (lazy-loaded; decide whether to use based on the user\'s request; to use one, read its instructions with read_file("~/.levi/PLUGINS/<path>") and follow them):\n' + pluginsList.map((p) => p.line || `- ${p.id || p.plugin}: ${p.summary || p.title}`).join('\n'));
   }
@@ -169,7 +169,12 @@ export function buildContext({ userName, insight, dataContent, taskSummary, hint
       lines.push(`project playbook (${path.basename(playbook.path)}):\n${playbook.content}`);
     }
   } catch {}
-  return lines.length ? `[context]\n${lines.join('\n')}\n[/context]\n\n` : '';
+  const context = lines.length ? `[context]\n${lines.join('\n')}\n[/context]\n\n` : '';
+  const relevantPlugins = getRelevantPlugins(skillQuery || '');
+  return {
+    context,
+    plugins: relevantPlugins.map((name) => ({ name }))
+  };
 }
 
 const SOLO_NOTE = 'SOLO MODE: sub-agents are disabled. Do all the work yourself.';

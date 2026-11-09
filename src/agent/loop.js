@@ -339,7 +339,8 @@ async function runLite(routed, sessionId, onStep, system, { signal } = {}) {
   } else if (typeof routed.mcp === 'string') {
     mcpHint = `Use MCP server "${routed.mcp}" — call mcp_search("<action>") to load tools.`;
   }
-  const context = buildContext({ userName: currentUserName(), insight: routed.insight, hint: mcpHint, recent: routed.recentMessages, exchange: routed.exchange, memory: readMemoryDigest(), mcpServers: mcpNames, skillQuery: routed.query });
+  const { context, plugins: loadedPlugins } = buildContext({ userName: currentUserName(), insight: routed.insight, hint: mcpHint, recent: routed.recentMessages, exchange: routed.exchange, memory: readMemoryDigest(), mcpServers: mcpNames, skillQuery: routed.query });
+  if (loadedPlugins?.length) onStep?.('plugin_badge', { plugins: loadedPlugins });
   const messages = [{ role: 'user', content: context + routed.query }];
   let webCalls = 0;
   let budgetNoted = false;
@@ -735,7 +736,8 @@ async function runAgentInner(userMessage, { onStep, maxSteps, forceAgent, signal
   } else if (typeof routed.mcp === 'string') {
     mcpHint = `Use MCP server "${routed.mcp}" — call mcp_search("<action>") to load tools.`;
   }
-  const context = buildContext({ userName: currentUserName(), insight: routed.insight, dataContent: project.dataContent, taskSummary: project.taskSummary, hint: mcpHint, memory: readMemoryDigest(), mcpServers: mcpNames, skillQuery: routed.query });
+  const { context, plugins: loadedPlugins } = buildContext({ userName: currentUserName(), insight: routed.insight, dataContent: project.dataContent, taskSummary: project.taskSummary, hint: mcpHint, memory: readMemoryDigest(), mcpServers: mcpNames, skillQuery: routed.query });
+  if (loadedPlugins?.length) onStep?.('plugin_badge', { plugins: loadedPlugins });
   const messages = [...history];
   const cur = context + userMessage;
   if (messages.length && messages[messages.length - 1].role === 'user') messages[messages.length - 1] = { role: 'user', content: messages[messages.length - 1].content + '\n\n' + cur };
