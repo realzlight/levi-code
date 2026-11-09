@@ -223,7 +223,7 @@ export default function CommandBar({ output, scrollOffset = 0, width = 80, heigh
 
       // Clean bottom helper bar
       h(Box, { justifyContent: 'space-between', width: '100%', paddingX: 1 },
-        h(Text, { color: DIM }, isScrollable ? '↑↓ line · pgup/pgdn page · esc close' : 'Ready · esc to return to prompt'),
+        h(Text, { color: DIM }, isScrollable ? '↑↓ line · v/f full screen · esc close' : 'Ready · v/f full screen · esc close'),
         h(Text, { color: DIM }, '[esc close]')
       )
     );
@@ -263,7 +263,7 @@ export default function CommandBar({ output, scrollOffset = 0, width = 80, heigh
 
       // Bottom bar
       h(Box, { justifyContent: 'space-between', width: '100%', paddingX: 1 },
-        h(Text, { color: DIM }, 'Ready · esc to return to prompt'),
+        h(Text, { color: DIM }, 'Ready · v/f full screen · esc close'),
         h(Text, { color: DIM }, '[esc close]')
       )
     );

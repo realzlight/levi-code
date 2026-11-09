@@ -1273,8 +1273,35 @@ function App({ mascot }) {
       }
     });
     setCommandScroll(0);
-    if (panel) setCommandOutput({ kind: 'panel', ...panel });
-    else if (out) setCommandOutput({ kind: 'text', text: out });
+    const cmdName = text.trim().replace(/^\//, '').split(/\s+/)[0] || 'COMMAND';
+    if (panel) {
+      if (panel.fields && panel.fields.length > 8) {
+        // Large panel output: cover full screen like walkthroughs with scrolling!
+        const mdLines = [`# ${panel.title || (cmdName.toUpperCase() + ' CATALOG')}\n`];
+        for (const f of panel.fields) {
+          mdLines.push(`**${f.label}:** ${f.value}`);
+        }
+        setForm({
+          mode: 'changelog',
+          title: panel.title || `${cmdName.toUpperCase()} OUTPUT`,
+          content: mdLines.join('\n\n')
+        });
+      } else {
+        setCommandOutput({ kind: 'panel', ...panel });
+      }
+    } else if (out) {
+      const lineCount = out.split(/\r?\n/).length;
+      if (lineCount > 12) {
+        // Large command output: cover full screen like walkthroughs with scrolling!
+        setForm({
+          mode: 'changelog',
+          title: `${cmdName.toUpperCase()} OUTPUT`,
+          content: out
+        });
+      } else {
+        setCommandOutput({ kind: 'text', text: out });
+      }
+    }
     refreshGitDiff(true);
   }
 
@@ -1588,6 +1615,21 @@ function App({ mascot }) {
     }
 
     if (commandOutput) {
+      if (char === 'f' || char === 'F' || char === 'v' || char === 'V') {
+        const text = commandOutput.kind === 'text'
+          ? commandOutput.text
+          : (commandOutput.fields ? commandOutput.fields.map(f => `**${f.label}:** ${f.value}`).join('\n\n') : '');
+        if (text) {
+          setForm({
+            mode: 'changelog',
+            title: commandOutput.title || 'COMMAND OUTPUT',
+            content: text
+          });
+          setCommandOutput(null);
+          setCommandScroll(0);
+          return;
+        }
+      }
       if (char === 'q' || char === 'Q') {
         setCommandOutput(null);
         setCommandScroll(0);

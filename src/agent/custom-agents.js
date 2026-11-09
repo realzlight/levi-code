@@ -52,6 +52,7 @@ export function parseAgentFrontmatter(content) {
   let name = '';
   let description = '';
   let tools = 'all';
+  let disabled = false;
 
   for (const line of header.split('\n')) {
     const colonIdx = line.indexOf(':');
@@ -61,6 +62,8 @@ export function parseAgentFrontmatter(content) {
     if (key === 'name') name = val;
     else if (key === 'description') description = val;
     else if (key === 'tools') tools = val;
+    else if (key === 'disabled') disabled = val === 'true' || val === 'yes' || val === '1';
+    else if (key === 'enabled') disabled = !(val === 'true' || val === 'yes' || val === '1');
   }
 
   const cleanName = sanitizeAgentName(name);
@@ -70,6 +73,7 @@ export function parseAgentFrontmatter(content) {
     name: cleanName,
     description,
     tools, // Note: all custom sub-agents receive full tool access
+    disabled,
     systemPrompt: body,
     body,
     raw: content
@@ -109,6 +113,7 @@ export function listCustomAgents() {
             name: parsed.name,
             description: parsed.description,
             tools: 'all',
+            disabled: Boolean(parsed.disabled),
             path: fullPath,
             file: f,
             systemPrompt: parsed.systemPrompt
@@ -122,13 +127,55 @@ export function listCustomAgents() {
 }
 
 /**
- * Get a specific custom sub-agent by name (case-insensitive)
+ * Get a specific custom sub-agent by name (case-insensitive).
+ * Skips disabled agents unless includeDisabled is true.
  */
-export function getCustomAgent(name) {
+export function getCustomAgent(name, { includeDisabled = false } = {}) {
   if (!name || typeof name !== 'string') return null;
   const clean = sanitizeAgentName(name).toLowerCase();
   const all = listCustomAgents();
-  return all.find((a) => a.name.toLowerCase() === clean) || null;
+  const found = all.find((a) => a.name.toLowerCase() === clean);
+  if (!found) return null;
+  if (found.disabled && !includeDisabled) return null;
+  return found;
+}
+
+/**
+ * Enable or disable a custom sub-agent by toggling disabled flag in its YAML frontmatter.
+ */
+export function setCustomAgentEnabled(name, enabled) {
+  ensureAgentsDir();
+  const cleanName = sanitizeAgentName(name);
+  if (!cleanName) return { ok: false, error: 'Agent name required.' };
+
+  const filePath = path.join(AGENTS_DIR, `${cleanName}.md`);
+  if (!fs.existsSync(filePath)) {
+    return { ok: false, error: `Agent "${cleanName}" not found in ~/.levi/AGENTS/.` };
+  }
+
+  try {
+    const content = fs.readFileSync(filePath, 'utf-8');
+    const parsed = parseAgentFrontmatter(content);
+    if (!parsed) {
+      return { ok: false, error: `Invalid agent format in ~/.levi/AGENTS/${cleanName}.md.` };
+    }
+
+    const endIdx = content.indexOf('---', 3);
+    const header = content.slice(3, endIdx).trim();
+    const body = content.slice(endIdx + 3);
+
+    const lines = header.split('\n').filter((l) => !/^(disabled|enabled):/i.test(l.trim()));
+    if (!enabled) {
+      lines.push('disabled: true');
+    }
+
+    const newContent = `---\n${lines.join('\n')}\n---${body}`;
+    fs.writeFileSync(filePath, newContent, 'utf-8');
+
+    return { ok: true, name: cleanName, enabled: Boolean(enabled) };
+  } catch (err) {
+    return { ok: false, error: `Failed to update agent: ${err.message}` };
+  }
 }
 
 /**
@@ -268,8 +315,9 @@ export function syncAgentsFromPlugin(pluginDir, explicitTargets = null) {
  */
 export function getCustomAgentsPromptList() {
   const agents = listCustomAgents();
-  return agents.map((a) => ({
+  return agents.filter((a) => !a.disabled).map((a) => ({
     name: a.name,
     description: a.description
   }));
 }
+

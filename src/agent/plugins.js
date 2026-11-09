@@ -1218,7 +1218,7 @@ export function listPlugins() {
       }
 
       if (record) {
-        installed.push({ ...record, dirPath: pluginDir });
+        installed.push({ ...record, dirPath: pluginDir, disabled: Boolean(record.disabled) });
       }
     }
   } catch {}
@@ -1244,6 +1244,21 @@ export function getPlugin(name) {
   if (!clean) return null;
   const meta = readPluginsMeta();
   return meta.plugins[clean] || null;
+}
+
+/**
+ * Enable or disable an installed plugin.
+ */
+export function setPluginEnabled(name, enabled) {
+  const clean = sanitizeName(name);
+  if (!clean) return { ok: false, error: 'Plugin name required.' };
+  const meta = readPluginsMeta();
+  if (!meta.plugins[clean]) {
+    return { ok: false, error: `Plugin "${clean}" is not installed.` };
+  }
+  meta.plugins[clean].disabled = !enabled;
+  writePluginsMeta(meta);
+  return { ok: true, name: clean, enabled: Boolean(enabled) };
 }
 
 /**
@@ -1345,7 +1360,7 @@ export function removePlugin(name) {
  * Return a list of all markdown files across all active plugins for retrieval indexing.
  */
 export function listPluginFiles() {
-  const plugins = listPlugins();
+  const plugins = listPlugins().filter((p) => !p.disabled);
   const out = [];
   for (const p of plugins) {
     if (Array.isArray(p.files)) {
@@ -1371,7 +1386,7 @@ export function listPluginFiles() {
  * - <plugin>/<skill> (file: ~/.levi/PLUGINS/<relPath>): <title> — <summary>
  */
 export function getPluginsPromptList(query = '') {
-  const plugins = listPlugins();
+  const plugins = listPlugins().filter((p) => !p.disabled);
   const allFiles = [];
 
   for (const p of plugins) {
@@ -1496,7 +1511,7 @@ export function getRelevantPlugins(query = '') {
   if (!query || typeof query !== 'string') return [];
   const qTokens = query.toLowerCase().split(/\W+/).filter((t) => t.length > 2);
   if (!qTokens.length) return [];
-  const plugins = listPlugins();
+  const plugins = listPlugins().filter((p) => !p.disabled);
   const matched = new Set();
   for (const p of plugins) {
     const pTokens = `${p.name} ${p.description || ''}`.toLowerCase();

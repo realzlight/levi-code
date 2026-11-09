@@ -1373,15 +1373,19 @@ defineCommand({
     for (const p of plugins) {
       const fmtIcon = FMT_ICONS[p.format] || '📦';
       const fmtLabel = p.format ? ` [${p.format}]` : '';
+      const statusTag = p.disabled ? ' [DISABLED]' : ' [ACTIVE]';
+      const statusColor = p.disabled ? '#f87171' : '#4ade80';
       fields.push({
-        label: `${fmtIcon} ${p.name} (v${p.version})${fmtLabel}`,
-        value: `${p.description ? p.description + ' — ' : ''}by ${p.author || 'Unknown'} [${p.filesCount || 0} playbook(s)]`
+        label: `${fmtIcon} ${p.name} (v${p.version})${fmtLabel}${statusTag}`,
+        value: `${p.description ? p.description + ' — ' : ''}by ${p.author || 'Unknown'} [${p.filesCount || 0} playbook(s)]`,
+        color: statusColor
       });
       if (Array.isArray(p.files)) {
         for (const f of p.files) {
           fields.push({
             label: `   ⚡ ${f.id}`,
-            value: `${f.title ? f.title + ' — ' : ''}${f.summary || 'Playbook'} [~/.levi/PLUGINS/${f.relPath}]`
+            value: `${f.title ? f.title + ' — ' : ''}${f.summary || 'Playbook'} [~/.levi/PLUGINS/${f.relPath}]`,
+            color: p.disabled ? '#64748b' : '#c0caf5'
           });
         }
       }
@@ -1508,6 +1512,51 @@ defineCommand({
 });
 
 defineCommand({
+  name: 'plugin:enable',
+  description: 'Enable an installed plugin so its skills and playbooks are active',
+  args: [{ name: 'name', required: true, description: 'Plugin name to enable' }],
+  run: async ({ name }, ctx) => {
+    const { setPluginEnabled } = await pluginsMod();
+    const res = setPluginEnabled(name, true);
+    if (!res.ok) return ctx.print(`❌ ${res.error}`);
+    import('../agent/retrieval.js').then(({ retrieve }) => {
+      retrieve({ query: 'sync', limit: 1, rebuild: false }).catch(() => {});
+    }).catch(() => {});
+    ctx.print(`✓ Enabled plugin "${res.name}". Its playbooks and skills are now active.`);
+  }
+});
+
+defineCommand({
+  name: 'plugins:enable',
+  description: 'Alias for /plugin:enable',
+  args: [{ name: 'name', required: true, description: 'Plugin name to enable' }],
+  run: async ({ name }, ctx) => runCommand(`plugin:enable ${name}`, ctx)
+});
+
+defineCommand({
+  name: 'plugin:disable',
+  description: 'Disable an installed plugin without deleting its files',
+  args: [{ name: 'name', required: true, description: 'Plugin name to disable' }],
+  run: async ({ name }, ctx) => {
+    const { setPluginEnabled } = await pluginsMod();
+    const res = setPluginEnabled(name, false);
+    if (!res.ok) return ctx.print(`❌ ${res.error}`);
+    import('../agent/retrieval.js').then(({ retrieve }) => {
+      retrieve({ query: 'sync', limit: 1, rebuild: false }).catch(() => {});
+    }).catch(() => {});
+    ctx.print(`✓ Disabled plugin "${res.name}". Its playbooks will not be injected into context.`);
+  }
+});
+
+defineCommand({
+  name: 'plugins:disable',
+  description: 'Alias for /plugin:disable',
+  args: [{ name: 'name', required: true, description: 'Plugin name to disable' }],
+  run: async ({ name }, ctx) => runCommand(`plugin:disable ${name}`, ctx)
+});
+
+
+defineCommand({
   name: 'plugin:init',
   description: 'Scaffold a new plugin manifest (.levi-plugin/plugin.json or marketplace.json) in current directory',
   args: [
@@ -1555,16 +1604,17 @@ defineCommand({
       return ctx.printPanel({
         title: `Custom Sub-Agents (${agents.length})`,
         fields: agents.map((a) => ({
-          label: `@${a.name}`,
+          label: `@${a.name}${a.disabled ? ' [DISABLED]' : ' [ACTIVE]'}`,
           value: `${a.description} [dim](~/.levi/AGENTS/${a.name}.md)[/dim]`,
-          color: '#38bdf8'
+          color: a.disabled ? '#f87171' : '#38bdf8'
         }))
       });
     }
 
     const lines = ['', `  Available custom sub-agents (${agents.length}):`, ''];
     for (const a of agents) {
-      lines.push(`    🤖 @${a.name} — ${a.description}`);
+      const statusTag = a.disabled ? ' [DISABLED]' : ' [ACTIVE]';
+      lines.push(`    🤖 @${a.name}${statusTag} — ${a.description}`);
       lines.push(`       File: ~/.levi/AGENTS/${a.name}.md`);
     }
     lines.push('');
@@ -1581,7 +1631,7 @@ defineCommand({
   ],
   run: async ({ name, description }, ctx) => {
     const { saveCustomAgent, getCustomAgent } = await import('../agent/custom-agents.js');
-    const existing = getCustomAgent(name);
+    const existing = getCustomAgent(name, { includeDisabled: true });
     if (existing) {
       return ctx.print(`Agent "${name}" already exists at ~/.levi/AGENTS/${existing.name}.md. Use /agent:view ${name} or edit it directly.`);
     }
@@ -1621,7 +1671,7 @@ defineCommand({
   args: [{ name: 'name', required: true, description: 'Agent name to inspect' }],
   run: async ({ name }, ctx) => {
     const { getCustomAgent } = await import('../agent/custom-agents.js');
-    const agent = getCustomAgent(name);
+    const agent = getCustomAgent(name, { includeDisabled: true });
     if (!agent) {
       return ctx.print(`Agent "${name}" not found in ~/.levi/AGENTS/. Use /agent:list to view available agents.`);
     }
@@ -1631,6 +1681,7 @@ defineCommand({
         title: `🤖 Sub-Agent: @${agent.name}`,
         fields: [
           { label: 'Name', value: `@${agent.name}`, color: '#38bdf8' },
+          { label: 'Status', value: agent.disabled ? 'DISABLED' : 'ACTIVE', color: agent.disabled ? '#f87171' : '#4ade80' },
           { label: 'Description', value: agent.description, color: '#4ade80' },
           { label: 'File', value: `~/.levi/AGENTS/${agent.name}.md`, color: '#a78bfa' },
           { label: 'Instructions', value: agent.systemPrompt.slice(0, 300) + (agent.systemPrompt.length > 300 ? '...' : ''), color: '#c0caf5' }
@@ -1640,7 +1691,7 @@ defineCommand({
 
     const lines = [
       '',
-      `  🤖 @${agent.name}`,
+      `  🤖 @${agent.name} [${agent.disabled ? 'DISABLED' : 'ACTIVE'}]`,
       `  Description: ${agent.description}`,
       `  Location:    ~/.levi/AGENTS/${agent.name}.md`,
       '',
@@ -1653,13 +1704,37 @@ defineCommand({
 });
 
 defineCommand({
+  name: 'agent:enable',
+  description: 'Enable a custom sub-agent so Levi can delegate tasks to it',
+  args: [{ name: 'name', required: true, description: 'Agent name to enable' }],
+  run: async ({ name }, ctx) => {
+    const { setCustomAgentEnabled } = await import('../agent/custom-agents.js');
+    const res = setCustomAgentEnabled(name, true);
+    if (!res.ok) return ctx.print(`❌ ${res.error}`);
+    ctx.print(`✓ Enabled sub-agent "@${res.name}". Levi will now orchestrate matching tasks to it.`);
+  }
+});
+
+defineCommand({
+  name: 'agent:disable',
+  description: 'Disable a custom sub-agent without deleting its definition',
+  args: [{ name: 'name', required: true, description: 'Agent name to disable' }],
+  run: async ({ name }, ctx) => {
+    const { setCustomAgentEnabled } = await import('../agent/custom-agents.js');
+    const res = setCustomAgentEnabled(name, false);
+    if (!res.ok) return ctx.print(`❌ ${res.error}`);
+    ctx.print(`✓ Disabled sub-agent "@${res.name}". Levi will not delegate tasks to it until re-enabled.`);
+  }
+});
+
+defineCommand({
   name: 'agent:edit',
   description: 'Open a custom agent definition in your preferred terminal editor',
   args: [{ name: 'name', required: true, description: 'Agent name to edit' }],
   run: async ({ name }, ctx) => {
     const { getCustomAgent } = await import('../agent/custom-agents.js');
     const { openInEditor, getPreferredEditor } = await import('../agent/editor.js');
-    const agent = getCustomAgent(name);
+    const agent = getCustomAgent(name, { includeDisabled: true });
     if (!agent) {
       return ctx.print(`Agent "${name}" not found in ~/.levi/AGENTS/. Use /agent:list to see available agents.`);
     }
