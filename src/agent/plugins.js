@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import { execa } from 'execa';
+import { syncAgentsFromPlugin } from './custom-agents.js';
 
 const LEVI_HOME = path.join(os.homedir(), '.levi');
 const PLUGINS_DIR = path.join(LEVI_HOME, 'PLUGINS');
@@ -769,6 +770,7 @@ export function finalizeMarketplaceInstall(tempDirPath, cleanUrl, repoBase, plug
 
   const targetPaths = manifest?.targetPaths || ['./'];
   const files = scanPluginTargets(finalDirPath, targetPaths);
+  const syncedAgents = syncAgentsFromPlugin(finalDirPath, manifest?.agents || targetPaths);
 
   const meta = readPluginsMeta();
   meta.plugins[canonicalName] = {
@@ -788,6 +790,7 @@ export function finalizeMarketplaceInstall(tempDirPath, cleanUrl, repoBase, plug
     installedAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
     filesCount: files.length,
+    agentsCount: syncedAgents.length,
     files: files.map((f) => ({
       id: `${canonicalName}/${f.relToPlugin.replace(/\.md$/, '')}`,
       relPath: `${canonicalName}/${f.relToPlugin}`,
@@ -813,6 +816,7 @@ export function finalizeMarketplaceInstall(tempDirPath, cleanUrl, repoBase, plug
     description: manifest?.description || pluginEntry.description || '',
     author: manifest?.author || pluginEntry.author || 'Unknown',
     filesCount: files.length,
+    agentsCount: syncedAgents.length,
     path: finalDirPath,
     manifest: manifest?.raw || pluginEntry.raw || {}
   };
@@ -996,6 +1000,7 @@ export function finalizeInstall(tempDirPath, cleanUrl, repoBase, chosenFormatOrO
   onProgress?.(`Configuring playbooks for ${formatLabel}...`);
 
   const files = scanPluginTargets(finalDirPath, resolved.targetPaths);
+  const syncedAgents = syncAgentsFromPlugin(finalDirPath, resolved.agents || resolved.targetPaths);
 
   const meta = readPluginsMeta();
   meta.plugins[canonicalName] = {
@@ -1011,6 +1016,7 @@ export function finalizeInstall(tempDirPath, cleanUrl, repoBase, chosenFormatOrO
     installedAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
     filesCount: files.length,
+    agentsCount: syncedAgents.length,
     files: files.map((f) => ({
       id: `${canonicalName}/${f.relToPlugin.replace(/\.md$/, '')}`,
       relPath: `${canonicalName}/${f.relToPlugin}`,
@@ -1036,6 +1042,7 @@ export function finalizeInstall(tempDirPath, cleanUrl, repoBase, chosenFormatOrO
     description: resolved.description || '',
     author: resolved.author || 'Unknown',
     filesCount: files.length,
+    agentsCount: syncedAgents.length,
     path: finalDirPath,
     manifest: resolved.raw || {}
   };
@@ -1300,6 +1307,7 @@ export function createPluginManifest(dirPath, {
   skills = ['./skills'],
   commands = ['./commands'],
   rules = ['./rules'],
+  agents = ['./agents'],
   format = 'levi'
 } = {}) {
   const pluginName = sanitizeName(name || path.basename(dirPath));
@@ -1314,7 +1322,8 @@ export function createPluginManifest(dirPath, {
     author: author || 'Community',
     skills: Array.isArray(skills) ? skills : [skills],
     commands: Array.isArray(commands) ? commands : [commands],
-    rules: Array.isArray(rules) ? rules : [rules]
+    rules: Array.isArray(rules) ? rules : [rules],
+    agents: Array.isArray(agents) ? agents : [agents]
   };
 
   const filePath = path.join(targetDir, 'plugin.json');

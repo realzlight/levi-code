@@ -418,12 +418,12 @@ export const toolDefs = [
     type: 'function',
     function: {
       name: 'spawn_subagent',
-      description: 'Delegate ONE concrete, self-contained task to a sub-agent (file/bash only; no memory, tasks, or questions). Give exact file(s), change, and what to report. Blocked when subagents are disabled in /config.',
+      description: 'Delegate ONE concrete, self-contained goal to an autonomous sub-agent with full tool access. If a custom agent exists in ~/.levi/AGENTS/ (e.g. bug-hunter), specify its name as role. Levi orchestrates; the sub-agent executes and reports back.',
       parameters: {
         type: 'object',
         properties: {
-          role: { type: 'string', description: 'Short role name, e.g. "bugfixer"' },
-          instruction: { type: 'string', description: 'Exact task: file(s), change, what to report' }
+          role: { type: 'string', description: 'Role or custom agent name from ~/.levi/AGENTS/ (e.g. "bug-hunter" or "tester")' },
+          instruction: { type: 'string', description: 'Assigned goal or task for the sub-agent to execute autonomously' }
         },
         required: ['role', 'instruction']
       }

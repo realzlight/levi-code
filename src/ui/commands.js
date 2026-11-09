@@ -1172,21 +1172,27 @@ defineCommand({
 
 // Shared install result panel renderer
 function showInstallResult(res, ctx) {
+  const fields = [
+    { label: 'Name', value: res.name, color: '#38bdf8' },
+    { label: 'Format', value: res.formatLabel || res.format || 'Levi', color: '#e879f9' },
+    { label: 'Version', value: res.version, color: '#22d3ee' },
+    { label: 'Author', value: res.author, color: '#c0caf5' },
+    { label: 'Description', value: res.description || 'Community plugin', color: '#4ade80' },
+    { label: 'Playbooks', value: `${res.filesCount} file(s) indexed`, color: '#ffd700' }
+  ];
+  if (res.agentsCount > 0) {
+    fields.push({ label: 'Agents', value: `${res.agentsCount} custom agent(s) synced to ~/.levi/AGENTS/`, color: '#38bdf8' });
+  }
+  fields.push({ label: 'Location', value: `~/.levi/PLUGINS/${res.name}`, color: '#a78bfa' });
+
   if (ctx.printPanel) {
     return ctx.printPanel({
       title: `✦ Installed Plugin: ${res.name}`,
-      fields: [
-        { label: 'Name', value: res.name, color: '#38bdf8' },
-        { label: 'Format', value: res.formatLabel || res.format || 'Levi', color: '#e879f9' },
-        { label: 'Version', value: res.version, color: '#22d3ee' },
-        { label: 'Author', value: res.author, color: '#c0caf5' },
-        { label: 'Description', value: res.description || 'Community plugin', color: '#4ade80' },
-        { label: 'Playbooks', value: `${res.filesCount} file(s) indexed`, color: '#ffd700' },
-        { label: 'Location', value: `~/.levi/PLUGINS/${res.name}`, color: '#a78bfa' }
-      ]
+      fields
     });
   }
-  ctx.print(`✓ Installed plugin "${res.name}" [${res.formatLabel || res.format}] (v${res.version}) by ${res.author} with ${res.filesCount} playbook(s) indexed at ~/.levi/PLUGINS/${res.name}.`);
+  const agentNote = res.agentsCount > 0 ? ` and ${res.agentsCount} custom agent(s) synced` : '';
+  ctx.print(`✓ Installed plugin "${res.name}" [${res.formatLabel || res.format}] (v${res.version}) by ${res.author} with ${res.filesCount} playbook(s) indexed${agentNote} at ~/.levi/PLUGINS/${res.name}.`);
 }
 
 defineCommand({
@@ -1497,6 +1503,137 @@ defineCommand({
     if (!existsSync(skillsDir)) mkdirSync(skillsDir, { recursive: true });
     ctx.print(`✓ Created plugin manifest at ${res.path}`);
     ctx.print(`Place your markdown playbooks into ./skills/ or ./rules/ and share your repo!`);
+  }
+});
+
+defineCommand({
+  name: 'agents',
+  description: 'Alias for /agent:list',
+  run: async (_, ctx) => runCommand('agent:list', ctx)
+});
+
+defineCommand({
+  name: 'agent:list',
+  description: 'List all custom sub-agents available in ~/.levi/AGENTS/',
+  run: async (_, ctx) => {
+    const { listCustomAgents } = await import('../agent/custom-agents.js');
+    const agents = listCustomAgents();
+    if (!agents.length) {
+      return ctx.print('No custom sub-agents found in ~/.levi/AGENTS/.\nUse /agent:create <name> to create one, or install a plugin containing agents.');
+    }
+
+    if (ctx.printPanel) {
+      return ctx.printPanel({
+        title: `Custom Sub-Agents (${agents.length})`,
+        fields: agents.map((a) => ({
+          label: `@${a.name}`,
+          value: `${a.description} [dim](~/.levi/AGENTS/${a.name}.md)[/dim]`,
+          color: '#38bdf8'
+        }))
+      });
+    }
+
+    const lines = ['', `  Available custom sub-agents (${agents.length}):`, ''];
+    for (const a of agents) {
+      lines.push(`    🤖 @${a.name} — ${a.description}`);
+      lines.push(`       File: ~/.levi/AGENTS/${a.name}.md`);
+    }
+    lines.push('');
+    return ctx.print(lines.join('\n'));
+  }
+});
+
+defineCommand({
+  name: 'agent:create',
+  description: 'Create a custom sub-agent in ~/.levi/AGENTS/<name>.md',
+  args: [
+    { name: 'name', required: true, description: 'Agent name (e.g. bug-hunter)' },
+    { name: 'description', required: false, description: 'Description of what this agent does' }
+  ],
+  run: async ({ name, description }, ctx) => {
+    const { saveCustomAgent, getCustomAgent } = await import('../agent/custom-agents.js');
+    const existing = getCustomAgent(name);
+    if (existing) {
+      return ctx.print(`Agent "${name}" already exists at ~/.levi/AGENTS/${existing.name}.md. Use /agent:view ${name} or edit it directly.`);
+    }
+
+    const desc = description ? String(description).trim() : `Custom sub-agent specialized for ${name}`;
+    const defaultPrompt = `You are ${name}, a professional sub-agent specialized in ${desc}.\n\nWhen assigned a task by lead orchestrator Levi:\n1. Execute the work directly using your tools.\n2. Verify all modifications.\n3. Report back with a concise factual summary of changes and results.`;
+
+    const res = saveCustomAgent(name, {
+      description: desc,
+      systemPrompt: defaultPrompt
+    });
+
+    if (!res.ok) {
+      return ctx.print(`❌ Failed to create agent: ${res.error}`);
+    }
+
+    if (ctx.printPanel) {
+      return ctx.printPanel({
+        title: `✦ Created Custom Agent: @${res.name}`,
+        fields: [
+          { label: 'Name', value: `@${res.name}`, color: '#38bdf8' },
+          { label: 'Description', value: res.description, color: '#4ade80' },
+          { label: 'Tools', value: 'Full tool access', color: '#22d3ee' },
+          { label: 'File', value: `~/.levi/AGENTS/${res.name}.md`, color: '#a78bfa' }
+        ]
+      });
+    }
+
+    ctx.print(`✓ Created custom agent "@${res.name}" at ~/.levi/AGENTS/${res.name}.md.`);
+    ctx.print(`Levi will automatically orchestrate and delegate matching tasks to @${res.name}.`);
+  }
+});
+
+defineCommand({
+  name: 'agent:view',
+  description: 'View custom agent definition and instructions from ~/.levi/AGENTS/<name>.md',
+  args: [{ name: 'name', required: true, description: 'Agent name to inspect' }],
+  run: async ({ name }, ctx) => {
+    const { getCustomAgent } = await import('../agent/custom-agents.js');
+    const agent = getCustomAgent(name);
+    if (!agent) {
+      return ctx.print(`Agent "${name}" not found in ~/.levi/AGENTS/. Use /agent:list to view available agents.`);
+    }
+
+    if (ctx.printPanel) {
+      return ctx.printPanel({
+        title: `🤖 Sub-Agent: @${agent.name}`,
+        fields: [
+          { label: 'Name', value: `@${agent.name}`, color: '#38bdf8' },
+          { label: 'Description', value: agent.description, color: '#4ade80' },
+          { label: 'File', value: `~/.levi/AGENTS/${agent.name}.md`, color: '#a78bfa' },
+          { label: 'Instructions', value: agent.systemPrompt.slice(0, 300) + (agent.systemPrompt.length > 300 ? '...' : ''), color: '#c0caf5' }
+        ]
+      });
+    }
+
+    const lines = [
+      '',
+      `  🤖 @${agent.name}`,
+      `  Description: ${agent.description}`,
+      `  Location:    ~/.levi/AGENTS/${agent.name}.md`,
+      '',
+      '  --- System Prompt ---',
+      agent.systemPrompt.split('\n').map((l) => '  ' + l).join('\n'),
+      ''
+    ];
+    ctx.print(lines.join('\n'));
+  }
+});
+
+defineCommand({
+  name: 'agent:delete',
+  description: 'Delete a custom sub-agent from ~/.levi/AGENTS/<name>.md',
+  args: [{ name: 'name', required: true, description: 'Agent name to delete' }],
+  run: async ({ name }, ctx) => {
+    const { deleteCustomAgent } = await import('../agent/custom-agents.js');
+    const res = deleteCustomAgent(name);
+    if (!res.ok) {
+      return ctx.print(`❌ ${res.error}`);
+    }
+    ctx.print(`✓ Deleted custom agent "@${res.name}" from ~/.levi/AGENTS/.`);
   }
 });
 

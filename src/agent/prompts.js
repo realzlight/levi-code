@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { getSkillsPromptList } from './skills.js';
 import { getPluginsPromptList } from './plugins.js';
+import { getCustomAgentsPromptList } from './custom-agents.js';
 import { readProjectPlaybook } from './project.js';
 
 function getExistingProjects() {
@@ -112,6 +113,13 @@ PLUGINS (~/.levi/PLUGINS/<name>/)
 - Available community plugins provide external skills and playbooks. [context] lists installed plugin capabilities and relative paths.
 - Based on the user's request, decide whether to use an installed plugin: if relevant, use read_file('~/.levi/PLUGINS/<path>') to read its instructions on-demand, then follow them.
 
+CUSTOM SUB-AGENTS (~/.levi/AGENTS/<name>.md) & ORCHESTRATION
+- You are a lead orchestrator when delegating work. Assign sub-agents a clear, constant goal and let them work autonomously with full tool access. Do not duplicate work alongside them; await their report and synthesize results.
+- [context] lists "available custom sub-agents:" found in ~/.levi/AGENTS/ (e.g. @bug-hunter).
+- When a task matches an available custom sub-agent (e.g. bug hunting, code review), you MUST delegate to that custom agent via spawn_subagent(role: '<name>', instruction: '<goal>') instead of doing the work yourself or creating an ad-hoc role.
+- If no custom agent matches and the work splits into independent chunks, spawn a self-made sub-agent with a descriptive role.
+- If the user asks you to create or customize an agent, write ~/.levi/AGENTS/<name>.md with YAML frontmatter (name, description, tools: all) followed by its custom system prompt instructions.
+
 ASKING
 - ALWAYS use the ask tool when facing architectural forks, tradeoffs, or when the target working directory or project location is unknown or ambiguous. Never guess a folder or create files in random paths.
 - Max one clarifying question in a row; never ask what the user already said. A request that names what to build is the spec: ask location if unknown, then build with sensible defaults (pick the stack yourself). Second question only for a consequential fork.
@@ -138,6 +146,10 @@ export function buildContext({ userName, insight, dataContent, taskSummary, hint
   const pluginsList = getPluginsPromptList();
   if (pluginsList?.length) {
     lines.push('available plugins (lazy-loaded; decide whether to use based on the user\'s request; to use one, read its instructions with read_file("~/.levi/PLUGINS/<path>") and follow them):\n' + pluginsList.map((p) => p.line || `- ${p.id || p.plugin}: ${p.summary || p.title}`).join('\n'));
+  }
+  const customAgents = getCustomAgentsPromptList();
+  if (customAgents?.length) {
+    lines.push('available custom sub-agents (in ~/.levi/AGENTS/ — when a task matches one of these, you are an orchestrator: delegate directly using spawn_subagent(role: "<name>", instruction: "<concrete goal>")):\n' + customAgents.map((a) => `- @${a.name}: ${a.description}`).join('\n'));
   }
   if (memory) lines.push('saved memory:\n' + memory);
   const existingProjects = getExistingProjects();
@@ -201,10 +213,13 @@ export const RULES = {
 - New multi-step work not already covered: add_task_cluster with a short title and concrete, completable subtasks. No vague wrap-up items (verify, test, report status); verify as part of the real task. No cluster for simple one-offs.
 - Call set_task_done as each subtask finishes (a cluster auto-completes). Use edit_task, delete_task, add_task_to_cluster, delete_cluster as the plan changes. get_tasks to check status.
 - An active cluster matching the request means continuing: don't re-ask location, don't recreate the cluster, don't check the path exists (writes create missing dirs). Trust DATA.md Location and do the next incomplete subtask.`,
-  subagent: `SUB-AGENTS
-- spawn_subagent only for real, separable work; give a direct instruction (exact file, exact change, what to report). They have file/bash only: no memory, no task tools, can't ask questions. Never for simple tasks, never more than needed: 1-2 when you do most of the work, 2-3 when mainly coordinating.
-- They don't see each other: pass needed context from earlier reports yourself. list_subagents to see status/reports; message_subagent to follow up instead of spawning a duplicate.
-- HARD RULE: the very next tool call after spawn_subagent or message_subagent must be a task-management call (set_task_done, add_task_to_cluster, edit_task, ...) reflecting that report, before verifying or anything else.`,
+  subagent: `SUB-AGENTS & ORCHESTRATION
+- Lead Orchestrator: When delegating work to sub-agents, orchestrate them: assign a constant, concrete goal and let them execute autonomously with full tool access. You do not do their tasks alongside them; await their report and synthesize results.
+- Custom Agents (~/.levi/AGENTS/): Check the "available custom sub-agents" in [context] (e.g. @bug-hunter). When a task matches an available custom agent, you MUST delegate to that custom agent via spawn_subagent(role: '<name>', instruction: '<goal>') instead of doing the work yourself or creating an ad-hoc role.
+- Ad-Hoc Sub-Agents: If no custom agent matches and the work splits into independent parts, spawn a self-made sub-agent with a clear role name.
+- Agent Creation on Demand: If the user asks to create or customize an agent, write ~/.levi/AGENTS/<name>.md with YAML frontmatter (name, description, tools: all) and custom instructions.
+- Reports & Follow-up: Sub-agents execute and report back in plain text. list_subagents to see status/reports; message_subagent to follow up instead of spawning duplicate agents.
+- Task management: The very next tool call after spawn_subagent or message_subagent should reflect their report into your plan/tasks before continuing.`,
   mcp: `MCP (Model Context Protocol)
 - Relevant MCP tools for your current task are pre-loaded into your active tools automatically. Call them directly!
 - If you need a different tool from an MCP server: call mcp_search("<action keyword>") (e.g. mcp_search("repos"), mcp_search("pull requests"), mcp_search("issues")).

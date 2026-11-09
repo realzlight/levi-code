@@ -1,24 +1,35 @@
 import { chatWithTools } from './client.js';
 import { toolDefs, runTool } from './tools.js';
+import { getCustomAgent, sanitizeAgentName } from './custom-agents.js';
 
-// Sub-agents get a strictly limited tool set — no memory tools, no task
-// management, no ask, no set_project. They're given a concrete instruction
-// and do exactly that, nothing more. They report back in plain text; they
-// don't retrieve their own context or make planning decisions.
-const ALLOWED_TOOL_NAMES = new Set(['read_file', 'write_file', 'edit_file', 'bash', 'list_dir', 'find', 'read_lines', 'grep_search', 'code_search']);
-// computed lazily (inside the function, not at module load) to avoid a
-// circular-import init-order issue with tools.js, which imports this file
+// Sub-agents have full tool access to complete their assigned goal autonomously.
+// Recursive orchestration (spawn_subagent, message_subagent, list_subagents) and interactive ask are excluded.
+const EXCLUDED_SUB_TOOLS = new Set(['spawn_subagent', 'message_subagent', 'list_subagents', 'ask']);
+
 function getSubAgentToolDefs() {
-  return toolDefs.filter((t) => ALLOWED_TOOL_NAMES.has(t.function.name));
+  return toolDefs.filter((t) => !EXCLUDED_SUB_TOOLS.has(t.function.name));
 }
 
 function buildSubAgentSystem(role, originalTask) {
-  return `You are a sub-agent named "${role}", working under a lead agent (Levi). You were given this original task:
+  const cleanRole = sanitizeAgentName(role);
+  const custom = getCustomAgent(cleanRole);
+
+  if (custom && custom.systemPrompt) {
+    return `${custom.systemPrompt}
+
+You are working under lead orchestrator Levi. You have full tool access.
+Your assigned goal:
 ${originalTask}
 
-You do concrete work, then report back — you do not plan, do not manage tasks, do not ask the user anything, and do not look for your own context beyond what you're given. You may receive follow-up instructions from your lead agent after your initial report — treat those the same way, as direct, concrete asks to act on.
+You are fully autonomous: complete the work using your tools, do not stop to ask questions, and when finished (or if you get stuck), reply with a concise, factual report of what you did, what changed, and the result for Levi.`;
+  }
 
-Use read_file/write_file/edit_file/bash/list_dir/find/read_lines/grep_search/code_search as needed to actually complete whatever you're asked. Prefer code_search/list_dir/find for exploring the codebase before editing. If something is ambiguous, make the most reasonable decision yourself and note that assumption in your report — do not stop to ask, there's no one to ask. When finished (or if you get stuck), reply with a plain text report: what you did, what changed, and the result. Be concise and factual, this report goes to your lead agent, not the end user directly.`;
+  return `You are a sub-agent named "${cleanRole || role}", working under lead orchestrator Levi. You were given this assigned goal:
+${originalTask}
+
+You do concrete work autonomously with full tool access, then report back — you do not plan for the lead agent, do not manage session tasks, do not ask the user anything, and do not look for context beyond your assigned goal.
+
+Use your tools as needed to complete whatever you're asked. If something is ambiguous, make the most reasonable decision yourself and note that assumption in your report — do not stop to ask. When finished (or if you get stuck), reply with a plain text report: what you did, what changed, and the result. Be concise and factual, this report goes to your lead orchestrator (Levi), not the end user directly.`;
 }
 
 // Runs a sub-agent on one instruction. Pass existingMessages to continue a
