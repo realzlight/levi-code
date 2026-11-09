@@ -10,7 +10,7 @@ import { runSubAgent } from './subagent.js';
 import { upsertSubAgent, getSubAgent, loadRegistry } from './subagent-registry.js';
 import { recordUsage } from './usage.js';
 import { RULES } from './prompts.js';
-import { addCluster, setTaskDone, getTasks, editTask, deleteTask, deleteCluster, addTaskToCluster } from './tasks.js';
+import { addCluster, setTaskDone, getTasks, editTask, deleteTask, deleteCluster, addTaskToCluster, updateTasks } from './tasks.js';
 import { searchCode } from './codeSearch.js';
 import { searchRawMemory, readRawMemory } from './rawMemory.js';
 import { handleDiary } from './diary.js';
@@ -29,7 +29,7 @@ export const CATEGORIES = {
   fs: ['read_file','write_file','edit_file','bash','find','list_dir','read_lines','grep_search','code_search'],
   web: ['web_launch','web_close','web_new_tab','web_goto','web_back','web_reload','web_click','web_dblclick','web_fill','web_press','web_hover','web_drag','web_scroll','web_screenshot','web_get_text','web_get_url','web_wait'],
   desktop: ['desktop_click','desktop_type','desktop_press','desktop_scroll','desktop_drag','desktop_screenshot','desktop_get_window_state','desktop_list_apps','desktop_launch_app'],
-  tasks: ['add_task_cluster','get_tasks','set_task_done','edit_task','delete_task','delete_cluster','add_task_to_cluster'],
+  tasks: ['task_update','add_task_cluster','get_tasks','set_task_done','edit_task','delete_task','delete_cluster','add_task_to_cluster'],
   memory: ['retrieve','raw_memory_search','read_raw_memory','diary','set_project','search_sessions','read_session','learn_skill','load_skill'],
   meta: ['list_commands','list_fs_commands','list_web_commands','list_desktop_commands','list_task_commands','list_memory_commands','list_meta_commands','list_subagent_commands','list_mcp_commands','ask'],
   subagent: ['spawn_subagent','list_subagents','message_subagent'],
@@ -226,6 +226,36 @@ export const toolDefs = [
           id: { type: 'string', description: 'Skill ID as shown in context, e.g. "ANDROID-TERMUX/background-http-server" or "UI-UX-SKILLS/glassmorphic-redesign"' }
         },
         required: ['id']
+      }
+    }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'task_update',
+      description: 'Create or update the step-by-step task checklist for the current goal. Use this to plan multi-step work, track progress, mark items "in_progress" when starting, and mark them "done" immediately upon completion. Status must be: "todo", "in_progress", or "done".',
+      parameters: {
+        type: 'object',
+        properties: {
+          tasks: {
+            type: 'array',
+            description: 'The complete current list of tasks and their statuses.',
+            items: {
+              type: 'object',
+              properties: {
+                id: { type: 'string', description: 'Unique short identifier (e.g. "1", "2")' },
+                text: { type: 'string', description: 'Concise description of the step' },
+                status: {
+                  type: 'string',
+                  enum: ['todo', 'in_progress', 'done'],
+                  description: 'Current status of the step'
+                }
+              },
+              required: ['text', 'status']
+            }
+          }
+        },
+        required: ['tasks']
       }
     }
   },
@@ -1463,6 +1493,21 @@ if (name === 'mcp_search') {
         if (!fs.existsSync(p)) fs.writeFileSync(p, content);
       }
       return `Project set to "${projectName}". Future memory facts go to ~/.levi/PROJECTS/${projectName}/`;
+    }
+
+    if (name === 'task_update') {
+      const id = currentSessionId();
+      if (!id) return 'Error: no active session';
+      if (!Array.isArray(args.tasks) || !args.tasks.length) {
+        return 'Error: tasks array required with at least one task item';
+      }
+      const updated = updateTasks(id, args.tasks);
+      const doneCount = updated.filter((t) => t.status === 'done').length;
+      return `Tasks updated (${doneCount}/${updated.length} completed):\n` +
+        updated.map((t) => {
+          const sym = t.status === 'done' ? '✔ [done]' : t.status === 'in_progress' ? '◼ [in_progress]' : '◻ [todo]';
+          return `  ${sym} ${t.text}`;
+        }).join('\n');
     }
 
     if (name === 'add_task_cluster') {

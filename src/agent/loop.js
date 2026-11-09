@@ -245,7 +245,7 @@ const STALL_REGEX = /\b(i'll|i will|let me|lemme|going to|gonna|about to|setting
 const TRIVIAL = new Set(['bash', 'read_file', 'write_file', 'edit_file', 'find', 'list_dir', 'read_lines', 'grep_search', 'code_search']);
 
 const BASE_TOOLS = [
-  ...toolDefs.filter((t) => TRIVIAL.has(t.function.name) || ['ask', 'remember', 'list_tools', 'set_project', 'retrieve', 'diary', 'set_task_done', 'get_tasks'].includes(t.function.name)),
+  ...toolDefs.filter((t) => TRIVIAL.has(t.function.name) || ['ask', 'remember', 'list_tools', 'task_update', 'set_task_done', 'get_tasks', 'retrieve', 'diary'].includes(t.function.name)),
   thinkToolDef(toolDefs[0])
 ];
 
@@ -339,7 +339,7 @@ async function runLite(routed, sessionId, onStep, system, { signal } = {}) {
   } else if (typeof routed.mcp === 'string') {
     mcpHint = `Use MCP server "${routed.mcp}" — call mcp_search("<action>") to load tools.`;
   }
-  const { context, plugins: loadedPlugins } = buildContext({ userName: currentUserName(), insight: routed.insight, hint: mcpHint, recent: routed.recentMessages, exchange: routed.exchange, memory: readMemoryDigest(), mcpServers: mcpNames, skillQuery: routed.query });
+  const { context, plugins: loadedPlugins } = buildContext({ userName: currentUserName(), insight: routed.insight, hint: mcpHint, recent: routed.recentMessages, exchange: routed.exchange, memory: readMemoryDigest(), mcpServers: mcpNames, skillQuery: routed.query, sessionId });
   if (loadedPlugins?.length) onStep?.('plugin_badge', { plugins: loadedPlugins });
   const messages = [{ role: 'user', content: context + routed.query }];
   let webCalls = 0;
@@ -736,7 +736,7 @@ async function runAgentInner(userMessage, { onStep, maxSteps, forceAgent, signal
   } else if (typeof routed.mcp === 'string') {
     mcpHint = `Use MCP server "${routed.mcp}" — call mcp_search("<action>") to load tools.`;
   }
-  const { context, plugins: loadedPlugins } = buildContext({ userName: currentUserName(), insight: routed.insight, dataContent: project.dataContent, taskSummary: project.taskSummary, hint: mcpHint, memory: readMemoryDigest(), mcpServers: mcpNames, skillQuery: routed.query });
+  const { context, plugins: loadedPlugins } = buildContext({ userName: currentUserName(), insight: routed.insight, dataContent: project.dataContent, taskSummary: project.taskSummary, hint: mcpHint, memory: readMemoryDigest(), mcpServers: mcpNames, skillQuery: routed.query, sessionId });
   if (loadedPlugins?.length) onStep?.('plugin_badge', { plugins: loadedPlugins });
   const messages = [...history];
   const cur = context + userMessage;

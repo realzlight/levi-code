@@ -5,6 +5,7 @@ import { getSkillsPromptList } from './skills.js';
 import { getPluginsPromptList, getRelevantPlugins } from './plugins.js';
 import { getCustomAgentsPromptList } from './custom-agents.js';
 import { readProjectPlaybook } from './project.js';
+import { getActiveTasksPrompt } from './tasks.js';
 
 function getExistingProjects() {
   try {
@@ -98,11 +99,11 @@ MEMORY (~/.levi/)
 - Context priority: current thread, session summary, TASK.md (get_tasks), DATA.md; retrieve / search_sessions last.
 - Scratchpad: diary(text, read) records temporary working notes or reads them back across tool calls in this session (never saved long-term).
 
-PROJECTS
-- NOT EVERY CODING REQUEST IS A PROJECT. Simple one-offs (single file, quick script, small fix, "make me a calculator") do NOT need set_project or task clusters — just build them directly. Only register a project when the user is building something substantial and ongoing they'll return to across sessions.
-- ALWAYS CHECK EXISTING PROJECTS FIRST: [context] lists "existing projects:" with all registered names. If a matching or similar project already exists, call set_project with THAT existing name — never create a duplicate. "make a todo app" when "todo-app" already exists → set_project("todo-app") and continue from its DATA.md.
-- Direct path or folder: If the user provides a folder, path, or directory (e.g. "in homedir", "~/project", "./app"), go DIRECTLY to that location and inspect files there first (list_dir, read_file). Do NOT search ~/.levi/PROJECTS or look for DATA.md if the user gave the path!
-- New substantial project only: if [context] shows no matching existing project AND the work is multi-session and substantial, then set_project with a short name. If the code location is unknown ask once, then record it as Location in DATA.md. In bash use $HOME or an unquoted ~ (a quoted ~ does not expand); file tools accept ~ directly.
+TASKS & EXECUTION
+- Task Planning: When starting multi-step work, non-trivial features, refactoring, or bug fixes, initialize a step-by-step checklist using task_update({ tasks: [...] }).
+- Live Progress: Update the checklist as you work — mark the current active task "in_progress" before executing it, and mark it "done" immediately upon completion/verification.
+- Action-oriented: Keep each task item concrete (e.g. "Inspect package.json and config", "Implement auth middleware", "Add unit tests").
+- No Project Bloat: Do NOT create projects, call set_project, or write DATA.md for regular coding requests. Work directly on the user's codebase files in current or specified directory.
 
 SKILLS (~/.levi/SKILLS/<folder>/<file>.md)
 - Available personal skills are organized in topic folders and lazy-loaded. [context] lists each skill's id (folder/name) and 1-line summary ONLY when relevant to your query.
@@ -130,7 +131,7 @@ THINK TOOL
 
 FAILURES
 - If you already built or changed real files, a later failing check (missing dependency, command not found, test can't run) doesn't erase that. Say what you built, name the specific missing thing and how to fix it, or offer a no-dependency alternative.`;
-export function buildContext({ userName, insight, dataContent, taskSummary, hint, recent, memory, exchange, mcpServers, skills, skillQuery } = {}) {
+export function buildContext({ userName, insight, dataContent, taskSummary, hint, recent, memory, exchange, mcpServers, skills, skillQuery, sessionId } = {}) {
 
   const lines = ['date: ' + new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' })];
   lines.push(`home directory: ${os.homedir()}`);
@@ -151,9 +152,11 @@ export function buildContext({ userName, insight, dataContent, taskSummary, hint
   if (customAgents?.length) {
     lines.push('available custom sub-agents (in ~/.levi/AGENTS/ — when a task matches one of these, you are an orchestrator: delegate directly using spawn_subagent(role: "<name>", instruction: "<concrete goal>")):\n' + customAgents.map((a) => `- @${a.name}: ${a.description}`).join('\n'));
   }
+  if (sessionId) {
+    const activeTasks = getActiveTasksPrompt(sessionId);
+    if (activeTasks) lines.push(activeTasks);
+  }
   if (memory) lines.push('saved memory:\n' + memory);
-  const existingProjects = getExistingProjects();
-  if (existingProjects.length) lines.push('existing projects: ' + existingProjects.join(', ') + ' — use set_project with one of these names to reuse, never create a duplicate');
   if (exchange && exchange.length) {
     lines.push('recent conversation (background; answer only the current message, but use it to resolve references such as fix it or continue):\n' + exchange.map((m) => {
       if (m.role === 'tool') return '[tools executed]: ' + String(m.text).replace(/\n/g, ' | ');
@@ -214,10 +217,10 @@ export const RULES = {
 - set_project only makes the memory folder. Before writing code, if the code location isn't known, ask once (home, current dir, other path). Use that exact absolute path everywhere and record it as Location in DATA.md. In bash use $HOME/... or an unquoted ~/... (a quoted ~ does not expand); read_file, write_file, and edit_file accept ~ directly. Never guess /root or /home/user.
 - Request about an existing project (change, feature, "is it done"): if the path is known, inspect the code directly. Never judge from folder names alone.
 - If it genuinely doesn't fit what's built (e.g. dark mode for a CLI), use ask to name the specific mismatch you found, with specific options. Never a vague "can you rephrase". After the user confirms a pivot, delete_cluster the stale cluster and add_task_cluster for the new direction.`,
-  tasks: `TASKS (TASK.md clusters)
-- New multi-step work not already covered: add_task_cluster with a short title and concrete, completable subtasks. No vague wrap-up items (verify, test, report status); verify as part of the real task. No cluster for simple one-offs.
-- Call set_task_done as each subtask finishes (a cluster auto-completes). Use edit_task, delete_task, add_task_to_cluster, delete_cluster as the plan changes. get_tasks to check status.
-- An active cluster matching the request means continuing: don't re-ask location, don't recreate the cluster, don't check the path exists (writes create missing dirs). Trust DATA.md Location and do the next incomplete subtask.`,
+  tasks: `TASKS (Execution Checklist)
+- Multi-step work: Initialize a concrete checklist with task_update({ tasks: [...] }). Keep items actionable and verified.
+- Progress updates: Mark the active item "in_progress" before doing the work, and mark "done" immediately upon completion.
+- No Project Bloat: Never call set_project or create DATA.md for regular coding requests. Keep your workflow focused on code and tasks.`,
   subagent: `SUB-AGENTS & ORCHESTRATION
 - Lead Orchestrator: When delegating work to sub-agents, orchestrate them: assign a constant, concrete goal and let them execute autonomously with full tool access. You do not do their tasks alongside them; await their report and synthesize results.
 - Custom Agents (~/.levi/AGENTS/): Check the "available custom sub-agents" in [context] (e.g. @bug-hunter). When a task matches an available custom agent, you MUST delegate to that custom agent via spawn_subagent(role: '<name>', instruction: '<goal>') instead of doing the work yourself or creating an ad-hoc role.

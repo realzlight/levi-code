@@ -1,212 +1,223 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
-import { getProject } from './session.js';
 
 const LEVI_HOME = path.join(os.homedir(), '.levi');
 const BUFFER_ROOT = path.join(LEVI_HOME, 'ACTIVE-BUFFER');
 
-function taskFilePath(id) {
-  return path.join(BUFFER_ROOT, `SESSION-${id}`, 'TASK.md');
+function sessionDir(id) {
+  return path.join(BUFFER_ROOT, `SESSION-${id}`);
+}
+
+function taskJsonPath(id) {
+  return path.join(sessionDir(id), 'TASKS.json');
+}
+
+function taskMdPath(id) {
+  return path.join(sessionDir(id), 'TASK.md');
 }
 
 export function ensureTaskFile(id) {
-  const file = taskFilePath(id);
-  if (!fs.existsSync(file)) fs.writeFileSync(file, '');
+  const dir = sessionDir(id);
+  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
 }
 
-// Parses TASK.md into an array of clusters:
-// { num, title, status: 'active'|'completed', completedDate, summary, tasks: [{ text, done }] }
-export function parseTasks(id) {
-  let raw = '';
-  try {
-    raw = fs.readFileSync(taskFilePath(id), 'utf-8');
-  } catch {
-    return [];
+/**
+ * Get flat list of tasks for the session:
+ * [{ id: '1', text: '...', status: 'todo'|'in_progress'|'done' }]
+ */
+export function getTaskList(id) {
+  if (!id) return [];
+  const jPath = taskJsonPath(id);
+  if (fs.existsSync(jPath)) {
+    try {
+      const data = JSON.parse(fs.readFileSync(jPath, 'utf-8'));
+      if (Array.isArray(data)) return data;
+    } catch {}
   }
-  if (!raw.trim()) return [];
 
-  const clusters = [];
-  const blocks = raw.split(/^## /m).slice(1);
-
-  for (const block of blocks) {
-    const lines = block.split('\n');
-    const header = lines[0];
-    const headerMatch = header.match(/^Cluster (\d+) — (.+?) \[status: (active|completed)\](?:\s*\[completed: (.+?)\])?/);
-    if (!headerMatch) continue;
-
-    const [, numStr, title, status, completedDate] = headerMatch;
-    let summary = '';
-    const tasks = [];
-
-    for (let i = 1; i < lines.length; i++) {
-      const line = lines[i];
-      if (line.startsWith('Summary: ')) {
-        summary = line.slice('Summary: '.length).trim();
-      } else {
-        const taskMatch = line.match(/^- \[( |x)\] (.+)/);
-        if (taskMatch) {
-          tasks.push({ text: taskMatch[2].trim(), done: taskMatch[1] === 'x' });
+  // Fallback: parse TASK.md if TASKS.json doesn't exist yet
+  const mPath = taskMdPath(id);
+  if (fs.existsSync(mPath)) {
+    try {
+      const raw = fs.readFileSync(mPath, 'utf-8');
+      const lines = raw.split('\n');
+      const tasks = [];
+      let idx = 1;
+      for (const line of lines) {
+        const m = line.match(/^-\s*\[([ x/])\]\s*(.*)$/i);
+        if (m) {
+          const char = m[1].toLowerCase();
+          const status = char === 'x' ? 'done' : char === '/' ? 'in_progress' : 'todo';
+          tasks.push({
+            id: String(idx++),
+            text: m[2].trim(),
+            status
+          });
         }
       }
-    }
-
-    clusters.push({ num: Number(numStr), title: title.trim(), status, completedDate: completedDate || null, summary, tasks });
-  }
-
-  return clusters;
-}
-
-export function serializeTasks(clusters) {
-  return clusters
-    .map((c) => {
-      const statusTag = c.status === 'completed' ? `[status: completed] [completed: ${c.completedDate}]` : `[status: active]`;
-      let block = `## Cluster ${c.num} — ${c.title} ${statusTag}\n`;
-      if (c.status === 'completed' && c.summary) block += `Summary: ${c.summary}\n`;
-      block += c.tasks.map((t) => `- [${t.done ? 'x' : ' '}] ${t.text}`).join('\n');
-      return block;
-    })
-    .join('\n\n');
-}
-
-function writeClusters(id, clusters) {
-  fs.writeFileSync(taskFilePath(id), serializeTasks(clusters) + (clusters.length ? '\n' : ''));
-}
-
-function nextClusterNum(clusters) {
-  return clusters.length ? Math.max(...clusters.map((c) => c.num)) + 1 : 1;
-}
-
-function autoCompleteCheck(cluster) {
-  const allDone = cluster.tasks.length > 0 && cluster.tasks.every((t) => t.done);
-  const wasCompleted = cluster.status === 'completed';
-  if (allDone && !wasCompleted) {
-    cluster.status = 'completed';
-    cluster.completedDate = new Date().toISOString().replace('T', ' ').slice(0, 19) + ' UTC';
-    cluster.summary = 'Completed: ' + cluster.tasks.map((t) => t.text).join(', ');
-    return true; // newly completed this call
-  } else if (!allDone && wasCompleted) {
-    cluster.status = 'active';
-    cluster.completedDate = null;
-    cluster.summary = '';
-  }
-  return false;
-}
-
-// Appends a one-line dated summary of a finished cluster into the right
-// project file (DATA.md if a project is active, USER.md otherwise) — a
-// lightweight, best-effort record, not a full history. Never throws; a
-// failure here shouldn't break task completion itself.
-function archiveCluster(id, cluster) {
-  try {
-    const projectName = getProject(id);
-    const targetFile = projectName
-      ? path.join(LEVI_HOME, 'PROJECTS', projectName, 'DATA.md')
-      : path.join(LEVI_HOME, 'MEMORY', 'USER.md');
-
-    const timestamp = cluster.completedDate || new Date().toISOString().replace('T', ' ').slice(0, 19) + ' UTC';
-    const line = `- [Completed ${timestamp}] ${cluster.title}: ${cluster.summary}`;
-
-    fs.mkdirSync(path.dirname(targetFile), { recursive: true });
-    let existing = '';
-    try {
-      existing = fs.readFileSync(targetFile, 'utf-8');
+      if (tasks.length) return tasks;
     } catch {}
-    const sep = existing && !existing.endsWith('\n') ? '\n' : '';
-    fs.writeFileSync(targetFile, existing + sep + line + '\n');
-  } catch {
-    // best-effort only, archiving is not critical enough to fail the task update over
   }
+
+  return [];
 }
+
+/**
+ * Save updated task list to TASKS.json and human-readable TASK.md.
+ * Does NOT self-delete completed tasks, preserving full session visibility.
+ */
+export function updateTasks(id, rawTasks) {
+  if (!id || !Array.isArray(rawTasks)) return [];
+  ensureTaskFile(id);
+
+  const normalized = rawTasks.map((t, i) => {
+    const rawStatus = String(t.status || '').toLowerCase().trim();
+    let status = 'todo';
+    if (rawStatus === 'done' || rawStatus === 'completed' || t.done === true) status = 'done';
+    else if (rawStatus === 'in_progress' || rawStatus === 'active' || rawStatus === 'working') status = 'in_progress';
+
+    return {
+      id: String(t.id || i + 1),
+      text: String(t.text || t.title || '').trim(),
+      status
+    };
+  }).filter((t) => t.text.length > 0);
+
+  // Write TASKS.json
+  try {
+    fs.writeFileSync(taskJsonPath(id), JSON.stringify(normalized, null, 2) + '\n', 'utf-8');
+  } catch {}
+
+  // Write clean markdown TASK.md
+  try {
+    const mdLines = ['# Session Tasks\n'];
+    for (const t of normalized) {
+      const check = t.status === 'done' ? '[x]' : t.status === 'in_progress' ? '[/]' : '[ ]';
+      const tag = t.status === 'in_progress' ? ' *(in progress)*' : '';
+      mdLines.push(`- ${check} ${t.text}${tag}`);
+    }
+    fs.writeFileSync(taskMdPath(id), mdLines.join('\n') + '\n', 'utf-8');
+  } catch {}
+
+  return normalized;
+}
+
+/**
+ * Get tasks formatted for prompt context.
+ * Returns concise summary to guide the agent:
+ * "active tasks (use task_update to advance):
+ *  ✔ [done] Step 1
+ *  ◼ [in_progress] Step 2
+ *  ◻ [todo] Step 3"
+ */
+export function getActiveTasksPrompt(id) {
+  if (!id) return '';
+  const list = getTaskList(id);
+  if (!list.length) return '';
+
+  const doneCount = list.filter((t) => t.status === 'done').length;
+  const lines = [`current task checklist (${doneCount}/${list.length} completed — use task_update to advance status):`];
+  for (const t of list) {
+    const icon = t.status === 'done' ? '✔ [done]' : t.status === 'in_progress' ? '◼ [in_progress]' : '◻ [todo]';
+    lines.push(`  ${icon} ${t.text}`);
+  }
+  return lines.join('\n');
+}
+
+/**
+ * Backward-compatible getTasks adapter for existing callers (loop.js, index.js, thought.js).
+ * Returns [{ num: 1, title: 'Tasks', status: 'active'|'completed', tasks: [{ text, done, status }] }]
+ */
+export function getTasks(id) {
+  const list = getTaskList(id);
+  if (!list.length) return [];
+
+  const allDone = list.length > 0 && list.every((t) => t.status === 'done');
+  return [
+    {
+      num: 1,
+      title: 'Current Tasks',
+      status: allDone ? 'completed' : 'active',
+      completedDate: allDone ? new Date().toISOString() : null,
+      summary: `${list.filter((t) => t.status === 'done').length}/${list.length} tasks completed`,
+      tasks: list.map((t) => ({
+        id: t.id,
+        text: t.text,
+        done: t.status === 'done',
+        status: t.status
+      }))
+    }
+  ];
+}
+
+/**
+ * Format todo items directly for ClaudeTodoList UI widget.
+ */
+export function getTodoItems(id) {
+  if (!id) return null;
+  const list = getTaskList(id);
+  if (!list.length) return null;
+
+  return list.map((t) => ({
+    label: t.text,
+    status: t.status === 'done' ? 'done' : t.status === 'in_progress' ? 'active' : 'todo'
+  }));
+}
+
+// --- Legacy adapters for old tools so existing calls never crash ---
 
 export function addCluster(id, title, taskTexts) {
-  const clusters = parseTasks(id);
-  const num = nextClusterNum(clusters);
-  clusters.push({
-    num,
-    title,
-    status: 'active',
-    completedDate: null,
-    summary: '',
-    tasks: taskTexts.map((text) => ({ text, done: false }))
-  });
-  writeClusters(id, clusters);
-  return num;
+  const existing = getTaskList(id);
+  const startId = existing.length + 1;
+  const newItems = (taskTexts || []).map((text, i) => ({
+    id: String(startId + i),
+    text: String(text).trim(),
+    status: 'todo'
+  }));
+  updateTasks(id, [...existing, ...newItems]);
+  return 1;
 }
 
-// Toggle a task's done state by cluster number + task index (0-based).
-// Auto-completes the cluster once every task in it is done — when that
-// happens, the cluster is archived (one line into DATA.md/USER.md) and then
-// removed from TASK.md entirely, so completed work doesn't clutter the live
-// task list or get mistakenly re-read as still-relevant context.
 export function setTaskDone(id, clusterNum, taskIndex, done = true) {
-  const clusters = parseTasks(id);
-  const idx = clusters.findIndex((c) => c.num === clusterNum);
-  if (idx === -1 || !clusters[idx].tasks[taskIndex]) return false;
-
-  const cluster = clusters[idx];
-  cluster.tasks[taskIndex].done = done;
-  const newlyCompleted = autoCompleteCheck(cluster);
-
-  if (newlyCompleted) {
-    archiveCluster(id, cluster);
-    clusters.splice(idx, 1);
-  }
-
-  writeClusters(id, clusters);
+  const list = getTaskList(id);
+  const idx = typeof taskIndex === 'number' ? taskIndex : 0;
+  if (!list[idx]) return false;
+  list[idx].status = done ? 'done' : 'todo';
+  updateTasks(id, list);
   return true;
 }
 
 export function editTask(id, clusterNum, taskIndex, newText) {
-  const clusters = parseTasks(id);
-  const cluster = clusters.find((c) => c.num === clusterNum);
-  if (!cluster || !cluster.tasks[taskIndex]) return false;
-  cluster.tasks[taskIndex].text = newText;
-  writeClusters(id, clusters);
+  const list = getTaskList(id);
+  const idx = typeof taskIndex === 'number' ? taskIndex : 0;
+  if (!list[idx]) return false;
+  list[idx].text = newText;
+  updateTasks(id, list);
   return true;
 }
 
 export function deleteTask(id, clusterNum, taskIndex) {
-  const clusters = parseTasks(id);
-  const idx = clusters.findIndex((c) => c.num === clusterNum);
-  if (idx === -1 || !clusters[idx].tasks[taskIndex]) return false;
-
-  const cluster = clusters[idx];
-  cluster.tasks.splice(taskIndex, 1);
-  const newlyCompleted = autoCompleteCheck(cluster);
-
-  if (newlyCompleted) {
-    archiveCluster(id, cluster);
-    clusters.splice(idx, 1);
-  }
-
-  writeClusters(id, clusters);
+  const list = getTaskList(id);
+  const idx = typeof taskIndex === 'number' ? taskIndex : 0;
+  if (!list[idx]) return false;
+  list.splice(idx, 1);
+  updateTasks(id, list);
   return true;
 }
 
 export function deleteCluster(id, clusterNum) {
-  const clusters = parseTasks(id);
-  const idx = clusters.findIndex((c) => c.num === clusterNum);
-  if (idx === -1) return false;
-  clusters.splice(idx, 1);
-  writeClusters(id, clusters);
+  updateTasks(id, []);
   return true;
 }
 
 export function addTaskToCluster(id, clusterNum, text) {
-  const clusters = parseTasks(id);
-  const cluster = clusters.find((c) => c.num === clusterNum);
-  if (!cluster) return false;
-  cluster.tasks.push({ text, done: false });
-  if (cluster.status === 'completed') {
-    cluster.status = 'active';
-    cluster.completedDate = null;
-    cluster.summary = '';
-  }
-  writeClusters(id, clusters);
+  const list = getTaskList(id);
+  list.push({
+    id: String(list.length + 1),
+    text: String(text).trim(),
+    status: 'todo'
+  });
+  updateTasks(id, list);
   return true;
-}
-
-export function getTasks(id) {
-  return parseTasks(id);
 }

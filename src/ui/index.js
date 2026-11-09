@@ -784,6 +784,13 @@ function formatToolArg(name, args) {
     }
     return p;
   }
+  if (name === 'task_update') {
+    const tasks = Array.isArray(args.tasks) ? args.tasks : [];
+    const done = tasks.filter((t) => t.status === 'done' || t.done).length;
+    const current = tasks.find((t) => t.status === 'in_progress') || tasks.find((t) => t.status !== 'done');
+    const summary = current ? `[${current.status || 'todo'}] ${current.text || ''}` : 'all completed';
+    return `${done}/${tasks.length} done · ${summary}`;
+  }
   if (name === 'set_project') {
     return args.name || '';
   }
@@ -1399,7 +1406,7 @@ function App({ mascot }) {
           }
           const arg = formatToolArg(data.name, data.args);
           const isTaskTool = [
-            'add_task_cluster', 'set_task_done', 'add_task_to_cluster',
+            'task_update', 'add_task_cluster', 'set_task_done', 'add_task_to_cluster',
             'edit_task', 'delete_task', 'delete_cluster', 'get_tasks'
           ].includes(data.name);
 
@@ -1428,7 +1435,7 @@ function App({ mascot }) {
           const resStr = String(data.result || '');
           const isError = resStr.startsWith('Error:');
           const isTaskTool = [
-            'add_task_cluster', 'set_task_done', 'add_task_to_cluster',
+            'task_update', 'add_task_cluster', 'set_task_done', 'add_task_to_cluster',
             'edit_task', 'delete_task', 'delete_cluster', 'get_tasks'
           ].includes(data.call?.name);
 
