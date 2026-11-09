@@ -73,7 +73,7 @@ function compactSupersededReads(messages, writtenPath) {
 
 // Minimal tool set for pure coding steps (step > 0 in coding loops).
 // Strips ~400 tokens of unused tool schemas per step.
-const CODING_ONLY_NAMES = new Set(['bash', 'read_file', 'write_file', 'edit_file', 'list_dir', 'find', 'read_lines', 'grep_search', 'code_search', 'ask', 'load_skill']);
+const CODING_ONLY_NAMES = new Set(['bash', 'read_file', 'write_file', 'edit_file', 'list_dir', 'find', 'read_lines', 'search', 'grep_search', 'code_search', 'ask', 'load_skill']);
 
 
 // Generate 1-2 fluent, meaningful Claude-style narration lines from tool calls
@@ -98,6 +98,7 @@ function synthNarration(calls) {
         return `inspecting ${base ? `\`${base}\`` : (c.args?.path || 'workspace directory')}`;
       case 'find':
         return `searching for ${c.args?.query ? `\`${c.args.query}\`` : 'matching files'}`;
+      case 'search':
       case 'grep_search':
         return `searching codebase for "${String(c.args?.query || '').slice(0, 30)}"`;
       case 'code_search':
@@ -181,7 +182,7 @@ function recordTurnToolSummary(sessionId, turnToolCalls) {
 }
 
 // Detect and extract pseudo tool calls written as text, e.g. [find: query: foo] or [read_file(bar)]
-const PSEUDO_TOOL_NAMES = 'find|read_file|code_search|grep_search|list_dir|read_lines|bash|write_file|edit_file|google_search|fetch|retrieve|raw_memory_search|read_raw_memory|diary|learn_skill';
+const PSEUDO_TOOL_NAMES = 'find|search|read_file|code_search|grep_search|list_dir|read_lines|bash|write_file|edit_file|google_search|fetch|retrieve|raw_memory_search|read_raw_memory|diary|learn_skill';
 
 function extractPseudoToolCall(str) {
   if (!str || typeof str !== 'string') return null;
@@ -204,7 +205,7 @@ function extractPseudoToolCall(str) {
       args.query = (qm ? qm[1] : rawArgs).replace(/^["']|["']$/g, '').trim();
     } else if (name === 'diary') {
       args.text = rawArgs.replace(/^text:\s*/i, '').replace(/^["']|["']$/g, '').trim();
-    } else if (name === 'find' || name === 'grep_search' || name === 'code_search') {
+    } else if (name === 'find' || name === 'search' || name === 'grep_search' || name === 'code_search') {
       const qm = rawArgs.match(/query:\s*([^,\n]+)/i);
       args.query = (qm ? qm[1] : rawArgs).replace(/^["']|["']$/g, '').trim();
       const pm = rawArgs.match(/(?:path|folder):\s*([^,\n]+)/i);
@@ -230,7 +231,7 @@ function extractPseudoToolCall(str) {
     let args;
     if (name === 'google_search') args = { q: raw };
     else if (name === 'fetch') args = { url: raw };
-    else if (name === 'find' || name === 'grep_search' || name === 'code_search' || name === 'retrieve' || name === 'raw_memory_search') args = { query: raw };
+    else if (name === 'find' || name === 'search' || name === 'grep_search' || name === 'code_search' || name === 'retrieve' || name === 'raw_memory_search') args = { query: raw };
     else if (name === 'diary') args = { text: raw };
     else if (name === 'bash') args = { command: raw };
     else args = { path: raw };
@@ -242,7 +243,7 @@ function extractPseudoToolCall(str) {
 
 const STALL_REGEX = /\b(i'll|i will|let me|lemme|going to|gonna|about to|setting (it )?up|on it|working on it|let's (dive|check|see|find|search|look|inspect)|hold on|hang on|give me a (sec|second|moment)|one sec)\b|^(checking|inspecting|examining|looking into|looking for|looking up|diving into|searching|fetching|running|scanning|investigating|reading|editing|writing)\b.*(\.{3,}|…)$|\.{3,}$|…$/i;
 
-const TRIVIAL = new Set(['bash', 'read_file', 'write_file', 'edit_file', 'find', 'list_dir', 'read_lines', 'grep_search', 'code_search']);
+const TRIVIAL = new Set(['bash', 'read_file', 'write_file', 'edit_file', 'find', 'list_dir', 'read_lines', 'search', 'grep_search', 'code_search']);
 
 const BASE_TOOLS = [
   ...toolDefs.filter((t) => TRIVIAL.has(t.function.name) || ['ask', 'remember', 'list_tools', 'task_update', 'set_task_done', 'get_tasks', 'retrieve', 'diary'].includes(t.function.name)),
@@ -284,7 +285,7 @@ const SUB_TOOLS = ['spawn_subagent', 'list_subagents', 'message_subagent'];
 
 // messages = [{ role: 'user'|'assistant', content: string }]
 // onStep(kind, data) — optional progress callback: 'tool_call' | 'tool_result' | 'done' | 'thought'
-const LITE_NAMES = ['bash', 'read_file', 'write_file', 'edit_file', 'find', 'list_dir', 'read_lines', 'grep_search', 'code_search', 'google_search', 'fetch', ...PLAYWRIGHT_WEB_TOOLS, ...DESKTOP_TOOLS, ...SUB_TOOLS, 'ask', 'remember', 'retrieve', 'raw_memory_search', 'read_raw_memory', 'diary', 'learn_skill', 'load_skill', 'get_tasks', 'set_task_done', 'add_task_cluster', 'mcp_search', 'mcp_list'];
+const LITE_NAMES = ['bash', 'read_file', 'write_file', 'edit_file', 'find', 'list_dir', 'read_lines', 'search', 'grep_search', 'code_search', 'google_search', 'fetch', ...PLAYWRIGHT_WEB_TOOLS, ...DESKTOP_TOOLS, ...SUB_TOOLS, 'ask', 'remember', 'retrieve', 'raw_memory_search', 'read_raw_memory', 'diary', 'learn_skill', 'load_skill', 'get_tasks', 'set_task_done', 'add_task_cluster', 'mcp_search', 'mcp_list'];
 
 const LITE_TOOLS = toolDefs.filter((t) => LITE_NAMES.includes(t.function.name));
 const LITE_GROUPS = {
@@ -293,10 +294,10 @@ const LITE_GROUPS = {
 
   web: ['google_search', 'fetch', ...PLAYWRIGHT_WEB_TOOLS, 'ask'],
   desktop: [...DESKTOP_TOOLS, 'ask'],
-  shell: ['bash', 'read_file', 'write_file', 'edit_file', 'find', 'list_dir', 'read_lines', 'grep_search', 'code_search', 'ask', 'diary'],
-  all: ['bash', 'read_file', 'write_file', 'edit_file', 'find', 'list_dir', 'read_lines', 'grep_search', 'code_search', 'google_search', 'fetch', ...SUB_TOOLS, 'ask', 'remember', 'retrieve', 'raw_memory_search', 'read_raw_memory', 'diary', 'learn_skill', 'load_skill', 'get_tasks', 'set_task_done'],
+  shell: ['bash', 'read_file', 'write_file', 'edit_file', 'find', 'list_dir', 'read_lines', 'search', 'grep_search', 'code_search', 'ask', 'diary'],
+  all: ['bash', 'read_file', 'write_file', 'edit_file', 'find', 'list_dir', 'read_lines', 'search', 'grep_search', 'code_search', 'google_search', 'fetch', ...SUB_TOOLS, 'ask', 'remember', 'retrieve', 'raw_memory_search', 'read_raw_memory', 'diary', 'learn_skill', 'load_skill', 'get_tasks', 'set_task_done'],
   tasks: ['get_tasks', 'set_task_done', 'add_task_cluster', 'ask'],
-  mcp: ['mcp_search', 'mcp_list', 'bash', 'read_file', 'write_file', 'edit_file', 'find', 'list_dir', 'read_lines', 'grep_search', 'code_search', 'ask', 'diary']
+  mcp: ['mcp_search', 'mcp_list', 'bash', 'read_file', 'write_file', 'edit_file', 'find', 'list_dir', 'read_lines', 'search', 'grep_search', 'code_search', 'ask', 'diary']
 };
 const MORE_TOOL = { type: 'function', function: { name: 'more_tools', description: 'Load browser automation and desktop tools when web browser or GUI automation is needed.', parameters: { type: 'object', properties: {} } } };
 const WEB_NAMES = ['google_search', 'fetch'];
@@ -306,7 +307,7 @@ const LITE_TOKEN_BUDGET = 1000000;
 const AGENT_WEB_BUDGET = 15;
 const AGENT_WEB_CAP = 6000;
 const AGENT_OUTPUT_CAP = 16000;
-const OUTPUT_TOOLS = ['read_file', 'bash', 'find', 'list_dir', 'read_lines', 'grep_search', 'code_search', 'raw_memory_search', 'read_raw_memory', 'diary', 'web_get_text', 'web_screenshot', 'web_get_url', 'desktop_screenshot', 'desktop_get_window_state', 'desktop_list_apps'];
+const OUTPUT_TOOLS = ['read_file', 'bash', 'find', 'list_dir', 'read_lines', 'search', 'grep_search', 'code_search', 'raw_memory_search', 'read_raw_memory', 'diary', 'web_get_text', 'web_screenshot', 'web_get_url', 'desktop_screenshot', 'desktop_get_window_state', 'desktop_list_apps'];
 async function runToolGuarded(call, state, opts = {}) {
   if (state.over) return 'Error: token budget (1,000,000) for this message is used up. Answer now with what you have and say what you would check next.';
   if (!WEB_NAMES.includes(call.name)) {
@@ -470,7 +471,7 @@ async function runLite(routed, sessionId, onStep, system, { signal } = {}) {
     const batches = [];
     let curBatch = [];
     for (const call of toolCalls) {
-      const isReadOnly = ['read_file', 'list_dir', 'find', 'read_lines', 'grep_search', 'code_search', 'retrieve', 'raw_memory_search', 'read_raw_memory'].includes(call.name);
+      const isReadOnly = ['read_file', 'list_dir', 'find', 'read_lines', 'search', 'grep_search', 'code_search', 'retrieve', 'raw_memory_search', 'read_raw_memory'].includes(call.name);
       if (isReadOnly) {
         curBatch.push(call);
       } else {
@@ -517,7 +518,7 @@ async function runLite(routed, sessionId, onStep, system, { signal } = {}) {
       } else {
         const call = batch.calls[0];
         onStep?.('tool_call', call);
-        const isReadOnly = ['read_file', 'list_dir', 'find', 'read_lines', 'grep_search', 'code_search', 'retrieve', 'raw_memory_search', 'read_raw_memory'].includes(call.name);
+        const isReadOnly = ['read_file', 'list_dir', 'find', 'read_lines', 'search', 'grep_search', 'code_search', 'retrieve', 'raw_memory_search', 'read_raw_memory'].includes(call.name);
         const callKey = `${call.name}:${JSON.stringify(call.args || {})}`;
         const seenCount = callCounts.get(callKey) || 0;
         let result;
@@ -896,7 +897,7 @@ async function runAgentInner(userMessage, { onStep, maxSteps, forceAgent, signal
     const batches = [];
     let curBatch = [];
     for (const call of toolCalls) {
-      const isReadOnly = ['read_file', 'list_dir', 'find', 'read_lines', 'grep_search', 'code_search', 'retrieve', 'raw_memory_search', 'read_raw_memory'].includes(call.name);
+      const isReadOnly = ['read_file', 'list_dir', 'find', 'read_lines', 'search', 'grep_search', 'code_search', 'retrieve', 'raw_memory_search', 'read_raw_memory'].includes(call.name);
       if (isReadOnly) {
         curBatch.push(call);
       } else {
@@ -939,7 +940,7 @@ async function runAgentInner(userMessage, { onStep, maxSteps, forceAgent, signal
       } else {
         const call = batch.calls[0];
         onStep?.('tool_call', call);
-        const isReadOnly = ['read_file', 'list_dir', 'find', 'read_lines', 'grep_search', 'code_search', 'retrieve', 'raw_memory_search', 'read_raw_memory'].includes(call.name);
+        const isReadOnly = ['read_file', 'list_dir', 'find', 'read_lines', 'search', 'grep_search', 'code_search', 'retrieve', 'raw_memory_search', 'read_raw_memory'].includes(call.name);
         const callKey = `${call.name}:${JSON.stringify(call.args || {})}`;
         const seenCount = callCounts.get(callKey) || 0;
         let result;

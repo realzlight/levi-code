@@ -748,12 +748,13 @@ const TC_RESULT = '#8b8fa3';
 
 function ClaudeToolCall({ tool, arg, result, status = 'success', todos }) {
   const statusColor = TC_STATUS_COLOR[status] || TC_STATUS_COLOR.success;
+  const displayTool = (tool === 'grep_search' || tool === 'search') ? 'Search' : tool;
 
   return h(Box, { flexDirection: 'column', marginBottom: 1 },
     // Header: ⏺ tool(arg)
     h(Box, {},
       h(Text, { color: statusColor }, '\u23FA '),
-      h(Text, { color: TC_TOOL }, tool),
+      h(Text, { color: TC_TOOL }, displayTool),
       arg !== undefined && arg !== '' ? h(Text, null,
         h(Text, { color: TC_PAREN }, '('),
         h(Text, { color: TC_ARG }, arg),
@@ -835,6 +836,10 @@ function formatToolArg(name, args) {
   }
   if (name === 'playwright_click' || name === 'playwright_fill') {
     return args.selector || '';
+  }
+  if (name === 'search' || name === 'grep_search') {
+    const loc = args.path || args.folder || args.SearchPath || '.';
+    return `"${args.query || args.q || ''}" in ${loc}`;
   }
   if (name === 'code_search') {
     const loc = args.folder || args.path || '.';

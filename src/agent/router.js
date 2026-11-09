@@ -143,6 +143,9 @@ export async function route(query, { recentUser = [], forceAgent = false, sessio
     const preview = dirPreview(target);
     r = { route: 'light', tools: 'shell', mcp: false, insight: 'fast-path: directory entry — ' + preview };
   }
+  else if (/^(search|grep|find)\s+(.+)\s+(in|across|under|within)\s+([~/a-zA-Z0-9_\-./]+)/i.test(q)) {
+    r = { route: 'light', tools: 'shell', mcp: false, insight: 'fast-path: code search' };
+  }
   else if (/^(search|google|lookup)\s+(about|for|how|what|why|who)\b/i.test(q)) r = { route: 'light', tools: 'web', mcp: false, insight: 'fast-path: web lookup' };
   else if (FILE_HINT.test(q)) r = { route: 'agent', insight: 'mentions code or file paths' };
   else if (/\b(from now on|stop saying|don't say|do not say|never say|stop using|don't use|do not use|stop calling|don't call|always remember|remember that|remember to|keep in mind|my preference is|i prefer|i want you to (always|never|stop))\b|^(remember|note that|btw|fyi)\b|\bi (always|never|usually|prefer|like|love|hate|enjoy|dislike)\b|\bmy (name is|favou?rite|setup is)/i.test(q)) {

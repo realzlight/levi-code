@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { spawn, execSync } from 'node:child_process';
+import { spawn, execSync, execFileSync } from 'node:child_process';
 import { execa } from 'execa';
 import { snapshotFileBeforeEdit } from './undo.js';
 import { currentSessionId, setProject, searchSessions, readSessionOverview, isSoloOnly, getProject } from './session.js';
@@ -26,7 +26,7 @@ function resolve(p) {
   return p;
 }
 export const CATEGORIES = {
-  fs: ['read_file','write_file','edit_file','bash','find','list_dir','read_lines','grep_search','code_search'],
+  fs: ['read_file','write_file','edit_file','bash','find','list_dir','read_lines','search','grep_search','code_search'],
   web: ['web_launch','web_close','web_new_tab','web_goto','web_back','web_reload','web_click','web_dblclick','web_fill','web_press','web_hover','web_drag','web_scroll','web_screenshot','web_get_text','web_get_url','web_wait'],
   desktop: ['desktop_click','desktop_type','desktop_press','desktop_scroll','desktop_drag','desktop_screenshot','desktop_get_window_state','desktop_list_apps','desktop_launch_app'],
   tasks: ['task_update','add_task_cluster','get_tasks','set_task_done','edit_task','delete_task','delete_cluster','add_task_to_cluster'],
@@ -145,6 +145,25 @@ export const toolDefs = [
           end: { type: 'number', description: '1-indexed ending line number (inclusive)' }
         },
         required: ['path', 'start', 'end']
+      }
+    }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'search',
+      description: 'Search for text or regex pattern across files and directories. Fast ripgrep/grep search that ignores node_modules, .git, and binaries, returning matching file paths, line numbers, and snippets.',
+      parameters: {
+        type: 'object',
+        properties: {
+          query: { type: 'string', description: 'Text or regular expression pattern to search for' },
+          path: { type: 'string', description: 'Directory or file to search within (optional, defaults to current directory; ~ supported)' },
+          is_regex: { type: 'boolean', description: 'If true, treats query as a regular expression. Defaults to false.' },
+          case_insensitive: { type: 'boolean', description: 'If true, performs a case-insensitive search. Defaults to true.' },
+          extension: { type: 'string', description: 'Optional file extension filter, e.g. "js", "ts", "json", "py"' },
+          limit: { type: 'number', description: 'Max number of matches to return (default: 30, max: 100)' }
+        },
+        required: ['query']
       }
     }
   },
@@ -1344,36 +1363,123 @@ if (name === 'mcp_search') {
       return `[${p} lines ${start}-${end} of ${total}]\n${formatted}`;
     }
 
-    if (name === 'grep_search') {
-      const q = String(args?.query || '').trim();
+    if (name === 'search' || name === 'grep_search') {
+      const q = String(args?.query || args?.q || '').trim();
       if (!q) return 'Error: query required';
-      const root = resolve(args?.path || '.');
+      const root = resolve(args?.path || args?.folder || args?.SearchPath || '.');
       if (!fs.existsSync(root)) return `Error: path does not exist: ${root}`;
 
-      const extFilter = args?.extension ? args.extension.replace(/^\./, '').toLowerCase() : null;
+      const isRegex = Boolean(args?.is_regex || args?.regex || args?.IsRegex);
+      const caseInsensitive = args?.case_insensitive !== undefined
+        ? Boolean(args.case_insensitive)
+        : args?.CaseInsensitive !== undefined
+          ? Boolean(args.CaseInsensitive)
+          : true;
+
+      const extFilter = (args?.extension || args?.ext)
+        ? String(args.extension || args.ext).replace(/^\./, '').toLowerCase()
+        : null;
+
+      const maxMatches = Math.min(Math.max(1, Number(args?.limit || args?.max_matches) || 30), 100);
+
+      const stat = fs.statSync(root);
+
+      function prefixMatchLine(line, rootDir) {
+        const trimmed = line.replace(/^\.\//, '').trim();
+        const relRoot = path.relative(process.cwd(), rootDir);
+        if (!relRoot || relRoot === '.') return trimmed;
+        const colonIdx = trimmed.indexOf(':');
+        if (colonIdx === -1) return path.join(relRoot, trimmed);
+        const filePart = trimmed.slice(0, colonIdx);
+        const rest = trimmed.slice(colonIdx);
+        return path.join(relRoot, filePart) + rest;
+      }
+
+      // 1. Try git grep if root is inside a git repo and is a directory
+      if (stat.isDirectory()) {
+        try {
+          const gitArgs = ['grep', '--untracked', '-n', '-I'];
+          if (caseInsensitive) gitArgs.push('-i');
+          if (isRegex) gitArgs.push('-E');
+          else gitArgs.push('-F');
+          gitArgs.push('-e', q);
+          if (extFilter) gitArgs.push('--', `*.${extFilter}`);
+
+          const out = execFileSync('git', gitArgs, { cwd: root, encoding: 'utf-8', maxBuffer: 10 * 1024 * 1024 });
+          const rawLines = out.trim().split('\n').filter(Boolean);
+          if (rawLines.length) {
+            const matches = rawLines.slice(0, maxMatches).map((l) => prefixMatchLine(l, root));
+            const header = rawLines.length > maxMatches
+              ? `Found ${rawLines.length} matches for "${q}" (showing first ${maxMatches}):`
+              : `Found ${matches.length} match(es) for "${q}":`;
+            return header + '\n' + matches.join('\n');
+          }
+        } catch (err) {
+          if (err.status === 1) {
+            return `No matches found for "${q}" in ${root}`;
+          }
+        }
+
+        // 2. Try system grep
+        try {
+          const grepArgs = ['-rnI'];
+          if (caseInsensitive) grepArgs.push('-i');
+          if (isRegex) grepArgs.push('-E');
+          else grepArgs.push('-F');
+          grepArgs.push(
+            '--exclude-dir=.git',
+            '--exclude-dir=node_modules',
+            '--exclude-dir=.cache',
+            '--exclude-dir=.npm',
+            '--exclude-dir=dist',
+            '--exclude-dir=build',
+            '--exclude-dir=.next',
+            '--exclude-dir=.levi'
+          );
+          if (extFilter) grepArgs.push(`--include=*.${extFilter}`);
+          grepArgs.push('-e', q, '.');
+
+          const out = execFileSync('grep', grepArgs, { cwd: root, encoding: 'utf-8', maxBuffer: 10 * 1024 * 1024 });
+          const rawLines = out.trim().split('\n').filter(Boolean);
+          if (rawLines.length) {
+            const matches = rawLines.slice(0, maxMatches).map((l) => prefixMatchLine(l, root));
+            const header = rawLines.length > maxMatches
+              ? `Found ${rawLines.length} matches for "${q}" (showing first ${maxMatches}):`
+              : `Found ${matches.length} match(es) for "${q}":`;
+            return header + '\n' + matches.join('\n');
+          }
+        } catch (err) {
+          if (err.status === 1) {
+            return `No matches found for "${q}" in ${root}`;
+          }
+        }
+      }
+
+      // 3. Fallback: robust pure-JS walker
       const BINARY_EXTS = new Set(['png', 'jpg', 'jpeg', 'gif', 'ico', 'webp', 'svg', 'zip', 'tar', 'gz', 'mp3', 'mp4', 'pdf', 'exe', 'so', 'dylib', 'woff', 'woff2', 'ttf', 'bin', 'lock']);
       const IGNORE_DIRS = new Set(['.git', 'node_modules', '.cache', '.npm', '.cargo', '.vscode', '.idea', 'dist', 'build', '.next', '.levi']);
 
       let regex = null;
-      try {
-        regex = new RegExp(q, 'i');
-      } catch {
-        regex = null;
+      if (isRegex) {
+        try {
+          regex = new RegExp(q, caseInsensitive ? 'i' : '');
+        } catch {
+          regex = null;
+        }
       }
 
       const matches = [];
-      const MAX_MATCHES = 25;
 
       function searchFile(filePath) {
-        if (matches.length >= MAX_MATCHES) return;
+        if (matches.length >= maxMatches) return;
         const ext = path.extname(filePath).slice(1).toLowerCase();
         if (BINARY_EXTS.has(ext)) return;
         if (extFilter && ext !== extFilter) return;
 
-        let stat;
+        let fStat;
         try {
-          stat = fs.statSync(filePath);
-          if (stat.size > 2 * 1024 * 1024) return;
+          fStat = fs.statSync(filePath);
+          if (fStat.size > 2 * 1024 * 1024) return;
         } catch {
           return;
         }
@@ -1389,19 +1495,25 @@ if (name === 'mcp_search') {
         const relPath = path.relative(process.cwd(), filePath) || filePath;
 
         for (let i = 0; i < lines.length; i++) {
-          if (matches.length >= MAX_MATCHES) break;
+          if (matches.length >= maxMatches) break;
           const line = lines[i];
-          const matched = regex ? regex.test(line) : line.toLowerCase().includes(q.toLowerCase());
+          let matched = false;
+          if (regex) {
+            matched = regex.test(line);
+          } else if (caseInsensitive) {
+            matched = line.toLowerCase().includes(q.toLowerCase());
+          } else {
+            matched = line.includes(q);
+          }
           if (matched) {
             matches.push(`${relPath}:${i + 1}: ${line.trim()}`);
           }
         }
       }
 
-      const stat = fs.statSync(root);
       if (stat.isDirectory()) {
         function walk(dir, depth) {
-          if (depth > 12 || matches.length >= MAX_MATCHES) return;
+          if (depth > 12 || matches.length >= maxMatches) return;
           let entries;
           try {
             entries = fs.readdirSync(dir, { withFileTypes: true });
@@ -1409,7 +1521,7 @@ if (name === 'mcp_search') {
             return;
           }
           for (const entry of entries) {
-            if (matches.length >= MAX_MATCHES) break;
+            if (matches.length >= maxMatches) break;
             const full = path.join(dir, entry.name);
             if (entry.isDirectory()) {
               if (!IGNORE_DIRS.has(entry.name)) {
@@ -1426,8 +1538,8 @@ if (name === 'mcp_search') {
       }
 
       if (!matches.length) return `No matches found for "${q}" in ${root}`;
-      const header = matches.length >= MAX_MATCHES
-        ? `Found 25+ matches for "${q}" (capped at 25):`
+      const header = matches.length >= maxMatches
+        ? `Found ${matches.length}+ matches for "${q}" (capped at ${maxMatches}):`
         : `Found ${matches.length} match(es) for "${q}":`;
       return header + '\n' + matches.join('\n');
     }
