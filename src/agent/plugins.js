@@ -7,6 +7,7 @@ import { syncAgentsFromPlugin } from './custom-agents.js';
 const LEVI_HOME = path.join(os.homedir(), '.levi');
 const PLUGINS_DIR = path.join(LEVI_HOME, 'PLUGINS');
 const META_FILE = path.join(LEVI_HOME, 'plugins.json');
+const MCP_FILE = path.join(LEVI_HOME, 'mcp.json');
 
 export function getPluginsDir() {
   return PLUGINS_DIR;
@@ -47,6 +48,116 @@ function sanitizeName(raw) {
     .replace(/^-+|-+$/g, '')
     .replace(/-+/g, '-');
 }
+
+// --- MCP sync helpers ---
+
+/**
+ * Read ~/.levi/mcp.json safely, return { mcpServers: {} } if missing.
+ */
+function readMcpFile() {
+  if (!fs.existsSync(MCP_FILE)) return { mcpServers: {} };
+  try { return JSON.parse(fs.readFileSync(MCP_FILE, 'utf-8')); } catch { return { mcpServers: {} }; }
+}
+
+function writeMcpFile(cfg) {
+  fs.mkdirSync(path.dirname(MCP_FILE), { recursive: true });
+  fs.writeFileSync(MCP_FILE, JSON.stringify(cfg, null, 2) + '\n', 'utf-8');
+}
+
+/**
+ * Detect mcp.json files inside a plugin directory:
+ *   - explicit path(s) from manifest `mcp` field
+ *   - any file named "mcp.json" anywhere in the plugin tree
+ *   - any .json file whose top-level keys include "mcpServers" or "mcpServer"
+ * Returns array of parsed { serverName, serverCfg } objects.
+ */
+function detectMcpEntries(pluginDir, explicitMcpPaths = null) {
+  const candidates = [];
+
+  if (explicitMcpPaths && explicitMcpPaths.length) {
+    for (const rel of explicitMcpPaths) {
+      const full = path.isAbsolute(rel) ? rel : path.join(pluginDir, rel);
+      if (fs.existsSync(full)) candidates.push(full);
+    }
+  } else {
+    // Auto-detect: walk plugin tree looking for mcp.json files
+    function walk(dir) {
+      let entries;
+      try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return; }
+      for (const e of entries) {
+        if (e.name.startsWith('.') || e.name === 'node_modules') continue;
+        const full = path.join(dir, e.name);
+        if (e.isDirectory()) {
+          walk(full);
+        } else if (e.isFile() && e.name.endsWith('.json')) {
+          candidates.push(full);
+        }
+      }
+    }
+    walk(pluginDir);
+  }
+
+  const entries = [];
+  for (const filePath of candidates) {
+    let parsed;
+    try { parsed = JSON.parse(fs.readFileSync(filePath, 'utf-8')); } catch { continue; }
+    if (!parsed || typeof parsed !== 'object') continue;
+    // Accept files with mcpServers or mcpServer key
+    const servers = parsed.mcpServers || (parsed.mcpServer ? { [parsed.name || 'server']: parsed.mcpServer } : null);
+    if (!servers || typeof servers !== 'object') continue;
+    for (const [name, cfg] of Object.entries(servers)) {
+      if (cfg && typeof cfg === 'object' && (cfg.command || cfg.url)) {
+        entries.push({ name, cfg });
+      }
+    }
+  }
+  return entries;
+}
+
+/**
+ * Merge MCP servers from a plugin into ~/.levi/mcp.json.
+ * Does NOT overwrite existing servers (unless they were from the same plugin).
+ * Marks each server with _plugin: pluginName for cleanup tracking.
+ * Returns array of { name } for synced servers.
+ */
+export function syncMcpFromPlugin(pluginName, pluginDir, explicitMcpPaths = null) {
+  const entries = detectMcpEntries(pluginDir, explicitMcpPaths);
+  if (!entries.length) return [];
+
+  const cfg = readMcpFile();
+  if (!cfg.mcpServers) cfg.mcpServers = {};
+
+  const synced = [];
+  for (const { name, cfg: serverCfg } of entries) {
+    const existing = cfg.mcpServers[name];
+    // Skip if already owned by a different plugin or user-defined (no _plugin marker)
+    if (existing && existing._plugin && existing._plugin !== pluginName) continue;
+    if (existing && !existing._plugin) continue; // user-defined, don't clobber
+    cfg.mcpServers[name] = { ...serverCfg, _plugin: pluginName };
+    synced.push({ name });
+  }
+
+  if (synced.length) writeMcpFile(cfg);
+  return synced;
+}
+
+/**
+ * Remove all MCP servers tagged with _plugin: pluginName from ~/.levi/mcp.json.
+ */
+export function removeMcpByPlugin(pluginName) {
+  const cfg = readMcpFile();
+  if (!cfg.mcpServers) return;
+  let changed = false;
+  for (const [name, srv] of Object.entries(cfg.mcpServers)) {
+    if (srv._plugin === pluginName) {
+      delete cfg.mcpServers[name];
+      changed = true;
+    }
+  }
+  if (changed) writeMcpFile(cfg);
+}
+
+
 
 const IGNORE_PLUGIN_DIRS = new Set([
   'node_modules', '.git', '.github', '.levi', '.levi-plugins',
@@ -199,6 +310,8 @@ export function readManifest(filePath, repoBase) {
       description: raw.description || '',
       author,
       targetPaths: targets,
+      agents: raw.agents ? (Array.isArray(raw.agents) ? raw.agents : [raw.agents]) : null,
+      mcp: raw.mcp ? (Array.isArray(raw.mcp) ? raw.mcp : [raw.mcp]) : null,
       raw
     };
   } catch (err) {
@@ -771,6 +884,7 @@ export function finalizeMarketplaceInstall(tempDirPath, cleanUrl, repoBase, plug
   const targetPaths = manifest?.targetPaths || ['./'];
   const files = scanPluginTargets(finalDirPath, targetPaths);
   const syncedAgents = syncAgentsFromPlugin(finalDirPath, manifest?.agents || targetPaths);
+  const syncedMcp = syncMcpFromPlugin(canonicalName, finalDirPath, manifest?.mcp || null);
 
   const meta = readPluginsMeta();
   meta.plugins[canonicalName] = {
@@ -791,6 +905,7 @@ export function finalizeMarketplaceInstall(tempDirPath, cleanUrl, repoBase, plug
     updatedAt: new Date().toISOString(),
     filesCount: files.length,
     agentsCount: syncedAgents.length,
+    mcpCount: syncedMcp.length,
     files: files.map((f) => ({
       id: `${canonicalName}/${f.relToPlugin.replace(/\.md$/, '')}`,
       relPath: `${canonicalName}/${f.relToPlugin}`,
@@ -817,6 +932,7 @@ export function finalizeMarketplaceInstall(tempDirPath, cleanUrl, repoBase, plug
     author: manifest?.author || pluginEntry.author || 'Unknown',
     filesCount: files.length,
     agentsCount: syncedAgents.length,
+    mcpCount: syncedMcp.length,
     path: finalDirPath,
     manifest: manifest?.raw || pluginEntry.raw || {}
   };
@@ -1001,6 +1117,7 @@ export function finalizeInstall(tempDirPath, cleanUrl, repoBase, chosenFormatOrO
 
   const files = scanPluginTargets(finalDirPath, resolved.targetPaths);
   const syncedAgents = syncAgentsFromPlugin(finalDirPath, resolved.agents || resolved.targetPaths);
+  const syncedMcp = syncMcpFromPlugin(canonicalName, finalDirPath, resolved.mcp || null);
 
   const meta = readPluginsMeta();
   meta.plugins[canonicalName] = {
@@ -1017,6 +1134,7 @@ export function finalizeInstall(tempDirPath, cleanUrl, repoBase, chosenFormatOrO
     updatedAt: new Date().toISOString(),
     filesCount: files.length,
     agentsCount: syncedAgents.length,
+    mcpCount: syncedMcp.length,
     files: files.map((f) => ({
       id: `${canonicalName}/${f.relToPlugin.replace(/\.md$/, '')}`,
       relPath: `${canonicalName}/${f.relToPlugin}`,
@@ -1043,6 +1161,7 @@ export function finalizeInstall(tempDirPath, cleanUrl, repoBase, chosenFormatOrO
     author: resolved.author || 'Unknown',
     filesCount: files.length,
     agentsCount: syncedAgents.length,
+    mcpCount: syncedMcp.length,
     path: finalDirPath,
     manifest: resolved.raw || {}
   };
@@ -1216,6 +1335,9 @@ export function removePlugin(name) {
   delete meta.plugins[clean];
   writePluginsMeta(meta);
 
+  // Clean up MCP servers that came from this plugin
+  removeMcpByPlugin(clean);
+
   return { ok: true, name: clean };
 }
 
@@ -1308,6 +1430,7 @@ export function createPluginManifest(dirPath, {
   commands = ['./commands'],
   rules = ['./rules'],
   agents = ['./agents'],
+  mcp = null,
   format = 'levi'
 } = {}) {
   const pluginName = sanitizeName(name || path.basename(dirPath));
@@ -1325,6 +1448,11 @@ export function createPluginManifest(dirPath, {
     rules: Array.isArray(rules) ? rules : [rules],
     agents: Array.isArray(agents) ? agents : [agents]
   };
+
+  // mcp field is optional — only include if explicitly provided
+  if (mcp) {
+    manifest.mcp = Array.isArray(mcp) ? mcp : [mcp];
+  }
 
   const filePath = path.join(targetDir, 'plugin.json');
   fs.writeFileSync(filePath, JSON.stringify(manifest, null, 2) + '\n', 'utf-8');

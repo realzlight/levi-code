@@ -37,21 +37,36 @@ export default function ConfigForm({ onDone, onCancel }) {
   const initialModel = config.active_model || (modelsList.length ? modelsList[0] : 'default');
   const [activeModel, setActiveModel] = useState(initialModel);
   const [userName, setUserName] = useState(config?.auth?.user?.name || '');
+  const [editor, setEditor] = useState(() => config?.editor || process.env.EDITOR || 'nano');
 
   // Row selection
   const [sel, setSel] = useState(0);
-  // In-line editing state for text inputs (0 = Alias)
+  // In-line editing state for text inputs ('alias' | 'editor')
   const [isEditing, setIsEditing] = useState(false);
+  const [editingField, setEditingField] = useState(null);
   const [editText, setEditText] = useState('');
+
+  const EDITOR_PRESETS = ['nano', 'vim', 'nvim', 'micro', 'hx', 'emacs'];
 
   const ITEMS = [
     { id: 'alias', label: 'Alias / Name', type: 'text', value: userName || '(none)' },
+    { id: 'editor', label: 'Terminal Editor', type: 'cycle', value: editor },
     { id: 'effort', label: 'Effort Level', type: 'cycle', value: effort.label },
     { id: 'model', label: 'Active Model', type: 'cycle', value: activeModel },
     { id: 'subagents', label: 'Sub-agents', type: 'toggle', value: solo ? 'OFF (Solo only)' : 'ON (Enabled)' },
     { id: 'diary', label: 'Session Diary', type: 'toggle', value: diary ? 'ON' : 'OFF' },
     { id: 'save', label: '[ Save & Close ]', type: 'action' }
   ];
+
+  const cycleEditor = (delta) => {
+    const idx = EDITOR_PRESETS.indexOf(editor);
+    if (idx === -1) {
+      setEditor(delta > 0 ? EDITOR_PRESETS[0] : EDITOR_PRESETS[EDITOR_PRESETS.length - 1]);
+    } else {
+      const nextIdx = (idx + delta + EDITOR_PRESETS.length) % EDITOR_PRESETS.length;
+      setEditor(EDITOR_PRESETS[nextIdx]);
+    }
+  };
 
   const cycleEffort = (delta) => {
     const idx = EFFORT_LIST.findIndex((e) => e.id === effort.id);
@@ -89,6 +104,7 @@ export default function ConfigForm({ onDone, onCancel }) {
     if (!c.auth) c.auth = {};
     if (!c.auth.user) c.auth.user = {};
     c.auth.user.name = userName.trim();
+    c.editor = editor.trim();
     c.active_model = activeModel;
     c.soloOnly = solo;
     c.diaryEnabled = diary;
@@ -100,6 +116,7 @@ export default function ConfigForm({ onDone, onCancel }) {
       message: 'Settings updated successfully',
       fields: [
         { label: 'Alias', value: userName.trim() || 'default', color: CYAN },
+        { label: 'Editor', value: editor.trim() || 'nano', color: CYAN },
         { label: 'Effort', value: effort.label, color: GOLD },
         { label: 'Model', value: activeModel, color: CYAN },
         { label: 'Sub-agents', value: solo ? 'OFF' : 'ON', color: solo ? RED : GREEN },
@@ -112,16 +129,26 @@ export default function ConfigForm({ onDone, onCancel }) {
     if (isEditing) {
       if (key.escape) {
         setIsEditing(false);
+        setEditingField(null);
         return;
       }
       if (key.return) {
-        setUserName(editText);
-        const c = readConfig();
-        if (!c.auth) c.auth = {};
-        if (!c.auth.user) c.auth.user = {};
-        c.auth.user.name = editText.trim();
-        writeConfig(c);
+        if (editingField === 'alias') {
+          setUserName(editText);
+          const c = readConfig();
+          if (!c.auth) c.auth = {};
+          if (!c.auth.user) c.auth.user = {};
+          c.auth.user.name = editText.trim();
+          writeConfig(c);
+        } else if (editingField === 'editor') {
+          const cleanEd = editText.trim() || 'nano';
+          setEditor(cleanEd);
+          const c = readConfig();
+          c.editor = cleanEd;
+          writeConfig(c);
+        }
         setIsEditing(false);
+        setEditingField(null);
         return;
       }
       if (key.backspace || key.delete) {
@@ -140,6 +167,7 @@ export default function ConfigForm({ onDone, onCancel }) {
 
     const curItem = ITEMS[sel];
     if (key.leftArrow) {
+      if (curItem.id === 'editor') cycleEditor(-1);
       if (curItem.id === 'effort') cycleEffort(-1);
       if (curItem.id === 'model') cycleModel(-1);
       if (curItem.id === 'subagents') toggleSubagents();
@@ -147,6 +175,7 @@ export default function ConfigForm({ onDone, onCancel }) {
       return;
     }
     if (key.rightArrow || input === ' ') {
+      if (curItem.id === 'editor') cycleEditor(1);
       if (curItem.id === 'effort') cycleEffort(1);
       if (curItem.id === 'model') cycleModel(1);
       if (curItem.id === 'subagents') toggleSubagents();
@@ -156,6 +185,13 @@ export default function ConfigForm({ onDone, onCancel }) {
     if (key.return) {
       if (curItem.id === 'alias') {
         setEditText(userName);
+        setEditingField('alias');
+        setIsEditing(true);
+        return;
+      }
+      if (curItem.id === 'editor') {
+        setEditText(editor);
+        setEditingField('editor');
         setIsEditing(true);
         return;
       }
@@ -178,7 +214,7 @@ export default function ConfigForm({ onDone, onCancel }) {
       const isSel = idx === sel;
       const marker = isSel ? '❯ ' : '  ';
 
-      if (item.id === 'alias' && isEditing) {
+      if (item.id === 'alias' && isEditing && editingField === 'alias') {
         return h(
           Box,
           { key: item.id, height: 1, overflow: 'hidden' },
@@ -189,7 +225,19 @@ export default function ConfigForm({ onDone, onCancel }) {
         );
       }
 
+      if (item.id === 'editor' && isEditing && editingField === 'editor') {
+        return h(
+          Box,
+          { key: item.id, height: 1, overflow: 'hidden' },
+          h(Text, { color: CYAN }, marker),
+          h(Text, { color: CYAN, bold: true }, 'Editor: '.padEnd(20)),
+          h(Text, { color: '#ffffff', backgroundColor: '#333333' }, editText + '█'),
+          h(Text, { color: GRAY }, '  (enter to save custom cmd, esc to cancel)')
+        );
+      }
+
       let valColor = SOFT;
+      if (item.id === 'editor') valColor = CYAN;
       if (item.id === 'effort') valColor = GOLD;
       if (item.id === 'model') valColor = CYAN;
       if (item.id === 'subagents') valColor = solo ? RED : GREEN;
@@ -205,7 +253,7 @@ export default function ConfigForm({ onDone, onCancel }) {
       );
     }),
     h(Box, { marginTop: 1, height: 1, overflow: 'hidden' },
-      h(Text, { color: GRAY }, '↑↓ navigate · space/enter toggle/edit · esc cancel')
+      h(Text, { color: GRAY }, '↑↓ navigate · ←→ cycle · space/enter edit · esc cancel')
     )
   );
 }

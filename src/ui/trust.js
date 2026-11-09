@@ -14,7 +14,7 @@ export async function promptWorkspaceTrust() {
 
   const cwd = process.cwd();
 
-  p.intro(chalk.hex('#f59e0b').bold('Levi Pair Programming'));
+  p.intro(chalk.hex('#f59e0b').bold('Levi Code'));
 
   const answer = await p.select({
     message: `Do you trust the files in this folder?\n  ${chalk.cyan(cwd)}\n\n  ${chalk.dim('Levi will be able to read and edit files, and execute commands in this workspace.')}`,

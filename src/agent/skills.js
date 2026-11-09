@@ -3,6 +3,7 @@ import path from 'node:path';
 import os from 'node:os';
 import { execa } from 'execa';
 import { chat } from './client.js';
+import { openInEditor, getPreferredEditor } from './editor.js';
 
 const LEVI_HOME = path.join(os.homedir(), '.levi');
 const SKILLS_DIR = path.join(LEVI_HOME, 'SKILLS');
@@ -526,9 +527,9 @@ export async function editSkill(rawArgs, ctx = {}) {
     await createSkill(parsed.folder, parsed.file);
   }
 
-  const editor = process.env.EDITOR || 'nano';
+  const editor = getPreferredEditor();
   try {
-    await execa(editor, [parsed.filePath], { stdio: 'inherit' });
+    await openInEditor(parsed.filePath);
   } catch (err) {
     console.error(`\x1b[31mFailed to launch editor (${editor}): ${err.message}\x1b[0m`);
     return;

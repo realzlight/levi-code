@@ -479,6 +479,18 @@ const runConfigCommand = async ({ key, value }, ctx) => {
       }) : ctx.print(`Diary: ${next ? 'ON' : 'OFF'}`);
     }
 
+    if (k === 'editor') {
+      const cleanEditor = v.trim();
+      if (!cleanEditor) return ctx.print('Usage: /config editor <command (e.g. nano, vim, nvim, micro)>');
+      const c = readConfig();
+      c.editor = cleanEditor;
+      writeConfig(c);
+      return ctx.printPanel ? ctx.printPanel({
+        title: 'Terminal Editor Configured',
+        fields: [{ label: 'Editor', value: cleanEditor, color: '#38bdf8' }]
+      }) : ctx.print(`Editor set to: ${cleanEditor}`);
+    }
+
     if (k === 'threshold') {
       const n = parseInt(v, 10);
       if (isNaN(n) || n < 1000) return ctx.print('Usage: /config threshold <tokens (min 1000)>');
@@ -505,6 +517,7 @@ const runConfigCommand = async ({ key, value }, ctx) => {
     title: 'LEVI CONFIGURATION & SETTINGS',
     fields: [
       { label: 'Alias', value: c?.auth?.user?.name || '(not set)', color: '#afd7ff' },
+      { label: 'Editor', value: c.editor || process.env.EDITOR || 'nano', color: '#38bdf8' },
       { label: 'Effort', value: curEffort.label, color: '#ffd700' },
       { label: 'Model', value: c.active_model || 'default', color: '#afd7ff' },
       { label: 'Sub-agents', value: curSolo ? 'OFF (Solo only)' : 'ON (Enabled)', color: curSolo ? '#f87171' : '#4ade80' },
@@ -516,20 +529,20 @@ const runConfigCommand = async ({ key, value }, ctx) => {
 
 defineCommand({
   name: 'config',
-  description: 'View or update configuration settings (alias, effort, model, sub-agents, diary)',
+  description: 'View or update configuration settings (alias, editor, effort, model, sub-agents, diary)',
   args: [
-    { name: 'key', required: false, description: 'Setting key: name, effort, model, subagents, diary, threshold' },
-    { name: 'value', required: false, description: 'Value to set' }
+    { name: 'key', required: false, description: 'Setting key: name, editor, effort, model, subagents, diary, threshold' },
+    { name: 'value', required: false, description: 'Value to set (e.g. editor vim, effort medium)' }
   ],
   run: runConfigCommand
 });
 
 defineCommand({
   name: 'settings',
-  description: 'View or update configuration settings (alias, effort, model, sub-agents, diary)',
+  description: 'View or update configuration settings (alias, editor, effort, model, sub-agents, diary)',
   args: [
-    { name: 'key', required: false, description: 'Setting key: name, effort, model, subagents, diary, threshold' },
-    { name: 'value', required: false, description: 'Value to set' }
+    { name: 'key', required: false, description: 'Setting key: name, editor, effort, model, subagents, diary, threshold' },
+    { name: 'value', required: false, description: 'Value to set (e.g. editor vim, effort medium)' }
   ],
   run: runConfigCommand
 });
@@ -1077,6 +1090,18 @@ defineCommand({
 });
 
 defineCommand({
+  name: 'skills:open',
+  description: 'Open skill instructions in your configured terminal editor (e.g. /skills:open UI-UX/button)',
+  args: [{ name: 'target', required: true, rest: true, description: 'Skill target path' }],
+  screen: true,
+  run: async ({ target }, ctx) => {
+    const rawArgs = Array.isArray(target) ? target.join(' ') : String(target || '');
+    return runCommand(`skills:edit ${rawArgs}`, ctx);
+  }
+});
+
+
+defineCommand({
   name: 'skills:delete',
   description: 'Permanently delete a skill file or an entire skill folder branch',
   args: [{ name: 'target', required: true, rest: true, description: 'Skill file or folder path' }],
@@ -1183,6 +1208,9 @@ function showInstallResult(res, ctx) {
   if (res.agentsCount > 0) {
     fields.push({ label: 'Agents', value: `${res.agentsCount} custom agent(s) synced to ~/.levi/AGENTS/`, color: '#38bdf8' });
   }
+  if (res.mcpCount > 0) {
+    fields.push({ label: 'MCP Servers', value: `${res.mcpCount} server(s) added to ~/.levi/mcp.json`, color: '#fb923c' });
+  }
   fields.push({ label: 'Location', value: `~/.levi/PLUGINS/${res.name}`, color: '#a78bfa' });
 
   if (ctx.printPanel) {
@@ -1191,8 +1219,9 @@ function showInstallResult(res, ctx) {
       fields
     });
   }
-  const agentNote = res.agentsCount > 0 ? ` and ${res.agentsCount} custom agent(s) synced` : '';
-  ctx.print(`✓ Installed plugin "${res.name}" [${res.formatLabel || res.format}] (v${res.version}) by ${res.author} with ${res.filesCount} playbook(s) indexed${agentNote} at ~/.levi/PLUGINS/${res.name}.`);
+  const agentNote = res.agentsCount > 0 ? `, ${res.agentsCount} agent(s) synced` : '';
+  const mcpNote = res.mcpCount > 0 ? `, ${res.mcpCount} MCP server(s) added` : '';
+  ctx.print(`✓ Installed plugin "${res.name}" [${res.formatLabel || res.format}] (v${res.version}) by ${res.author} with ${res.filesCount} playbook(s)${agentNote}${mcpNote} at ~/.levi/PLUGINS/${res.name}.`);
 }
 
 defineCommand({
@@ -1620,6 +1649,30 @@ defineCommand({
       ''
     ];
     ctx.print(lines.join('\n'));
+  }
+});
+
+defineCommand({
+  name: 'agent:edit',
+  description: 'Open a custom agent definition in your preferred terminal editor',
+  args: [{ name: 'name', required: true, description: 'Agent name to edit' }],
+  run: async ({ name }, ctx) => {
+    const { getCustomAgent } = await import('../agent/custom-agents.js');
+    const { openInEditor, getPreferredEditor } = await import('../agent/editor.js');
+    const agent = getCustomAgent(name);
+    if (!agent) {
+      return ctx.print(`Agent "${name}" not found in ~/.levi/AGENTS/. Use /agent:list to see available agents.`);
+    }
+    const os = await import('node:os');
+    const path = await import('node:path');
+    const filePath = path.join(os.homedir(), '.levi', 'AGENTS', `${agent.name}.md`);
+    const editor = getPreferredEditor();
+    ctx.print(`Opening @${agent.name} in ${editor}...`);
+    try {
+      await openInEditor(filePath);
+    } catch (err) {
+      ctx.print(`❌ Could not open editor: ${err.message}. Set a different editor with /config editor <cmd>`);
+    }
   }
 });
 
